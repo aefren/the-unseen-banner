@@ -80,8 +80,7 @@ que destila lo aprendido en los dos mods anteriores.
 
 - `mod/` — el mod en sí (Squirrel + JS). `scripts/!mods_preload/` registra con
   Modern Hooks; `ui/mods/mod_unseen_banner/` es el JS inyectado (ES3). Se
-  empaqueta como zip en `plugin/` (por ahora a mano con `tar -a -cf`; la
-  tarea 0.6 lo automatiza).
+  empaqueta como zip en `plugin/` (lo hace `dev_install.bat`).
 - `companion/` — app compañera .NET 8 x64, proceso aparte del juego.
   `Tolk.cs` (P/Invoke), `Speech.cs` (envoltorio defensivo), `L10n.cs` (strings propios).
 - `plugin/` — **todo lo instalable del mod**: los zips de Modern Hooks, MSU y

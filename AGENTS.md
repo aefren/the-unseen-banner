@@ -54,12 +54,22 @@ pensado para que cambiar de puente no obligue a tocar los hooks.
 ### Estado actual
 
 Fase 0 en curso: ✅ 0.1 (copia local + `steam_appid.txt`), ✅ 0.2 (Modern Hooks
-0.6.0 + MSU 1.9.0 en `plugin/`; smoke test en `mod/` verificado vía `log.html` —
-falta solo el UI Inspector, descarga manual de Nexus), ✅ 0.5 (compañera mínima
-hablando por NVDA). Pendientes: 0.3 (`massdecompile`), 0.4 (spike del puente),
-0.6 (scripts dev-install). El viaje JS→Squirrel (`registerScreen` +
-`::UI.connect` + `SQ.call`) ya está demostrado por el smoke test.
+0.6.0 + MSU 1.9.0 + UI Inspector; smoke test en `mod/` verificado vía
+`log.html`), ✅ 0.5 (compañera mínima hablando por NVDA), ✅ 0.6 en lo esencial
+(`dev_install.bat`/`dev_uninstall_mod.bat`; falta el empaquetado para Nexus).
+Pendientes: 0.3 (`massdecompile`), 0.4 (spike del puente). El viaje
+JS→Squirrel (`registerScreen` + `::UI.connect` + `SQ.call`) ya está demostrado
+por el smoke test.
 El log verificado está en `C:\Users\alfre\OneDrive\Documentos\Battle Brothers\log.html`.
+
+**Cómo se lanza el juego en desarrollo**: `dev_install.bat` y luego
+`Battle Brothers/win32/bb-launcher-steam.exe` (launcher de
+[awesome-battle-brothers](https://github.com/shabbywu/awesome-battle-brothers):
+carga el exe parcheado en memoria, activa `CoherentUIGTDevelopment.dll` y abre
+el debugger de Coherent en `127.0.0.1:19999`). El UI Inspector
+(`plugin/UI Inspector/bb-ui-inspector/bb-ui-inspector.exe`) corre desde
+`plugin/` y se conecta a ese puerto; el mismo puerto habla el protocolo
+DevTools por WebSocket (`/devtools/page/0`), utilizable también por scripts.
 
 El roadmap completo por fases está en [docs/arquitectura-propuesta-y-roadmap.md](docs/arquitectura-propuesta-y-roadmap.md).
 **Léelo antes de planificar trabajo nuevo**, junto con
@@ -70,8 +80,7 @@ que destila lo aprendido en los dos mods anteriores.
 
 - `mod/` — el mod en sí (Squirrel + JS). `scripts/!mods_preload/` registra con
   Modern Hooks; `ui/mods/mod_unseen_banner/` es el JS inyectado (ES3). Se
-  empaqueta como zip en `plugin/` (por ahora a mano con `tar -a -cf`; la
-  tarea 0.6 lo automatiza).
+  empaqueta como zip en `plugin/` (lo hace `dev_install.bat`).
 - `companion/` — app compañera .NET 8 x64, proceso aparte del juego.
   `Tolk.cs` (P/Invoke), `Speech.cs` (envoltorio defensivo), `L10n.cs` (strings propios).
 - `plugin/` — **todo lo instalable del mod**: los zips de Modern Hooks, MSU y
