@@ -1,0 +1,17 @@
+# Copia local del juego (código y assets con copyright — no se versionan)
+Battle Brothers/
+
+# Árbol de .nut decompilados con massdecompile (fase 0.3 — código del juego)
+decompiled/
+
+# Herramientas de terceros descargadas (mod kit, Modern Hooks, MSU...)
+tools/
+
+# Artefactos de build
+build/
+dist/
+*.zip
+
+# Basura de sistema
+Thumbs.db
+Desktop.ini
