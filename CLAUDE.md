@@ -54,7 +54,7 @@ pensado para que cambiar de puente no obligue a tocar los hooks.
 ### Estado actual
 
 Fase 0 en curso: ✅ 0.1 (copia local + `steam_appid.txt`), ✅ 0.2 (Modern Hooks
-0.6.0 + MSU 1.9.0 instalados; smoke test en `mod/` verificado vía `log.html` —
+0.6.0 + MSU 1.9.0 en `plugin/`; smoke test en `mod/` verificado vía `log.html` —
 falta solo el UI Inspector, descarga manual de Nexus), ✅ 0.5 (compañera mínima
 hablando por NVDA). Pendientes: 0.3 (`massdecompile`), 0.4 (spike del puente),
 0.6 (scripts dev-install). El viaje JS→Squirrel (`registerScreen` +
@@ -70,14 +70,16 @@ que destila lo aprendido en los dos mods anteriores.
 
 - `mod/` — el mod en sí (Squirrel + JS). `scripts/!mods_preload/` registra con
   Modern Hooks; `ui/mods/mod_unseen_banner/` es el JS inyectado (ES3). Se
-  empaqueta como zip en `Battle Brothers/data/` (por ahora a mano con
-  `tar -a -cf`; la tarea 0.6 lo automatiza).
+  empaqueta como zip en `plugin/` (por ahora a mano con `tar -a -cf`; la
+  tarea 0.6 lo automatiza).
 - `companion/` — app compañera .NET 8 x64, proceso aparte del juego.
   `Tolk.cs` (P/Invoke), `Speech.cs` (envoltorio defensivo), `L10n.cs` (strings propios).
-- `plugin/` — `Tolk.dll` + `nvdaControllerClient64.dll`, versionadas; el `.csproj`
-  las copia al output. Son de **64 bits**: valen para la compañera (proceso aparte),
-  pero la vía 3 del puente (DLL inyectada en el juego, que es de 32 bits) necesitaría
-  las variantes de 32.
+- `plugin/` — **todo lo instalable del mod**: los zips de Modern Hooks, MSU y
+  `mod_unseen_banner.zip` (gitignorados como `*.zip`; se regeneran/redescargan),
+  más `Tolk.dll` + `nvdaControllerClient64.dll`, versionadas; el `.csproj`
+  las copia al output. Las DLL son de **64 bits**: valen para la compañera
+  (proceso aparte), pero la vía 3 del puente (DLL inyectada en el juego, que es
+  de 32 bits) necesitaría las variantes de 32.
 - `docs/` — arquitectura, lecciones previas, receta de copia local sin Steam.
 - `Battle Brothers/` — copia local del juego. **Gitignorada** (copyright), igual que
   `decompiled/` (los `.nut` decompilados) y `tools/`. Se reproduce a mano en cada
@@ -104,8 +106,13 @@ Estas reglas salieron de bugs reales en F&H1 y GK. No reinventarlas:
   y override en `lang/<código>.lang`. Saltarse esto costó una auditoría entera en F&H1.
 - **Hookear el punto de embudo**, no pantalla a pantalla. Candidatos aquí: el sistema
   de tooltips y el log de combate.
-- **El mod solo AÑADE archivos**, nunca modifica los del juego: eso lo garantiza
-  Modern Hooks/MSU. No sobrescribir `.cnut` sueltos aunque sea más rápido.
+- **La carpeta del juego (`Battle Brothers/`) no se toca EN ABSOLUTO** — ni
+  modificar ni añadir archivos, tampoco en `data/`. Todo lo instalable (nuestro
+  zip, Modern Hooks, MSU, UI Inspector) vive en `plugin/` en la raíz del repo.
+  El mecanismo para que el juego lo cargue desde ahí en tiempo de ejecución lo
+  resuelven las tareas 0.4/0.6 sin escribir en la carpeta del juego. Y dentro
+  del mod, la regla de siempre: solo añadir vía Modern Hooks/MSU, jamás
+  sobrescribir `.cnut` del juego.
 - **Toda constante afinable va a config** (rangos, cadencias, volúmenes, teclas).
 - **JS inyectado en ES3**: Chromium 48, sin `let/const`, arrows ni template literals.
 

@@ -97,12 +97,16 @@ puro, luego menús, luego combate, luego mundo, luego pulido. Cada ítem queda
       (ver [desarrollo-copia-local-sin-steam.md](desarrollo-copia-local-sin-steam.md)).
 - [x] 0.2 Instalar Modern Hooks + MSU + UI Inspector; confirmar que un hook
       Squirrel trivial y un JS inyectado trivial corren en nuestra copia.
-      **Hecho** (jul 2026): Modern Hooks 0.6.0 + MSU 1.9.0 (zips de GitHub en
-      `Battle Brothers/data/`) y `mod/` en el repo con el smoke test: preload,
+      **Hecho** (jul 2026): Modern Hooks 0.6.0 + MSU 1.9.0 (zips de GitHub,
+      instalados en `plugin/`) y `mod/` en el repo con el smoke test: preload,
       función encolada, hook de clase sobre `root_state` y JS inyectado que
       llama de vuelta a Squirrel — las cuatro señales visibles en `log.html`
       sin errores. Bonus: el viaje JS→Squirrel ya funciona (`registerScreen` +
       `::UI.connect` + `SQ.call`), lo que despeja parte del 0.4.
+      *Nota:* la verificación se hizo con los zips en `data/`; después se fijó
+      la regla de no tocar la carpeta del juego y los zips viven en `plugin/`.
+      Cómo los carga el juego desde ahí (junction, copia al lanzar…) queda
+      para 0.4/0.6 — el motor solo escanea `data/`.
       *Pendiente:* Awesome UI Inspector solo está en Nexus (mod 744) y
       requiere descarga manual con cuenta.
 - [ ] 0.3 `massdecompile` sobre los `.dat` → árbol de `.nut` legibles en el
