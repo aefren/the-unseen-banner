@@ -104,9 +104,9 @@ puro, luego menús, luego combate, luego mundo, luego pulido. Cada ítem queda
       sin errores. Bonus: el viaje JS→Squirrel ya funciona (`registerScreen` +
       `::UI.connect` + `SQ.call`), lo que despeja parte del 0.4.
       *Nota:* la verificación se hizo con los zips en `data/`; después se fijó
-      la regla de no tocar la carpeta del juego y los zips viven en `plugin/`.
-      Cómo los carga el juego desde ahí (junction, copia al lanzar…) queda
-      para 0.4/0.6 — el motor solo escanea `data/`.
+      la regla de no tocar la carpeta del juego a mano y los zips viven en
+      `plugin/`. El camino a `data/` (el motor solo escanea ahí) son los
+      scripts de la 0.6.
       *Pendiente:* Awesome UI Inspector solo está en Nexus (mod 744) y
       requiere descarga manual con cuenta.
 - [ ] 0.3 `massdecompile` sobre los `.dat` → árbol de `.nut` legibles en el
@@ -117,7 +117,10 @@ puro, luego menús, luego combate, luego mundo, luego pulido. Cada ítem queda
 - [x] 0.5 App compañera mínima: recibe mensaje → lo habla por Tolk. Oír
       "Battle Brothers accessibility loaded" con NVDA al arrancar el juego.
       **Hecho**: `companion/` habla por Tolk/NVDA al arrancar (verificado).
-- [ ] 0.6 Scripts `dev-install`/`dev-uninstall` + build empaquetable.
+- [ ] 0.6 Scripts `dev_install.bat` (copia lo de `plugin/` a
+      `Battle Brothers/data/`) y `dev_uninstall_mod.bat` (lo retira dejando el
+      juego intacto) + build empaquetable. Único camino permitido hacia la
+      carpeta del juego.
 
 ### Fase 1 — Texto puro (máximo valor / mínimo riesgo)
 

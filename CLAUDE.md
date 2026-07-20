@@ -106,13 +106,15 @@ Estas reglas salieron de bugs reales en F&H1 y GK. No reinventarlas:
   y override en `lang/<código>.lang`. Saltarse esto costó una auditoría entera en F&H1.
 - **Hookear el punto de embudo**, no pantalla a pantalla. Candidatos aquí: el sistema
   de tooltips y el log de combate.
-- **La carpeta del juego (`Battle Brothers/`) no se toca EN ABSOLUTO** — ni
-  modificar ni añadir archivos, tampoco en `data/`. Todo lo instalable (nuestro
-  zip, Modern Hooks, MSU, UI Inspector) vive en `plugin/` en la raíz del repo.
-  El mecanismo para que el juego lo cargue desde ahí en tiempo de ejecución lo
-  resuelven las tareas 0.4/0.6 sin escribir en la carpeta del juego. Y dentro
-  del mod, la regla de siempre: solo añadir vía Modern Hooks/MSU, jamás
-  sobrescribir `.cnut` del juego.
+- **La carpeta del juego (`Battle Brothers/`) no se toca a mano NUNCA.** Todo
+  lo instalable (nuestro zip, Modern Hooks, MSU, UI Inspector) vive y se
+  desarrolla en `plugin/` en la raíz del repo. El único camino hacia el juego
+  son dos scripts (tarea 0.6): `dev_install.bat` copia lo de `plugin/` a la
+  carpeta desde donde el juego carga mods (`Battle Brothers/data/`), y
+  `dev_uninstall_mod.bat` lo retira dejando el juego como vino. Así la
+  instalación es siempre reversible y auditable. Y dentro del mod, la regla de
+  siempre: solo añadir vía Modern Hooks/MSU, jamás sobrescribir `.cnut` del
+  juego.
 - **Toda constante afinable va a config** (rangos, cadencias, volúmenes, teclas).
 - **JS inyectado en ES3**: Chromium 48, sin `let/const`, arrows ni template literals.
 
