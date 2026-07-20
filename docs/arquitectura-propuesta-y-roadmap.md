@@ -118,11 +118,37 @@ puro, luego menús, luego combate, luego mundo, luego pulido. Cada ítem queda
       en la raíz del juego; lo borra el uninstall) enumera los mods de
       `data/`; su opción de rutas absolutas está desactivada por inestable,
       así que los zips siguen entrando por `data/` vía el bat.
-- [ ] 0.3 `massdecompile` sobre los `.dat` → árbol de `.nut` legibles en el
+- [x] 0.3 `massdecompile` sobre los `.dat` → árbol de `.nut` legibles en el
       repo (gitignorado: es código del juego con copyright).
-- [ ] 0.4 **Spike del puente:** ¿permite Coherent WebSocket/XHR a localhost?
-      ¿Funciona `MutationObserver`? Si no → medir latencia del tail de
-      `log.html`. Decidir puente y congelar el protocolo de mensajes.
+      **Hecho** (jul 2026): 3.107 de 3.108 `.cnut` decompilados a
+      `decompiled/scripts/` (falla solo `events/dlc4/
+      cultist_origin_vs_old_gods_event.cnut`, bug de strings no-ANSI de
+      NutCracker), más los 239 ficheros de `ui/` (JS/CSS sin minificar)
+      extraídos a `decompiled/ui/`. Kit de Adam Milazzo en `tools/`.
+      Verificado que `.gitignore` cubre `tools/`, `decompiled/` y la carpeta
+      del juego (`git check-ignore` + `git status --untracked-files=all`).
+- [x] 0.4 **Spike del puente.** Decidido y verificado con el menú principal
+      como prueba realista (jul 2026, confirmado de oído con NVDA):
+      - **Puente elegido: tail de `log.html` (el plan B).** El juego vuelca
+        cada `::logInfo` a disco en tiempo real (mtime al segundo) y la
+        latencia tecla→voz resultó imperceptible para el usuario. La
+        compañera hace tail con polling de 100 ms (`LogBridge.cs`),
+        tolerante a truncado (el juego reescribe el log en cada arranque) y
+        a comillas HTML-escapadas.
+      - **Protocolo congelado:** línea `UB_MSG:{"canal":"interrupt"|"queue",
+        "texto":"..."}` escrita vía `::logInfo` desde un único punto
+        (`::UnseenBanner.sendMessage`). Cambiar de puente = tocar solo
+        `LogBridge.cs` y `sendMessage`.
+      - **Hallazgo clave del teclado:** el motor NO reenvía teclado crudo al
+        DOM de Coherent (`document keydown` jamás dispara; los inputs de
+        texto son un camino aparte). Las teclas se capturan en Squirrel
+        (`onKeyInput` del estado, códigos del enum del motor — referencia:
+        `KeyMapSQ` de MSU: up=49, down=51, enter=39, escape=41) y se
+        reenvían al JS con `asyncCall`. `getState()`: 1=press (repite
+        mientras se mantiene), 0=release (una vez).
+      - WebSocket/XHR a localhost y `MutationObserver` quedan **sin
+        probar**: con la latencia validada de oído no hacen falta; retomar
+        solo si el log-tail se queda corto (p. ej. combate denso, fase 3).
 - [x] 0.5 App compañera mínima: recibe mensaje → lo habla por Tolk. Oír
       "Battle Brothers accessibility loaded" con NVDA al arrancar el juego.
       **Hecho**: `companion/` habla por Tolk/NVDA al arrancar (verificado).
@@ -140,7 +166,14 @@ opciones: el equivalente a los diálogos de F&H1.
 
 - [ ] 1.1 Pantalla de evento: narrar título + cuerpo al abrirse, opciones al
       enfocarlas (canal interrupt), resultado al elegir (canal cola).
-- [ ] 1.2 Menú principal y opciones.
+- [ ] 1.2 Menú principal y opciones. **Parcial** (jul 2026): cursor de
+      teclado sobre el menú principal funcionando y verificado de oído
+      (flechas anuncian el botón enfocado por canal interrupt, Enter activa;
+      `menu_nav.js` + hook de `onKeyInput` en `main_menu_state`). Cubre
+      también los botones que añaden otros mods (p. ej. "Mod Options" de
+      MSU) por leer el DOM renderizado. Pendiente: submenús (Options, New
+      Campaign... — las teclas ya les respetan su comportamiento nativo,
+      pero aún no se narran), y anuncio del propio menú al aparecer.
 - [ ] 1.3 Navegación por teclado de los eventos si el foco es solo-ratón
       (primer contacto con el problema de navegación — empezar aquí porque
       son listas simples de opciones).

@@ -1,0 +1,7 @@
+/* The Unseen Banner — visible focus indicator for the keyboard menu cursor.
+   Not needed by a blind player, but lets a sighted tester confirm which
+   button the cursor is on (e.g. via a screenshot) without NVDA running. */
+.unseen-banner-focus {
+	outline: 3px solid #ffcc42;
+	outline-offset: 2px;
+}

@@ -12,7 +12,15 @@ Console.WriteLine("Loading Tolk...");
 Speech.Init();
 Speech.Speak(L10n.F("companion.loaded", ModVersion));
 
+string logPath = Path.Combine(
+    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+    "Battle Brothers", "log.html");
+using var bridgeCts = new CancellationTokenSource();
+LogBridge.Watch(logPath, bridgeCts.Token);
+Console.WriteLine($"[LogBridge] Watching {logPath}");
+
 Console.WriteLine("Press Enter to exit.");
 Console.ReadLine();
 
+bridgeCts.Cancel();
 Speech.Shutdown();

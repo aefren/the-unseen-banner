@@ -53,13 +53,21 @@ pensado para que cambiar de puente no obligue a tocar los hooks.
 
 ### Estado actual
 
-Fase 0 en curso: ✅ 0.1 (copia local + `steam_appid.txt`), ✅ 0.2 (Modern Hooks
-0.6.0 + MSU 1.9.0 + UI Inspector; smoke test en `mod/` verificado vía
-`log.html`), ✅ 0.5 (compañera mínima hablando por NVDA), ✅ 0.6 en lo esencial
-(`dev_install.bat`/`dev_uninstall_mod.bat`; falta el empaquetado para Nexus).
-Pendientes: 0.3 (`massdecompile`), 0.4 (spike del puente). El viaje
-JS→Squirrel (`registerScreen` + `::UI.connect` + `SQ.call`) ya está demostrado
-por el smoke test.
+**Fase 0 completa** (jul 2026). Lo esencial:
+
+- 0.3: juego decompilado en `decompiled/` (3.107 `.nut` + los 239 JS/CSS de
+  `ui/`, sin minificar); kit de Adam Milazzo en `tools/`. Un solo `.cnut`
+  falla (evento dlc4, bug de NutCracker).
+- 0.4: **puente decidido = tail de `log.html`** (100 ms de polling,
+  `LogBridge.cs`), protocolo `UB_MSG:{"canal","texto"}` emitido solo por
+  `::UnseenBanner.sendMessage`. Latencia verificada de oído: imperceptible.
+- Hallazgo clave: el motor **no** entrega teclado al DOM de Coherent; las
+  teclas se capturan en Squirrel (`onKeyInput` del estado; códigos del enum
+  del motor en `KeyMapSQ` de MSU) y se reenvían al JS vía `asyncCall`.
+- 1.2 parcial: cursor de teclado sobre el menú principal funcionando y
+  verificado (flechas + Enter, canal interrupt).
+- 0.6: falta solo el empaquetado para Nexus (→ 5.3).
+
 El log verificado está en `C:\Users\alfre\OneDrive\Documentos\Battle Brothers\log.html`.
 
 **Cómo se lanza el juego en desarrollo**: `dev_install.bat` y luego
