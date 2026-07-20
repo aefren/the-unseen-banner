@@ -64,6 +64,12 @@ namespace TheUnseenBanner.Companion
             if (!_ready) return;
             if (string.IsNullOrEmpty(text)) return;
 
+            // TextCleaner is defensive itself, but keep the original here too so
+            // that even a future regression in cleanup can never silence speech.
+            string original = text;
+            try { text = TextCleaner.Clean(text); }
+            catch { text = original; }
+
             text = text.Trim();
             if (text.Length == 0) return;
 
