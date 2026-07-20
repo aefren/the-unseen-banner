@@ -24,8 +24,9 @@ Puntos clave verificados en la prospección:
 - JS limitado a **ES3** (Chromium 48).
 - El juego está **terminado** (último DLC 2021): los anclajes no caducan.
 - El log del juego se escribe como HTML en
-  `Documentos\Battle Brothers\log.html` (`::logInfo` desde Squirrel) —
-  verificar la ruta exacta en la primera sesión.
+  `Documentos\Battle Brothers\log.html` (`::logInfo` desde Squirrel).
+  Ruta verificada en esta máquina (Documentos redirigido a OneDrive):
+  `C:\Users\alfre\OneDrive\Documentos\Battle Brothers\log.html`.
 
 ## Herramientas
 
@@ -92,17 +93,26 @@ puro, luego menús, luego combate, luego mundo, luego pulido. Cada ítem queda
 
 ### Fase 0 — El puente (bloqueante, todo lo demás depende de esto)
 
-- [ ] 0.1 Copia local + `steam_appid.txt` = `365360`
+- [x] 0.1 Copia local + `steam_appid.txt` = `365360`
       (ver [desarrollo-copia-local-sin-steam.md](desarrollo-copia-local-sin-steam.md)).
-- [ ] 0.2 Instalar Modern Hooks + MSU + UI Inspector; confirmar que un hook
+- [x] 0.2 Instalar Modern Hooks + MSU + UI Inspector; confirmar que un hook
       Squirrel trivial y un JS inyectado trivial corren en nuestra copia.
+      **Hecho** (jul 2026): Modern Hooks 0.6.0 + MSU 1.9.0 (zips de GitHub en
+      `Battle Brothers/data/`) y `mod/` en el repo con el smoke test: preload,
+      función encolada, hook de clase sobre `root_state` y JS inyectado que
+      llama de vuelta a Squirrel — las cuatro señales visibles en `log.html`
+      sin errores. Bonus: el viaje JS→Squirrel ya funciona (`registerScreen` +
+      `::UI.connect` + `SQ.call`), lo que despeja parte del 0.4.
+      *Pendiente:* Awesome UI Inspector solo está en Nexus (mod 744) y
+      requiere descarga manual con cuenta.
 - [ ] 0.3 `massdecompile` sobre los `.dat` → árbol de `.nut` legibles en el
       repo (gitignorado: es código del juego con copyright).
 - [ ] 0.4 **Spike del puente:** ¿permite Coherent WebSocket/XHR a localhost?
       ¿Funciona `MutationObserver`? Si no → medir latencia del tail de
       `log.html`. Decidir puente y congelar el protocolo de mensajes.
-- [ ] 0.5 App compañera mínima: recibe mensaje → lo habla por Tolk. Oír
+- [x] 0.5 App compañera mínima: recibe mensaje → lo habla por Tolk. Oír
       "Battle Brothers accessibility loaded" con NVDA al arrancar el juego.
+      **Hecho**: `companion/` habla por Tolk/NVDA al arrancar (verificado).
 - [ ] 0.6 Scripts `dev-install`/`dev-uninstall` + build empaquetable.
 
 ### Fase 1 — Texto puro (máximo valor / mínimo riesgo)

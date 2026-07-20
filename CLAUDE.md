@@ -53,10 +53,13 @@ pensado para que cambiar de puente no obligue a tocar los hooks.
 
 ### Estado actual
 
-Fase 0 en curso: ✅ 0.1 (copia local + `steam_appid.txt`), ✅ 0.5 (compañera mínima
-hablando por NVDA). Pendientes: 0.2 (instalar Modern Hooks/MSU/UI Inspector),
-0.3 (`massdecompile`), 0.4 (spike del puente), 0.6 (scripts dev-install).
-Solo existe `companion/` — no hay aún código de mod (Squirrel ni JS).
+Fase 0 en curso: ✅ 0.1 (copia local + `steam_appid.txt`), ✅ 0.2 (Modern Hooks
+0.6.0 + MSU 1.9.0 instalados; smoke test en `mod/` verificado vía `log.html` —
+falta solo el UI Inspector, descarga manual de Nexus), ✅ 0.5 (compañera mínima
+hablando por NVDA). Pendientes: 0.3 (`massdecompile`), 0.4 (spike del puente),
+0.6 (scripts dev-install). El viaje JS→Squirrel (`registerScreen` +
+`::UI.connect` + `SQ.call`) ya está demostrado por el smoke test.
+El log verificado está en `C:\Users\alfre\OneDrive\Documentos\Battle Brothers\log.html`.
 
 El roadmap completo por fases está en [docs/arquitectura-propuesta-y-roadmap.md](docs/arquitectura-propuesta-y-roadmap.md).
 **Léelo antes de planificar trabajo nuevo**, junto con
@@ -65,6 +68,10 @@ que destila lo aprendido en los dos mods anteriores.
 
 ### Estructura
 
+- `mod/` — el mod en sí (Squirrel + JS). `scripts/!mods_preload/` registra con
+  Modern Hooks; `ui/mods/mod_unseen_banner/` es el JS inyectado (ES3). Se
+  empaqueta como zip en `Battle Brothers/data/` (por ahora a mano con
+  `tar -a -cf`; la tarea 0.6 lo automatiza).
 - `companion/` — app compañera .NET 8 x64, proceso aparte del juego.
   `Tolk.cs` (P/Invoke), `Speech.cs` (envoltorio defensivo), `L10n.cs` (strings propios).
 - `plugin/` — `Tolk.dll` + `nvdaControllerClient64.dll`, versionadas; el `.csproj`
