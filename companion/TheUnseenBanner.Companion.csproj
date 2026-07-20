@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- nvdaControllerClient64.dll is 64-bit; Tolk.dll must match the process. -->
+    <PlatformTarget>x64</PlatformTarget>
+    <RootNamespace>TheUnseenBanner.Companion</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Tolk.dll + nvdaControllerClient64.dll live in ../plugin (versioned, shared
+         with any future in-process bridge). Copy them next to the built exe so the
+         P/Invoke loader finds them by plain name. -->
+    <None Include="..\plugin\Tolk.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="..\plugin\nvdaControllerClient64.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Translation overrides (lang/<code>.lang, see L10n.cs). None exist yet. -->
+    <None Include="lang\**\*.lang" Condition="Exists('lang')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

@@ -12,6 +12,10 @@ build/
 dist/
 *.zip
 
+# .NET (companion/)
+bin/
+obj/
+
 # Basura de sistema
 Thumbs.db
 Desktop.ini
