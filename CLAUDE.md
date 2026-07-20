@@ -110,6 +110,6 @@ pedir confirmación auditiva explícita antes de darlo por bueno o hacer commit.
 
 ## Commits
 
-- Mensajes en español, cuerpo explicando el porqué.
+- Mensajes **en inglés**, cuerpo explicando el porqué.
 - **Sin co-autoría**: no añadir `Co-Authored-By`, ni "Generated with Claude Code",
   ni ningún trailer. El único autor es `alfred <alfred.hl@gmail.com>`.
