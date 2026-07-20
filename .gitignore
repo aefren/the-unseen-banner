@@ -11,6 +11,12 @@ tools/
 build/
 dist/
 *.zip
+*.7z
+
+# Binarios de terceros en plugin/ (se restauran desde los .7z locales / Nexus)
+plugin/UI Inspector/bb-ui-inspector/
+plugin/bb-launcher-steam.exe
+plugin/CoherentUIGTDevelopment.dll
 
 # .NET (companion/)
 bin/

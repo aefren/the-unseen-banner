@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Qué es este proyecto
 
@@ -54,22 +54,12 @@ pensado para que cambiar de puente no obligue a tocar los hooks.
 ### Estado actual
 
 Fase 0 en curso: ✅ 0.1 (copia local + `steam_appid.txt`), ✅ 0.2 (Modern Hooks
-0.6.0 + MSU 1.9.0 + UI Inspector; smoke test en `mod/` verificado vía
-`log.html`), ✅ 0.5 (compañera mínima hablando por NVDA), ✅ 0.6 en lo esencial
-(`dev_install.bat`/`dev_uninstall_mod.bat`; falta el empaquetado para Nexus).
-Pendientes: 0.3 (`massdecompile`), 0.4 (spike del puente). El viaje
-JS→Squirrel (`registerScreen` + `::UI.connect` + `SQ.call`) ya está demostrado
-por el smoke test.
+0.6.0 + MSU 1.9.0 en `plugin/`; smoke test en `mod/` verificado vía `log.html` —
+falta solo el UI Inspector, descarga manual de Nexus), ✅ 0.5 (compañera mínima
+hablando por NVDA). Pendientes: 0.3 (`massdecompile`), 0.4 (spike del puente),
+0.6 (scripts dev-install). El viaje JS→Squirrel (`registerScreen` +
+`::UI.connect` + `SQ.call`) ya está demostrado por el smoke test.
 El log verificado está en `C:\Users\alfre\OneDrive\Documentos\Battle Brothers\log.html`.
-
-**Cómo se lanza el juego en desarrollo**: `dev_install.bat` y luego
-`Battle Brothers/win32/bb-launcher-steam.exe` (launcher de
-[awesome-battle-brothers](https://github.com/shabbywu/awesome-battle-brothers):
-carga el exe parcheado en memoria, activa `CoherentUIGTDevelopment.dll` y abre
-el debugger de Coherent en `127.0.0.1:19999`). El UI Inspector
-(`plugin/UI Inspector/bb-ui-inspector/bb-ui-inspector.exe`) corre desde
-`plugin/` y se conecta a ese puerto; el mismo puerto habla el protocolo
-DevTools por WebSocket (`/devtools/page/0`), utilizable también por scripts.
 
 El roadmap completo por fases está en [docs/arquitectura-propuesta-y-roadmap.md](docs/arquitectura-propuesta-y-roadmap.md).
 **Léelo antes de planificar trabajo nuevo**, junto con
@@ -137,5 +127,5 @@ pedir confirmación auditiva explícita antes de darlo por bueno o hacer commit.
 ## Commits
 
 - Mensajes **en inglés**, cuerpo explicando el porqué.
-- **Sin co-autoría**: no añadir `Co-Authored-By`, ni "Generated with Claude Code",
+- **Sin co-autoría**: no añadir `Co-Authored-By`, ni "Generated with Codex",
   ni ningún trailer. El único autor es `alfred <alfred.hl@gmail.com>`.

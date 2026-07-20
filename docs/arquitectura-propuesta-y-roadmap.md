@@ -107,8 +107,17 @@ puro, luego menús, luego combate, luego mundo, luego pulido. Cada ítem queda
       la regla de no tocar la carpeta del juego a mano y los zips viven en
       `plugin/`. El camino a `data/` (el motor solo escanea ahí) son los
       scripts de la 0.6.
-      *Pendiente:* Awesome UI Inspector solo está en Nexus (mod 744) y
-      requiere descarga manual con cuenta.
+      UI Inspector instalado y verificado (jul 2026): los 7z de Nexus (mods
+      744 y 719) viven en `plugin/`. El launcher `bb-launcher-steam.exe`
+      ([awesome-battle-brothers](https://github.com/shabbywu/awesome-battle-brothers))
+      se instala en `win32/` vía `dev_install.bat`, carga el exe en memoria,
+      activa `CoherentUIGTDevelopment.dll` y abre el debugger de Coherent en
+      `127.0.0.1:19999` (WebSocket DevTools en `/devtools/page/0`, handshake
+      verificado con el juego corriendo). `bb-ui-inspector.exe` corre desde
+      `plugin/UI Inspector/` sin tocar el juego. Su `settings.toml` (generado
+      en la raíz del juego; lo borra el uninstall) enumera los mods de
+      `data/`; su opción de rutas absolutas está desactivada por inestable,
+      así que los zips siguen entrando por `data/` vía el bat.
 - [ ] 0.3 `massdecompile` sobre los `.dat` → árbol de `.nut` legibles en el
       repo (gitignorado: es código del juego con copyright).
 - [ ] 0.4 **Spike del puente:** ¿permite Coherent WebSocket/XHR a localhost?
@@ -117,10 +126,12 @@ puro, luego menús, luego combate, luego mundo, luego pulido. Cada ítem queda
 - [x] 0.5 App compañera mínima: recibe mensaje → lo habla por Tolk. Oír
       "Battle Brothers accessibility loaded" con NVDA al arrancar el juego.
       **Hecho**: `companion/` habla por Tolk/NVDA al arrancar (verificado).
-- [ ] 0.6 Scripts `dev_install.bat` (copia lo de `plugin/` a
-      `Battle Brothers/data/`) y `dev_uninstall_mod.bat` (lo retira dejando el
-      juego intacto) + build empaquetable. Único camino permitido hacia la
-      carpeta del juego.
+- [x] 0.6 Scripts `dev_install.bat` (reempaqueta `mod/` → `plugin/` y copia
+      zips a `data/` + launcher y DLL de desarrollo a `win32/`) y
+      `dev_uninstall_mod.bat` (lo retira todo, incluido el `settings.toml`
+      generado, dejando el juego intacto). Único camino permitido hacia la
+      carpeta del juego. *Pendiente:* build empaquetable para distribución
+      (Nexus), se hará en 5.3.
 
 ### Fase 1 — Texto puro (máximo valor / mínimo riesgo)
 
