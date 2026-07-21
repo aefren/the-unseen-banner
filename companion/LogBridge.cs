@@ -111,11 +111,15 @@ namespace TheUnseenBanner.Companion
                 string categoria = GetOptionalString(root, "categoria");
                 string valor = GetOptionalString(root, "valor");
                 string detalle = GetOptionalString(root, "detalle");
-                string spoken = categoria == "tile.readout"
-                    ? ComposeTileReadout(valor, texto, detalle)
-                    : categoria.Length > 0
+                string spoken = categoria switch
+                {
+                    "tile.readout" => ComposeTileReadout(valor, texto, detalle),
+                    "combat.skill.selected" => ComposeSkillSelected(texto, valor, detalle),
+                    "combat.move" => ComposeMove(valor),
+                    _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
-                        : texto;
+                        : texto,
+                };
                 Speech.Speak(spoken, interrupt: canal == "interrupt");
             }
             catch (Exception e)
@@ -159,9 +163,57 @@ namespace TheUnseenBanner.Companion
             };
 
             string position = ComposePosition(distText, dirText);
-            return position.Length > 0
+            string readout = position.Length > 0
                 ? terrainText + ". " + occupant + ". " + position
                 : terrainText + ". " + occupant + ".";
+
+            // With a skill armed the Squirrel side packs two extra fields: whether
+            // the tile is a legal target ("1"/"0") and, for an attackable actor on
+            // it, the hit chance (an int, or "-" when it does not apply).
+            string target = ComposeTarget(parts);
+            return target.Length > 0 ? readout + " " + target : readout;
+        }
+
+        /// <summary>The target-preview clause of a tile readout while a skill is
+        /// armed (phase 3.3): empty when no skill is armed, otherwise "valid" /
+        /// "not a valid target" and the hit chance when there is an actor to hit.
+        /// </summary>
+        private static string ComposeTarget(string[] parts)
+        {
+            if (parts.Length <= 3) return "";
+
+            string targetable = parts[3];
+            if (targetable == "0") return L10n.T("tile.target.invalid");
+            if (targetable != "1") return "";
+
+            string hitText = parts.Length > 4 ? parts[4] : "-";
+            return int.TryParse(hitText, out int hit)
+                ? L10n.F("tile.target.hit", hit)
+                : L10n.T("tile.target.valid");
+        }
+
+        /// <summary>Compose a skill-armed announcement (phase 3.3). detail is
+        /// "fatigue|targeted"; the "choose a target" cue is added only for a
+        /// targeted skill, since a non-targeted one has already fired.</summary>
+        private static string ComposeSkillSelected(string name, string ap, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string fatigue = parts.Length > 0 ? parts[0] : "0";
+            bool targeted = parts.Length > 1 && parts[1] == "1";
+
+            string basePart = L10n.F("combat.skill.selected", name, ap, fatigue);
+            return targeted
+                ? basePart + " " + L10n.T("combat.skill.choose_target")
+                : basePart;
+        }
+
+        /// <summary>Compose a movement announcement (phase 3.3): the tile count the
+        /// active man will actually travel this turn, singular-aware.</summary>
+        private static string ComposeMove(string tilesText)
+        {
+            return tilesText == "1"
+                ? L10n.T("combat.move.one")
+                : L10n.F("combat.move", tilesText);
         }
 
         /// <summary>Turn a hex distance and direction (0-5, or -1 for none) into a

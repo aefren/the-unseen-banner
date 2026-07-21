@@ -11,7 +11,8 @@
 	MenuNav = null,
 	EventNav = null,
 	TileCursor = null,
-	CombatLog = null
+	CombatLog = null,
+	Combat = null
 };
 
 ::UnseenBanner.Mod = ::Hooks.register(::UnseenBanner.ID, ::UnseenBanner.Version, ::UnseenBanner.Name);
@@ -218,7 +219,11 @@
 	m = {
 		CursorTile = null,
 		LastActiveID = -1,
-		EnemyIndex = -1
+		EnemyIndex = -1,
+		// Skill armed on the active man while the cursor is being moved, so the
+		// readout can add "valid target, N% to hit" for the tile under it. Set
+		// afresh from tactical_state on every key, null when nothing is armed.
+		CurrentSkill = null
 	},
 	// Engine key code -> hex direction (Const.Direction: N=0, NE=1, SE=2, S=3,
 	// SW=4, NW=5). Q/W/E map to the upper three neighbours, A/S/D to the lower.
@@ -248,19 +253,38 @@
 		this.m.CursorTile = null;
 		this.m.LastActiveID = -1;
 		this.m.EnemyIndex = -1;
+		this.m.CurrentSkill = null;
 	},
-	function onKey(_code, _active, _entities, _shift = false)
+	// Re-anchor on the active man on the first key of a turn (or the first key
+	// ever), so the cursor always starts from a known reference and any tile held
+	// from a previous turn/battle is dropped before use. A new turn also restarts
+	// enemy cycling from the nearest. Shared by onKey and getTile so acting on the
+	// focused tile never reads a stale cursor.
+	function ensureAnchored(_active)
 	{
-		// Re-anchor on the active man on the first key of a turn (or the first
-		// key ever), so the cursor always starts from a known reference and any
-		// tile reference held from a previous battle is dropped before use. A new
-		// turn also restarts enemy cycling from the nearest.
 		if (this.m.CursorTile == null || this.m.LastActiveID != _active.getID())
 		{
 			this.m.CursorTile = _active.getTile();
 			this.m.LastActiveID = _active.getID();
 			this.m.EnemyIndex = -1;
 		}
+	},
+	function getTile(_active)
+	{
+		this.ensureAnchored(_active);
+		return this.m.CursorTile;
+	},
+	function onKey(_code, _active, _entities, _shift = false, _state = null)
+	{
+		// A targeted skill armed on the active man turns the survey into a target
+		// preview: announce() then adds validity + hit chance for the cursor tile.
+		this.m.CurrentSkill = null;
+		if (_state != null && _state.getSelectedSkillID() != null)
+		{
+			this.m.CurrentSkill = _active.getSkills().getSkillByID(_state.getSelectedSkillID());
+		}
+
+		this.ensureAnchored(_active);
 
 		if (_code in this.RecenterKeys)
 		{
@@ -355,8 +379,27 @@
 			if (dist > 0) dir = activeTile.getDirectionTo(tile);
 		}
 
-		::UnseenBanner.sendMessage("interrupt", name, "tile.readout",
-			"" + tile.Type, kind + "|" + dist + "|" + dir);
+		local detail = kind + "|" + dist + "|" + dir;
+
+		// With a skill armed, tack on two more fields so the companion can say
+		// whether the tile is a legal target and, for an attackable actor on it,
+		// the hit chance the game itself would show. isUsableOn folds in range,
+		// line of sight and the skill's own onVerifyTarget, so it is the single
+		// source of truth the mouse cursor uses too.
+		if (this.m.CurrentSkill != null)
+		{
+			local targetable = this.m.CurrentSkill.isUsableOn(tile) ? "1" : "0";
+			local hit = "-";
+			if (targetable == "1" && !tile.IsEmpty)
+			{
+				local e = tile.getEntity();
+				if (e != null && !e.isHiddenToPlayer() && e.isAttackable())
+					hit = "" + this.m.CurrentSkill.getHitchance(e);
+			}
+			detail += "|" + targetable + "|" + hit;
+		}
+
+		::UnseenBanner.sendMessage("interrupt", name, "tile.readout", "" + tile.Type, detail);
 	}
 };
 
@@ -387,6 +430,132 @@
 			if (ch != " " && ch != "\n" && ch != "\r" && ch != "\t") out += ch;
 		}
 		return out;
+	}
+};
+
+// Acting on the focused tile (phase 3.3). The tile cursor lets a blind player
+// survey the field; this is the other half — committing to a tile. One key, G
+// (the letter cluster's numpad is the vanilla skill hotkeys and enter/F already
+// end the turn, so G is the free ergonomic neighbour of the cursor cluster):
+//   - with a skill armed (selected by its number hotkey), G uses it on the
+//     cursor tile via the game's own executeEntitySkill, which validates the
+//     target and, on a bad one, logs "Invalid target!" — already narrated by the
+//     combat log, so nothing is announced twice here;
+//   - with nothing armed, G walks the active man to the cursor tile, reusing the
+//     engine navigator exactly as a mouse click would (compute the path, then
+//     hand off to the TravelPath action state that tactical_state.onUpdate
+//     already drains frame by frame).
+// Skill *selection* itself is narrated from the setActionStateBySkill funnel
+// below, not here.
+::UnseenBanner.Combat = {
+	ActKeys = {
+		[17] = true // g -> act on the focused tile
+	},
+	function handles(_code)
+	{
+		return _code in this.ActKeys;
+	},
+	function onKey(_code, _active, _state, _cursorTile)
+	{
+		if (!(_code in this.ActKeys)) return;
+
+		// No cursor move yet this turn: fall back to the man's own tile, so a
+		// self-targeted skill still fires and a move is simply a no-op.
+		if (_cursorTile == null) _cursorTile = _active.getTile();
+
+		if (_state.getSelectedSkillID() != null)
+		{
+			_state.executeEntitySkill(_active, _cursorTile);
+		}
+		else
+		{
+			this.moveActiveTo(_active, _state, _cursorTile);
+		}
+	},
+	// Mirrors tactical_state.computeEntityPath's navigator setup and then trips
+	// the TravelPath state the way executeEntityTravel does. Kept faithful to the
+	// vanilla settings block on purpose: the navigator is native (no .nut to
+	// reuse), so this is the one place the mod restates engine internals.
+	function moveActiveTo(_active, _state, _tile)
+	{
+		if (_tile.ID == _active.getTile().ID)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.move.here");
+			return;
+		}
+
+		if (!_tile.IsDiscovered)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.move.blocked");
+			return;
+		}
+
+		if (_active.getCurrentProperties().IsRooted)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.move.rooted");
+			return;
+		}
+
+		// NB: Tactical/Const are root-table globals, not state members. Vanilla
+		// code reads them as "this.Tactical" only because indexing `this` falls
+		// back to the root table; indexing a local (_state.Tactical) does not.
+		local nav = ::Tactical.getNavigator();
+		local settings = nav.createSettings();
+		settings.ActionPointCosts = _active.getActionPointCosts();
+		settings.FatigueCosts = _active.getFatigueCosts();
+		settings.FatigueCostFactor = ::Const.Movement.FatigueCostFactor;
+		settings.ActionPointCostPerLevel = _active.getLevelActionPointCost();
+		settings.FatigueCostPerLevel = _active.getLevelFatigueCost();
+		settings.ZoneOfControlCost = 4;
+		settings.AlliedFactions = _active.getAlliedFactions();
+		settings.Faction = _active.getFaction();
+		settings.AllowZoneOfControlPassing = true;
+		settings.IsPlayer = true;
+
+		if (!nav.findPath(_active.getTile(), _tile, settings, 0))
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.move.blocked");
+			return;
+		}
+
+		// findPath alone only tells the navigator a route exists; buildVisualisation
+		// is the call that actually commits it as the path travel() walks. Every
+		// vanilla path (mouse click -> computeEntityPath) makes both calls before
+		// ever reaching travel(), so skipping this one silently no-ops the move.
+		nav.buildVisualisation(_active, settings, _active.getActionPoints(), _active.getFatigueMax() - _active.getFatigue());
+
+		settings.ZoneOfControlCost = 0;
+		local costs = nav.getCostForPath(_active, settings, _active.getActionPoints(), _active.getFatigueMax() - _active.getFatigue());
+
+		if (costs.Tiles == 0)
+		{
+			// A path exists but not a single tile of it is affordable this turn.
+			nav.clearVisualisation();
+			::UnseenBanner.sendMessage("interrupt", "", "combat.move.no_ap");
+			return;
+		}
+
+		_state.m.LastTileSelected = _tile;
+		_state.m.CurrentActionState = ::Const.Tactical.ActionState.TravelPath;
+		_state.m.ActiveEntityNeedsUpdate = true;
+		nav.clearVisualisation();
+		::Tactical.getHighlighter().clear();
+		::Tactical.getShaker().cancel(_active);
+
+		if (::Tactical.getCamera().Level < _tile.Level)
+		{
+			::Tactical.getCamera().Level = _tile.Level;
+		}
+
+		::UnseenBanner.sendMessage("interrupt", "" + costs.Tiles, "combat.move");
+	},
+	// Narrates a skill the moment it is armed and awaiting a target. Called from
+	// the setActionStateBySkill hook once the vanilla logic has run.
+	function onSkillActivated(_skill, _state)
+	{
+		local targeted = _skill.isTargeted() ? "1" : "0";
+		::UnseenBanner.sendMessage("interrupt", _skill.getName(), "combat.skill.selected",
+			"" + _skill.getActionPointCost(), _skill.getFatigueCost() + "|" + targeted);
 	}
 };
 
@@ -535,7 +704,9 @@
 	q.onKeyInput = @(__original) function( _key )
 	{
 		local code = _key.getKey();
-		if (::UnseenBanner.TileCursor.handles(code)
+		local isCursorKey = ::UnseenBanner.TileCursor.handles(code);
+		local isActKey = ::UnseenBanner.Combat.handles(code);
+		if ((isCursorKey || isActKey)
 			&& !this.isInLoadingScreen()
 			&& !this.isBattleEnded()
 			&& !this.isInCharacterScreen()
@@ -545,9 +716,15 @@
 			local active = this.Tactical.TurnSequenceBar.getActiveEntity();
 			if (active != null && active.isPlayerControlled())
 			{
+				// Act on release only (state 0), matching the cursor keys, so a
+				// held key never fires the action twice; the press is still
+				// consumed so no vanilla behavior leaks through.
 				if (_key.getState() == 0)
 				{
-					::UnseenBanner.TileCursor.onKey(code, active, this.Tactical.Entities, (_key.getModifier() & 1) != 0);
+					if (isCursorKey)
+						::UnseenBanner.TileCursor.onKey(code, active, this.Tactical.Entities, (_key.getModifier() & 1) != 0, this);
+					else
+						::UnseenBanner.Combat.onKey(code, active, this, ::UnseenBanner.TileCursor.getTile(active));
 				}
 				return true;
 			}
@@ -555,4 +732,52 @@
 
 		return __original(_key);
 	}
+
+	// Skill selection funnel (phase 3.3). Both the number/numpad hotkeys and
+	// clicking a skill button end up in setActionStateBySkill, so it is the one
+	// place to catch a skill being armed. cancelEntitySkill is the matching funnel
+	// for a skill being let go (re-pressing its hotkey, right-click, or cancelling
+	// the action), so the deselection is announced from there. Using a skill
+	// (executeEntitySkill) clears the selection on its own without either funnel,
+	// and its effect is already spoken by the combat log, so it stays silent here.
+	q.setActionStateBySkill = @(__original) function( _activeEntity, _skill )
+	{
+		// A toggle-off (same skill, already selected) is a deselection handled by
+		// cancelEntitySkill.
+		local wasThisSelected = this.m.SelectedSkillID == _skill.getID()
+			&& this.m.CurrentActionState == this.Const.Tactical.ActionState.SkillSelected;
+
+		__original(_activeEntity, _skill);
+
+		// Announce only once the skill is genuinely armed and awaiting a target —
+		// which is exactly the targeted case 3.3 is about (valid targets + hit
+		// chance before confirming). This also sidesteps every early-return in the
+		// vanilla method (battle ended, mid-travel, mid-skill): those leave the
+		// state untouched, so this condition stays false. A non-targeted skill
+		// fires immediately and is narrated by the combat log instead.
+		if (!wasThisSelected
+			&& this.m.SelectedSkillID == _skill.getID()
+			&& this.m.CurrentActionState == this.Const.Tactical.ActionState.SkillSelected)
+		{
+			::UnseenBanner.Combat.onSkillActivated(_skill, this);
+		}
+	}
+
+	q.cancelEntitySkill = @(__original) function( _activeEntity )
+	{
+		local name = "";
+		if (this.m.SelectedSkillID != null)
+		{
+			local skill = _activeEntity.getSkills().getSkillByID(this.m.SelectedSkillID);
+			if (skill != null) name = skill.getName();
+		}
+
+		__original(_activeEntity);
+
+		if (name != "")
+		{
+			::UnseenBanner.sendMessage("interrupt", name, "combat.skill.deselected");
+		}
+	}
 });
+

@@ -222,8 +222,20 @@ objetos, estados, terreno… todo vive ahí).
       activo. Z / Shift+Z ciclan los enemigos vivos y visibles ordenados por
       distancia (`getAllHostilesAsArray`), dejando C libre para la ficha de
       personaje nativa. Puro Squirrel. Verificado de oído.
-- [ ] 3.3 Skills del hermano activo (ya tienen atajos numéricos): narrar
-      selección, objetivos válidos y % de acierto antes de confirmar.
+- [x] 3.3 Skills del hermano activo (ya tienen atajos numéricos): narrar
+      selección, objetivos válidos y % de acierto antes de confirmar, y actuar
+      sobre la casilla enfocada por el cursor. **Hecho** (jul 2026): al armar
+      una skill dirigida (embudo `setActionStateBySkill`) se narra nombre +
+      coste de AP/fatiga + "choose a target"; con la skill armada el cursor de
+      hexágonos añade "valid target, N% to hit" / "not a valid target"
+      (`isUsableOn` + `getHitchance`, las APIs del cursor de ratón). Una sola
+      tecla, **G**, confirma sobre la casilla del cursor: con skill armada la usa
+      vía `executeEntitySkill` (el motor loguea "Invalid target!", ya narrado por
+      3.1); sin skill, mueve al hermano replicando el bloque de
+      `computeEntityPath` + `buildVisualisation` y cediendo al estado `TravelPath`
+      que el `onUpdate` drena. Trampa cazada: `Tactical`/`Const` son globales de
+      la raíz — hay que leerlos como `::Tactical`, no `_state.Tactical`. Puro
+      Squirrel salvo cadenas en `L10n`. Verificado de oído.
 - [ ] 3.4 Readouts a demanda: tecla para estado del hermano activo, tecla para
       orden de turnos, tecla para resumen de enemigos (patrón Tab/Shift+Tab).
 - [ ] 3.5 Inicio/fin de turno, moral, heridas y muertes como eventos hablados.

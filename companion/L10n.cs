@@ -119,6 +119,21 @@ namespace TheUnseenBanner.Companion
             ["tile.position"] = "{0} tiles, {1} o'clock",
             ["tile.position.one"] = "1 tile, {0} o'clock",
             ["tile.no_enemies"] = "No enemies in sight.",
+            // Target preview appended to the tile readout while a skill is armed
+            // (phase 3.3).
+            ["tile.target.valid"] = "Valid target.",
+            ["tile.target.invalid"] = "Not a valid target.",
+            ["tile.target.hit"] = "Valid target, {0} percent to hit.",
+            // Skill selection and acting on the focused tile (phase 3.3).
+            ["combat.skill.selected"] = "{0}. {1} action points, {2} fatigue.",
+            ["combat.skill.choose_target"] = "Choose a target.",
+            ["combat.skill.deselected"] = "{0}, deselected.",
+            ["combat.move"] = "Moving {0} tiles.",
+            ["combat.move.one"] = "Moving 1 tile.",
+            ["combat.move.here"] = "Already there.",
+            ["combat.move.blocked"] = "Can't reach that tile.",
+            ["combat.move.no_ap"] = "Not enough action points to move.",
+            ["combat.move.rooted"] = "You are rooted and can't move.",
         };
     }
 }
