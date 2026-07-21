@@ -207,10 +207,21 @@ objetos, estados, terreno… todo vive ahí).
 
 ### Fase 3 — Combate táctico (por turnos = narrable al completo)
 
-- [ ] 3.1 Log de combate → canal cola (cada línea, limpia, en orden — la
-      lección FIFO de F&H1 aplica literalmente).
-- [ ] 3.2 Cursor de hexágonos por teclado: casilla enfocada → terreno, altura,
-      ocupante, distancia y dirección respecto al hermano activo (interrupt).
+- [x] 3.1 Log de combate → canal cola. **Hecho** (jul 2026): se engancha el
+      embudo `log()`/`logEx()` de `tactical_screen_topbar_event_log` (por donde
+      ya pasa cada línea ya renderizada y localizada: golpes, fallos, muertes,
+      moral, rondas) y se reenvía tal cual por la cola — la lección FIFO de
+      F&H1 aplica literalmente. Puro Squirrel, sin JS. Verificado de oído.
+- [x] 3.2 Cursor de hexágonos por teclado. **Hecho** (jul 2026): cursor que
+      arranca en el hermano activo y recorre los 6 vecinos hexagonales
+      (`tile.getNextTile`), anunciando terreno + ocupante (vacío/aliado/
+      enemigo, respetando niebla de guerra) + distancia y dirección en
+      formato reloj (`tile.getDirectionTo`, 12 = norte) respecto al hermano
+      activo (canal interrupt). Teclas Q/W/E/A/S/D (el numpad son los atajos
+      nativos de skill 1-10, no se pudo reutilizar); X recentra en el hermano
+      activo. Z / Shift+Z ciclan los enemigos vivos y visibles ordenados por
+      distancia (`getAllHostilesAsArray`), dejando C libre para la ficha de
+      personaje nativa. Puro Squirrel. Verificado de oído.
 - [ ] 3.3 Skills del hermano activo (ya tienen atajos numéricos): narrar
       selección, objetivos válidos y % de acierto antes de confirmar.
 - [ ] 3.4 Readouts a demanda: tecla para estado del hermano activo, tecla para

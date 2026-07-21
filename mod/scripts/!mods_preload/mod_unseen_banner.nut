@@ -9,7 +9,9 @@
 	Mod = null,
 	JSConnection = null,
 	MenuNav = null,
-	EventNav = null
+	EventNav = null,
+	TileCursor = null,
+	CombatLog = null
 };
 
 ::UnseenBanner.Mod = ::Hooks.register(::UnseenBanner.ID, ::UnseenBanner.Version, ::UnseenBanner.Name);
@@ -200,6 +202,194 @@
 	}
 };
 
+// Tactical tile cursor (phase 3.2). A keyboard cursor over the hex grid so a
+// blind player can survey the battlefield: it starts on the active man and
+// walks the six hex neighbours, announcing each tile's terrain and what stands
+// on it (nothing / an ally / an enemy, respecting the fog of war). Pure
+// Squirrel — every fact (tile type, occupant, active man) is a Squirrel API,
+// so there is nothing to scrape from the DOM.
+//
+// Keys are the letter cluster Q/W/E/A/S/D (numpad is the game's own skill
+// hotkeys, so it cannot be reused here) plus X to recentre on the active man.
+// The letters double as the vanilla camera pan, which fires on key press; we
+// consume press and release (see the tactical_state hook) so panning never
+// fights the cursor, while the arrow keys keep panning for a sighted tester.
+::UnseenBanner.TileCursor = {
+	m = {
+		CursorTile = null,
+		LastActiveID = -1,
+		EnemyIndex = -1
+	},
+	// Engine key code -> hex direction (Const.Direction: N=0, NE=1, SE=2, S=3,
+	// SW=4, NW=5). Q/W/E map to the upper three neighbours, A/S/D to the lower.
+	DirKeys = {
+		[33] = 0,   // w  -> N
+		[15] = 1,   // e  -> NE
+		[14] = 2,   // d  -> SE
+		[29] = 3,   // s  -> S
+		[11] = 4,   // a  -> SW
+		[27] = 5    // q  -> NW
+	},
+	RecenterKeys = {
+		[34] = true // x -> recentre on the active man
+	},
+	// z steps through the living, visible enemies sorted by distance from the
+	// active man: z alone to the farther, Shift+z to the nearer. c is left
+	// untouched (it opens the vanilla character screen).
+	CycleKeys = {
+		[36] = true // z
+	},
+	function handles(_code)
+	{
+		return (_code in this.DirKeys) || (_code in this.RecenterKeys) || (_code in this.CycleKeys);
+	},
+	function reset()
+	{
+		this.m.CursorTile = null;
+		this.m.LastActiveID = -1;
+		this.m.EnemyIndex = -1;
+	},
+	function onKey(_code, _active, _entities, _shift = false)
+	{
+		// Re-anchor on the active man on the first key of a turn (or the first
+		// key ever), so the cursor always starts from a known reference and any
+		// tile reference held from a previous battle is dropped before use. A new
+		// turn also restarts enemy cycling from the nearest.
+		if (this.m.CursorTile == null || this.m.LastActiveID != _active.getID())
+		{
+			this.m.CursorTile = _active.getTile();
+			this.m.LastActiveID = _active.getID();
+			this.m.EnemyIndex = -1;
+		}
+
+		if (_code in this.RecenterKeys)
+		{
+			this.m.CursorTile = _active.getTile();
+			this.announce(_active);
+			return;
+		}
+
+		if (_code in this.CycleKeys)
+		{
+			this.cycleEnemy(_shift ? -1 : 1, _active, _entities);
+			return;
+		}
+
+		local dir = this.DirKeys[_code];
+		if (this.m.CursorTile.hasNextTile(dir))
+		{
+			this.m.CursorTile = this.m.CursorTile.getNextTile(dir);
+			this.announce(_active);
+		}
+		else
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "tile.edge");
+		}
+	},
+	function cycleEnemy(_step, _active, _entities)
+	{
+		local activeTile = _active.getTile();
+		local scored = [];
+		foreach( e in _entities.getAllHostilesAsArray() )
+		{
+			if (e != null && e.isAlive() && !e.isHiddenToPlayer() && e.getTile() != null)
+			{
+				scored.push({ e = e, d = activeTile.getDistanceTo(e.getTile()) });
+			}
+		}
+
+		if (scored.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "tile.no_enemies");
+			return;
+		}
+
+		scored.sort(function ( _a, _b )
+		{
+			if (_a.d > _b.d) return 1;
+			if (_a.d < _b.d) return -1;
+			return 0;
+		});
+
+		this.m.EnemyIndex += _step;
+		if (this.m.EnemyIndex < 0) this.m.EnemyIndex = scored.len() - 1;
+		if (this.m.EnemyIndex >= scored.len()) this.m.EnemyIndex = 0;
+
+		this.m.CursorTile = scored[this.m.EnemyIndex].e.getTile();
+		this.announce(_active);
+	},
+	function announce(_active)
+	{
+		local tile = this.m.CursorTile;
+		local name = "";
+		local kind = "empty";
+
+		// IsEmpty is false only when an actor stands on the tile, so we can read
+		// the occupant without a class check. isHiddenToPlayer keeps fog-of-war
+		// enemies unspoken, exactly as the vanilla hover logic does.
+		if (!tile.IsEmpty)
+		{
+			local e = tile.getEntity();
+			if (e != null && !e.isHiddenToPlayer())
+			{
+				name = e.getName();
+				if (_active != null && e.getID() == _active.getID())
+					kind = "self";
+				else if (e.isPlayerControlled())
+					kind = "ally";
+				else
+					kind = "enemy";
+			}
+		}
+
+		// Distance in hex tiles and the hex bearing (0-5) from the active man to
+		// the cursor. dir stays -1 on his own tile, which the companion reads as
+		// "no direction". The companion turns dir into a clock position and holds
+		// every spoken word, so no terrain/position string is hardcoded here.
+		local dist = 0;
+		local dir = -1;
+		local activeTile = _active != null ? _active.getTile() : null;
+		if (activeTile != null)
+		{
+			dist = activeTile.getDistanceTo(tile);
+			if (dist > 0) dir = activeTile.getDirectionTo(tile);
+		}
+
+		::UnseenBanner.sendMessage("interrupt", name, "tile.readout",
+			"" + tile.Type, kind + "|" + dist + "|" + dir);
+	}
+};
+
+// Combat log (phase 3.1). The tactical event log is the funnel every combat
+// line already flows through as fully rendered, localized text ("X uses Y and
+// hits Z", deaths, morale, round starts...). We forward each line verbatim on
+// the queue channel — the FIFO lesson from F&H1: combat lines must all be
+// spoken, in order, nothing dropped. No JS: the text is already in Squirrel,
+// so this reads it at the source instead of re-scraping the DOM. BBCode color
+// tags in the text are stripped by TextCleaner on the companion side.
+::UnseenBanner.CombatLog = {
+	function onLine(_text)
+	{
+		if (_text == null) return;
+		// Skip the blank spacer lines the log uses between blocks; they carry
+		// no words and would only add dead air to the speech queue.
+		if (typeof _text != "string" || this.strip(_text) == "") return;
+		::UnseenBanner.sendMessage("queue", _text);
+	}
+	// Whitespace-only check without a regex dependency (plain Squirrel).
+	function strip(_s)
+	{
+		local out = "";
+		local n = _s.len();
+		for (local i = 0; i < n; i += 1)
+		{
+			local ch = _s.slice(i, i + 1);
+			if (ch != " " && ch != "\n" && ch != "\r" && ch != "\t") out += ch;
+		}
+		return out;
+	}
+};
+
 // Engine key codes (see MSU's KeyMapSQ, the reference for this enum).
 // Tunable/remappable keys should eventually go through MSU keybinds and its
 // settings UI (roadmap fase 5, "toda constante afinable va a config").
@@ -303,6 +493,64 @@
 		{
 			::UnseenBanner.EventNav.sendKey(::UnseenBanner.KeyCodes[_key.getKey()]);
 			return true;
+		}
+
+		return __original(_key);
+	}
+});
+
+// Combat log funnel (phase 3.1). Every combat line the game writes to the
+// tactical event log passes through log() / logEx() on this module, so we tap
+// both and forward the text to the companion. log_newline() is left alone: it
+// only emits blank separators. hasBigButtons-style DOM scraping is unnecessary
+// because the text arrives here already rendered and localized.
+::UnseenBanner.Mod.hook("scripts/ui/screens/tactical/modules/topbar/tactical_screen_topbar_event_log", function(q) {
+	q.log = @(__original) function( _text )
+	{
+		__original(_text);
+		::UnseenBanner.CombatLog.onLine(_text);
+	}
+
+	q.logEx = @(__original) function( _text )
+	{
+		__original(_text);
+		::UnseenBanner.CombatLog.onLine(_text);
+	}
+});
+
+// Tile cursor (phase 3.2). onInit resets the cursor for each fresh battle.
+// onKeyInput drives it: while it is the player's turn and input is free, the
+// Q/W/E/A/S/D/X cluster moves the cursor instead of panning the camera. We
+// consume both press and release of those keys (the vanilla camera pan fires
+// on press) so panning never fights the cursor; the arrow keys are left alone,
+// so a sighted tester can still pan. Every other key falls through untouched,
+// including the number-row and numpad skill hotkeys.
+::UnseenBanner.Mod.hook("scripts/states/tactical_state", function(q) {
+	q.onInit = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.TileCursor.reset();
+	}
+
+	q.onKeyInput = @(__original) function( _key )
+	{
+		local code = _key.getKey();
+		if (::UnseenBanner.TileCursor.handles(code)
+			&& !this.isInLoadingScreen()
+			&& !this.isBattleEnded()
+			&& !this.isInCharacterScreen()
+			&& !this.isInputLocked()
+			&& !this.m.MenuStack.hasBacksteps())
+		{
+			local active = this.Tactical.TurnSequenceBar.getActiveEntity();
+			if (active != null && active.isPlayerControlled())
+			{
+				if (_key.getState() == 0)
+				{
+					::UnseenBanner.TileCursor.onKey(code, active, this.Tactical.Entities, (_key.getModifier() & 1) != 0);
+				}
+				return true;
+			}
 		}
 
 		return __original(_key);

@@ -99,6 +99,26 @@ namespace TheUnseenBanner.Companion
             ["menu.banner"] = "Banner {0}.",
             ["event.screen"] = "{0}. {1}",
             ["event.option"] = "Option {1} of {2}: {0}",
+            // Tactical tile readout (phase 3.2). Terrain names keyed by the
+            // engine's TerrainType enum (see config/tactical.nut).
+            ["tile.terrain.0"] = "Impassable",
+            ["tile.terrain.1"] = "Paved ground",
+            ["tile.terrain.2"] = "Flat ground",
+            ["tile.terrain.3"] = "Rough ground",
+            ["tile.terrain.4"] = "Forest",
+            ["tile.terrain.5"] = "Rocks",
+            ["tile.terrain.6"] = "Swamp",
+            ["tile.terrain.7"] = "Sand",
+            ["tile.terrain.8"] = "Shallow water",
+            ["tile.terrain.9"] = "Deep water",
+            ["tile.empty"] = "empty",
+            ["tile.self"] = "{0}, your active man",
+            ["tile.ally"] = "ally {0}",
+            ["tile.enemy"] = "enemy {0}",
+            ["tile.edge"] = "Edge of the battlefield.",
+            ["tile.position"] = "{0} tiles, {1} o'clock",
+            ["tile.position.one"] = "1 tile, {0} o'clock",
+            ["tile.no_enemies"] = "No enemies in sight.",
         };
     }
 }

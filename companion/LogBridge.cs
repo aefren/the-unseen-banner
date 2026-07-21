@@ -111,9 +111,11 @@ namespace TheUnseenBanner.Companion
                 string categoria = GetOptionalString(root, "categoria");
                 string valor = GetOptionalString(root, "valor");
                 string detalle = GetOptionalString(root, "detalle");
-                string spoken = categoria.Length > 0
-                    ? L10n.F(categoria, texto, valor, detalle)
-                    : texto;
+                string spoken = categoria == "tile.readout"
+                    ? ComposeTileReadout(valor, texto, detalle)
+                    : categoria.Length > 0
+                        ? L10n.F(categoria, texto, valor, detalle)
+                        : texto;
                 Speech.Speak(spoken, interrupt: canal == "interrupt");
             }
             catch (Exception e)
@@ -127,6 +129,53 @@ namespace TheUnseenBanner.Companion
             return root.TryGetProperty(name, out JsonElement value)
                 ? value.GetString() ?? ""
                 : "";
+        }
+
+        // Hex direction (0-5, from config/global.nut Const.Direction: N, NE, SE,
+        // S, SW, NW) as a clock face read from the active man: N is 12 o'clock.
+        private static readonly int[] ClockHours = { 12, 2, 4, 6, 8, 10 };
+
+        /// <summary>Compose a tactical tile readout (phase 3.2). The Squirrel side
+        /// sends only semantics — terrain as an enum integer, the occupant's
+        /// already-localized game name, and a packed "kind|distance|direction"
+        /// detail — so every spoken word here (terrain names, "ally"/"enemy", the
+        /// clock position) stays in <see cref="L10n"/>. Kinds: "self", "ally",
+        /// "enemy", anything else is empty. direction is -1 on the active man's
+        /// own tile.</summary>
+        private static string ComposeTileReadout(string terrain, string name, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string kind = parts.Length > 0 ? parts[0] : "";
+            string distText = parts.Length > 1 ? parts[1] : "0";
+            string dirText = parts.Length > 2 ? parts[2] : "-1";
+
+            string terrainText = L10n.T("tile.terrain." + terrain);
+            string occupant = kind switch
+            {
+                "self" => L10n.F("tile.self", name),
+                "ally" => L10n.F("tile.ally", name),
+                "enemy" => L10n.F("tile.enemy", name),
+                _ => L10n.T("tile.empty"),
+            };
+
+            string position = ComposePosition(distText, dirText);
+            return position.Length > 0
+                ? terrainText + ". " + occupant + ". " + position
+                : terrainText + ". " + occupant + ".";
+        }
+
+        /// <summary>Turn a hex distance and direction (0-5, or -1 for none) into a
+        /// spoken "3 tiles, 4 o'clock". Returns empty on the active man's own tile
+        /// or when the direction is out of range.</summary>
+        private static string ComposePosition(string distText, string dirText)
+        {
+            if (!int.TryParse(distText, out int dist) || dist <= 0) return "";
+            if (!int.TryParse(dirText, out int dir) || dir < 0 || dir >= ClockHours.Length) return "";
+
+            string hour = ClockHours[dir].ToString();
+            return dist == 1
+                ? L10n.F("tile.position.one", hour)
+                : L10n.F("tile.position", dist, hour);
         }
     }
 }
