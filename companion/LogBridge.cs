@@ -120,6 +120,9 @@ namespace TheUnseenBanner.Companion
                     "combat.turnorder" => ComposeTurnOrder(texto),
                     "combat.enemies" => ComposeEnemies(texto, valor),
                     "combat.sheet" => ComposeSheet(texto, detalle),
+                    "combat.result.casualties" => L10n.F("combat.result.casualties", JoinNames(texto)),
+                    "combat.result.stats" => ComposeResultStats(texto),
+                    "combat.result.loot" => ComposeResultLoot(texto, valor),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
@@ -163,6 +166,7 @@ namespace TheUnseenBanner.Companion
                 "self" => L10n.F("tile.self", name),
                 "ally" => L10n.F("tile.ally", name),
                 "enemy" => L10n.F("tile.enemy", name),
+                "object" => L10n.F("tile.object", name),
                 _ => L10n.T("tile.empty"),
             };
 
@@ -311,6 +315,50 @@ namespace TheUnseenBanner.Companion
             object At(int i) => i < p.Length ? p[i] : "0";
             return L10n.F("combat.sheet", name,
                 At(0), At(1), At(2), At(3), At(4), At(5), At(6), At(7), At(8), At(9));
+        }
+
+        /// <summary>Join a newline-separated list of already-localized game names
+        /// into a comma-separated phrase, skipping blanks.</summary>
+        private static string JoinNames(string text)
+        {
+            var names = new System.Collections.Generic.List<string>();
+            foreach (string line in text.Split('\n'))
+            {
+                if (line.Length != 0) names.Add(line);
+            }
+
+            return string.Join(", ", names);
+        }
+
+        /// <summary>Compose the post-combat statistics readout (phase 3.6). Each
+        /// line is "name\tkills\txp\tleveled\twounded" (leveled/wounded 1 or 0),
+        /// one per surviving brother.</summary>
+        private static string ComposeResultStats(string text)
+        {
+            var entries = new System.Collections.Generic.List<string>();
+            foreach (string line in text.Split('\n'))
+            {
+                if (line.Length == 0) continue;
+                string[] f = line.Split('\t');
+                if (f.Length < 3) continue;
+
+                string entry = L10n.F("combat.result.stats.entry", f[0], f[1], f[2]);
+                if (f.Length > 3 && f[3] == "1") entry += ", " + L10n.T("combat.result.stats.leveled");
+                if (f.Length > 4 && f[4] == "1") entry += ", " + L10n.T("combat.result.stats.wounded");
+                entries.Add(entry);
+            }
+
+            return L10n.F("combat.result.stats", string.Join(". ", entries));
+        }
+
+        /// <summary>Compose the post-combat loot readout (phase 3.6): a
+        /// newline-separated list of item names and the count in valor.</summary>
+        private static string ComposeResultLoot(string text, string countText)
+        {
+            string list = JoinNames(text);
+            return countText == "1"
+                ? L10n.F("combat.result.loot.one", list)
+                : L10n.F("combat.result.loot", countText, list);
         }
     }
 }

@@ -115,6 +115,7 @@ namespace TheUnseenBanner.Companion
             ["tile.self"] = "{0}, your active man",
             ["tile.ally"] = "ally {0}",
             ["tile.enemy"] = "enemy {0}",
+            ["tile.object"] = "{0}",
             ["tile.edge"] = "Edge of the battlefield.",
             ["tile.position"] = "{0} tiles, {1} o'clock",
             ["tile.position.one"] = "1 tile, {0} o'clock",
@@ -157,6 +158,18 @@ namespace TheUnseenBanner.Companion
             ["combat.round"] = "Round {0}.",
             // Character sheet readout for the C/I screen (first pass).
             ["combat.sheet"] = "{0}. Maximum health {1}. Maximum fatigue {2}. Resolve {3}. Initiative {4}. Melee skill {5}. Ranged skill {6}. Melee defense {7}. Ranged defense {8}. Head armor {9}. Body armor {10}.",
+            // Post-combat result screen (phase 3.6).
+            ["combat.result.casualties"] = "Fallen: {0}.",
+            ["combat.result.stats"] = "Statistics. {0}.",
+            ["combat.result.stats.entry"] = "{0}: {1} kills, {2} XP",
+            ["combat.result.stats.leveled"] = "leveled up",
+            ["combat.result.stats.wounded"] = "wounded",
+            ["combat.result.loot"] = "Loot: {0} items. {1}.",
+            ["combat.result.loot.one"] = "Loot: 1 item. {0}.",
+            ["combat.result.loot.none"] = "No loot.",
+            ["combat.result.loot.taken"] = "All loot taken.",
+            ["combat.result.loot.partial"] = "Stash full. Some loot was left behind.",
+            ["combat.result.hint"] = "Press L to take all loot, Enter to continue, R to repeat.",
         };
     }
 }

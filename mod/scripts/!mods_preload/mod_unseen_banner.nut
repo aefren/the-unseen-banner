@@ -13,7 +13,8 @@
 	TileCursor = null,
 	CombatLog = null,
 	Combat = null,
-	Readout = null
+	Readout = null,
+	CombatResult = null
 };
 
 ::UnseenBanner.Mod = ::Hooks.register(::UnseenBanner.ID, ::UnseenBanner.Version, ::UnseenBanner.Name);
@@ -349,21 +350,33 @@
 		local name = "";
 		local kind = "empty";
 
-		// IsEmpty is false only when an actor stands on the tile, so we can read
-		// the occupant without a class check. isHiddenToPlayer keeps fog-of-war
-		// enemies unspoken, exactly as the vanilla hover logic does.
+		// A non-empty tile can hold an actor OR a non-actor object (cover and
+		// decorations such as a brush), so the actor-only API must be gated by an
+		// isKindOf check — the vanilla hover logic does exactly the same. Calling
+		// getID/isPlayerControlled on a decoration throws and swallows the whole
+		// readout, which is why some tiles went silent. isHiddenToPlayer exists on
+		// both, so fog-of-war is honoured for either.
 		if (!tile.IsEmpty)
 		{
 			local e = tile.getEntity();
 			if (e != null && !e.isHiddenToPlayer())
 			{
 				name = e.getName();
-				if (_active != null && e.getID() == _active.getID())
-					kind = "self";
-				else if (e.isPlayerControlled())
-					kind = "ally";
+				if (::isKindOf(e, "actor"))
+				{
+					if (_active != null && e.getID() == _active.getID())
+						kind = "self";
+					else if (e.isPlayerControlled())
+						kind = "ally";
+					else
+						kind = "enemy";
+				}
 				else
-					kind = "enemy";
+				{
+					// Cover or scenery on the tile — worth calling out (it affects
+					// line of sight and defence) but it is not a combatant.
+					kind = "object";
+				}
 			}
 		}
 
@@ -394,7 +407,7 @@
 			if (targetable == "1" && !tile.IsEmpty)
 			{
 				local e = tile.getEntity();
-				if (e != null && !e.isHiddenToPlayer() && e.isAttackable())
+				if (e != null && ::isKindOf(e, "actor") && !e.isHiddenToPlayer() && e.isAttackable())
 					hit = "" + this.m.CurrentSkill.getHitchance(e);
 			}
 			detail += "|" + targetable + "|" + hit;
@@ -569,8 +582,10 @@
 // pack their entries newline-separated in the message text (game names never
 // contain newlines), each line tagged so the companion can localize the framing.
 ::UnseenBanner.Readout = {
-	// t = active man's status, tab = turn order, b = visible enemies. All are
-	// free of vanilla tactical bindings (see the KeyMapSQ reference memory).
+	// t = active man's status, tab = turn order, b = visible enemies. t and b are
+	// bound in vanilla to purely visual overlay toggles (skill trees / blocked
+	// tiles); our hook consumes them during the player's turn, which a sighted
+	// tester loses but a blind player never needs. tab is unbound in vanilla.
 	Keys = {
 		[30] = "status",   // t
 		[38] = "turnorder", // tab
@@ -680,6 +695,142 @@
 	}
 };
 
+// Post-combat result screen (the Victory/Defeat screen with its statistics and
+// loot). Once the battle ends the tactical state swallows every key, so this
+// screen is mouse-only in vanilla — unreachable by a blind player. Two halves:
+// the whole screen is read aloud when it appears, and three keys make it
+// operable — enter continues, l takes all the loot, r repeats the readout.
+// The outcome line is the game's own rendered text (forwarded verbatim like the
+// combat log); every other word is the companion's.
+::UnseenBanner.CombatResult = {
+	Keys = {
+		[39] = "continue", // enter -> leave, same as the Continue button
+		[22] = "lootall",  // l -> take all loot into the stash
+		[28] = "repeat"    // r -> read the outcome and statistics again
+	},
+	function handles(_code)
+	{
+		return _code in this.Keys;
+	},
+	function onKey(_code, _state)
+	{
+		local screen = _state.m.TacticalCombatResultScreen;
+		if (screen == null) return;
+
+		local what = this.Keys[_code];
+		if (what == "continue") screen.onLeaveButtonPressed();
+		else if (what == "lootall") this.lootAll(screen);
+		else if (what == "repeat") this.announce(screen);
+	},
+	function announce(_screen)
+	{
+		// Outcome first, as the game's own sentence ("Victory. The enemy was
+		// destroyed in 3 rounds.").
+		local info = _screen.onQueryCombatInformation();
+		if (info != null)
+		{
+			local line = info.title;
+			if (info.subTitle != null && info.subTitle != "") line += ". " + info.subTitle;
+			::UnseenBanner.sendMessage("queue", line + ".");
+		}
+
+		// Casualties: the dead are not on the statistics panel (only survivors
+		// are), yet losing a brother is the fact that matters most. Their deaths
+		// were already narrated by the combat log, but a roll-up confirms it.
+		local casualties = ::Tactical.getCasualtyRoster().getAll();
+		local dead = "";
+		local deadCount = 0;
+		foreach( c in casualties )
+		{
+			if (c == null) continue;
+			if (deadCount > 0) dead += "\n";
+			dead += c.getName();
+			deadCount += 1;
+		}
+		if (deadCount > 0)
+		{
+			::UnseenBanner.sendMessage("queue", dead, "combat.result.casualties", "" + deadCount);
+		}
+
+		// Per-survivor statistics, mirroring the panel: name, kills, xp, plus
+		// whether they levelled up or came out wounded. One tab-separated line
+		// each (names never contain tabs), newline between them.
+		local roster = ::Tactical.CombatResultRoster;
+		local stats = "";
+		local statCount = 0;
+		if (roster != null)
+		{
+			foreach( bro in roster )
+			{
+				if (bro == null) continue;
+				local cs = bro.getCombatStats();
+				local level = bro.isLeveled() ? "1" : "0";
+				local wound = bro.getDaysWounded() > 0 ? "1" : "0";
+				if (statCount > 0) stats += "\n";
+				stats += bro.getName() + "\t" + cs.Kills + "\t" + cs.XPGained + "\t" + level + "\t" + wound;
+				statCount += 1;
+			}
+		}
+		if (statCount > 0)
+		{
+			::UnseenBanner.sendMessage("queue", stats, "combat.result.stats");
+		}
+
+		this.announceLoot(_screen);
+	},
+	function announceLoot(_screen)
+	{
+		local items = ::Tactical.CombatResultLoot.getItems();
+		local loot = "";
+		local lootCount = 0;
+		if (items != null)
+		{
+			foreach( item in items )
+			{
+				if (item == null) continue;
+				if (lootCount > 0) loot += "\n";
+				loot += item.getName();
+				lootCount += 1;
+			}
+		}
+
+		if (lootCount == 0)
+		{
+			::UnseenBanner.sendMessage("queue", "", "combat.result.loot.none");
+		}
+		else
+		{
+			::UnseenBanner.sendMessage("queue", loot, "combat.result.loot", "" + lootCount);
+		}
+
+		// Close with the key hint so a first-time player knows the screen is
+		// operable and how. Cheap to repeat on the r key.
+		::UnseenBanner.sendMessage("queue", "", "combat.result.hint");
+	},
+	function lootAll(_screen)
+	{
+		if (::Tactical.CombatResultLoot.isEmpty())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.result.loot.none");
+			return;
+		}
+
+		// Same call the vanilla "loot all" button makes; it moves what fits into
+		// the stash. Report by whether anything is left rather than by parsing its
+		// UI-data return, so a full stash is called out.
+		_screen.onLootAllItemsButtonPressed();
+
+		if (::Tactical.CombatResultLoot.isEmpty())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.result.loot.taken");
+		}
+		else
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.result.loot.partial");
+		}
+	}
+};
+
 // Engine key codes (see MSU's KeyMapSQ, the reference for this enum).
 // Tunable/remappable keys should eventually go through MSU keybinds and its
 // settings UI (roadmap fase 5, "toda constante afinable va a config").
@@ -770,6 +921,19 @@
 	}
 });
 
+// Post-combat result screen (phase 3.6). onScreenShown is the deterministic point
+// at which the screen is fully up (same pattern as the event screen), so the
+// outcome, casualties, per-survivor statistics and loot are read there. The keys
+// that operate it are handled from tactical_state.onKeyInput above, since that is
+// where the engine routes keyboard while the battle is ending.
+::UnseenBanner.Mod.hook("scripts/ui/screens/tactical/tactical_combat_result_screen", function(q) {
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.CombatResult.announce(this);
+	}
+});
+
 // The event screen has no state of its own; it is shown inside world_state, so
 // its keyboard cursor is driven from world_state.onKeyInput. Up/Down/Enter are
 // stolen only while the event is up; every other key (including the native 1-6
@@ -825,6 +989,21 @@
 	q.onKeyInput = @(__original) function( _key )
 	{
 		local code = _key.getKey();
+
+		// Post-combat result screen. The state swallows every key once the battle
+		// has ended (isBattleEnded short-circuits its own onKeyInput), so this must
+		// run before __original to keep Continue / loot / repeat reachable.
+		if (this.m.TacticalCombatResultScreen != null
+			&& this.m.TacticalCombatResultScreen.isVisible()
+			&& ::UnseenBanner.CombatResult.handles(code))
+		{
+			if (_key.getState() == 0)
+			{
+				::UnseenBanner.CombatResult.onKey(code, this);
+			}
+			return true;
+		}
+
 		local isCursorKey = ::UnseenBanner.TileCursor.handles(code);
 		local isActKey = ::UnseenBanner.Combat.handles(code);
 		local isReadoutKey = ::UnseenBanner.Readout.handles(code);
@@ -866,9 +1045,14 @@
 	// and its effect is already spoken by the combat log, so it stays silent here.
 	q.setActionStateBySkill = @(__original) function( _activeEntity, _skill )
 	{
+		// Capture the id before __original runs: a non-targeted skill executes
+		// inside it and its weak reference can go stale, so calling _skill.getID()
+		// again afterwards throws and swallows the announcement.
+		local skillID = _skill.getID();
+
 		// A toggle-off (same skill, already selected) is a deselection handled by
 		// cancelEntitySkill.
-		local wasThisSelected = this.m.SelectedSkillID == _skill.getID()
+		local wasThisSelected = this.m.SelectedSkillID == skillID
 			&& this.m.CurrentActionState == this.Const.Tactical.ActionState.SkillSelected;
 
 		__original(_activeEntity, _skill);
@@ -878,9 +1062,10 @@
 		// chance before confirming). This also sidesteps every early-return in the
 		// vanilla method (battle ended, mid-travel, mid-skill): those leave the
 		// state untouched, so this condition stays false. A non-targeted skill
-		// fires immediately and is narrated by the combat log instead.
+		// fires immediately (clearing SelectedSkillID, so this stays false) and is
+		// narrated by the combat log instead; the armed skill is still live here.
 		if (!wasThisSelected
-			&& this.m.SelectedSkillID == _skill.getID()
+			&& this.m.SelectedSkillID == skillID
 			&& this.m.CurrentActionState == this.Const.Tactical.ActionState.SkillSelected)
 		{
 			::UnseenBanner.Combat.onSkillActivated(_skill, this);

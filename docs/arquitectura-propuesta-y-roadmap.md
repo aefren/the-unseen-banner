@@ -252,6 +252,18 @@ objetos, estados, terreno… todo vive ahí).
       enemigos ahogaría el log); `turnsequencebar_onNextRound` anuncia "Round N".
       Moral, heridas y muertes ya las narra el log de combate (3.1), así que no se
       duplican. Canal cola. Verificado de oído.
+- [x] 3.6 Pantalla de resultado post-combate (Victoria/Derrota, estadísticas y
+      botín). **Hecho** (jul 2026): la pantalla se traga todo el teclado en
+      vanilla (mouse-only) — se lee sola al aparecer (resultado, bajas,
+      estadísticas por superviviente, botín) y se opera con tres teclas nuevas:
+      Enter (continuar, como el botón), L (coger todo el botín), R (repetir el
+      readout). De paso se cazaron dos crashes silenciosos del cursor de
+      hexágonos (3.2): `tile.getEntity()` puede devolver un objeto de
+      cobertura/decoración, no solo un actor — llamar `getID`/`isPlayerControlled`
+      sobre él lanzaba y abortaba el anuncio entero, dejando esa casilla muda; se
+      corrige con `::isKindOf(e, "actor")`, igual que el hover nativo, y ahora esas
+      casillas anuncian el objeto por nombre. Puro Squirrel salvo cadenas en
+      `L10n`. Verificado de oído.
 
 ### Fase 4 — Mapamundi (tiempo real pausable)
 
