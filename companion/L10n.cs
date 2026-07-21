@@ -225,6 +225,19 @@ namespace TheUnseenBanner.Companion
             ["combat.result.loot.taken"] = "All loot taken.",
             ["combat.result.loot.partial"] = "Stash full. Some loot was left behind.",
             ["combat.result.hint"] = "Press L to take all loot, Enter to continue, R to repeat.",
+            // World-map company/campaign readout (phase 4.4, the g key). Day and
+            // time, brother count, money and daily wages, food and how long it
+            // lasts, and the active contract.
+            ["world.status.header"] = "Day {0}, {1}. {2} brothers.",
+            ["world.status.header.one"] = "Day {0}, {1}. 1 brother.",
+            ["world.status.day"] = "daytime",
+            ["world.status.night"] = "night",
+            ["world.status.money"] = "{0} crowns, {1} a day in wages.",
+            ["world.status.food"] = "Food {0}, {1} days left.",
+            ["world.status.food.one"] = "Food {0}, 1 day left.",
+            ["world.status.food.none"] = "Food {0}.",
+            ["world.status.contract"] = "Contract: {0}.",
+            ["world.status.contract.none"] = "No active contract.",
         };
     }
 }

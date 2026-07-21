@@ -130,6 +130,7 @@ namespace TheUnseenBanner.Companion
                     "combat.result.casualties" => L10n.F("combat.result.casualties", JoinNames(texto)),
                     "combat.result.stats" => ComposeResultStats(texto),
                     "combat.result.loot" => ComposeResultLoot(texto, valor),
+                    "world.status" => ComposeWorldStatus(texto, valor, detalle),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
@@ -273,6 +274,36 @@ namespace TheUnseenBanner.Companion
             string morale = L10n.T("combat.morale." + moraleIndex);
 
             return L10n.F("combat.status", name, hp, hpMax, ap, apMax, fat, fatMax, morale);
+        }
+
+        /// <summary>Compose the world-map company readout (phase 4.4): the g key.
+        /// detalle packs brothers|money|dailyMoney|food|dailyFood|foodDays|day|isDay;
+        /// valor is "1" when a contract is active and contractTitle carries its
+        /// (BBCode-bearing, cleaned downstream) name. Built piecewise here rather
+        /// than one format string so the singular/plural and the "no upkeep" and
+        /// "no contract" cases each pick their own phrase.</summary>
+        private static string ComposeWorldStatus(string contractTitle, string hasContract, string detail)
+        {
+            string[] p = detail.Split('|');
+            string At(int i) => i < p.Length ? p[i] : "0";
+
+            string brothers = At(0), money = At(1), dailyMoney = At(2),
+                   food = At(3), foodDays = At(5), day = At(6), isDay = At(7);
+
+            string time = L10n.T(isDay == "1" ? "world.status.day" : "world.status.night");
+            string header = L10n.F(brothers == "1" ? "world.status.header.one" : "world.status.header",
+                day, time, brothers);
+            string wages = L10n.F("world.status.money", money, dailyMoney);
+
+            string foodPart = foodDays == "-1"
+                ? L10n.F("world.status.food.none", food)
+                : L10n.F(foodDays == "1" ? "world.status.food.one" : "world.status.food", food, foodDays);
+
+            string contract = hasContract == "1" && contractTitle.Trim().Length > 0
+                ? L10n.F("world.status.contract", contractTitle)
+                : L10n.T("world.status.contract.none");
+
+            return header + " " + wages + " " + foodPart + " " + contract;
         }
 
         /// <summary>Compose the turn-order readout (phase 3.4): the Tab key. The

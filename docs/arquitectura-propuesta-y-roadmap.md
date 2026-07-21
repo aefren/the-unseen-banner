@@ -294,8 +294,20 @@ objetos, estados, terreno… todo vive ahí).
 - [ ] 4.2 Paridad de percepción: solo pingar lo avistado (niebla de guerra).
 - [ ] 4.3 Lista de cercanos navegable + beacon persistente al elegir destino
       (portar `NearbyList` de GK).
-- [ ] 4.4 Readout de pausa: contrato activo, destino, dinero, comida, moral
-      de la compañía, días restantes.
+- [x] 4.4 Readout de pausa: contrato activo, destino, dinero, comida, moral
+      de la compañía, días restantes. **Hecho** (jul 2026): tecla **G** en el
+      mapamundi (libre en vanilla; el mapa ya ocupa c/f/i/o/p/r/t) narra por el
+      canal interrupt día + día/noche, número de hermanos, dinero + jornal
+      diario, comida + días que aguanta al ritmo actual, y el título del
+      contrato activo. Todo API de Squirrel (`World.Assets`, `World.getTime`,
+      `World.Contracts.getActiveContract`, el roster), cero DOM; la compañera
+      (`ComposeWorldStatus`) arma la frase por piezas para singular/plural, "sin
+      sustento" (roster vacío) y "sin contrato". Se dispara en release desde
+      `world_state.onKeyInput`, el mismo patrón probado del cursor de eventos, y
+      solo con el mapa limpio (sin pantalla de evento). Verificado de oído.
+      *Fuera de esta v1, por diseño:* "moral de compañía" (Battle Brothers no
+      tiene una moral agregada de compañía en el mapa, solo ánimo por hermano) y
+      "destino" (se resolverá con el beacon de la 4.3, donde encaja mejor).
 - [ ] 4.5 Pantalla de ciudad: edificios, reclutas, contratos.
 
 ### Fase 5 — Pulido y distribución

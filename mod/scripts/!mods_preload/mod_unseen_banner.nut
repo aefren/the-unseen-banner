@@ -206,6 +206,56 @@
 	}
 };
 
+// World-map company/campaign readout (phase 4.4). A single key speaks the party
+// status that the map's topbar shows a sighted player: the day and time of day,
+// how many brothers, money and daily wages, food and how many days it lasts, and
+// the active contract. Pull, not push: nothing narrates until the key is pressed.
+// Every fact is a Squirrel API (World.Assets / World.getTime / World.Contracts /
+// the player roster), so nothing is scraped from the DOM; the companion owns the
+// framing words. Driven from world_state.onKeyInput (see the hook below), only on
+// the plain map (no event screen up).
+//
+// Key: g (code 17). g is unbound on the world map in vanilla — the letters the
+// map already claims are c/f/i/o/p/r/t (character, ?, inventory, obituary, perks,
+// relations, camp). Eventually remappable through MSU keybinds (roadmap fase 5).
+::UnseenBanner.WorldStatus <- {
+	Keys = {
+		[17] = "status"   // g
+	},
+	function handles(_code)
+	{
+		return _code in this.Keys;
+	},
+	function announce()
+	{
+		local assets = ::World.Assets;
+		local money = assets.getMoney();
+		local dailyMoney = assets.getDailyMoneyCost();
+		local food = assets.getFood();
+		local dailyFood = assets.getDailyFoodCost();
+		// Days of food left at the current rate; -1 signals "no upkeep" (an empty
+		// roster) so the companion can drop the days clause instead of dividing by
+		// zero.
+		local foodDays = dailyFood > 0 ? (food / dailyFood).tointeger() : -1;
+		local brothers = ::World.getPlayerRoster().getSize();
+
+		local time = ::World.getTime();
+		local day = time.Days;
+		local isDay = time.IsDaytime ? 1 : 0;
+
+		// The contract title carries BBCode/colour markup, so it rides in `texto`,
+		// the field the companion runs through clean() before speaking. valor is 1
+		// only when a contract is active. The numbers pack pipe-separated in detalle.
+		local contract = ::World.Contracts.getActiveContract();
+		local title = contract != null ? contract.getTitle() : "";
+
+		local detail = brothers + "|" + money + "|" + dailyMoney + "|"
+			+ food + "|" + dailyFood + "|" + foodDays + "|" + day + "|" + isDay;
+		::UnseenBanner.sendMessage("interrupt", title, "world.status",
+			(contract != null ? "1" : "0"), detail);
+	}
+};
+
 // Tactical tile cursor (phase 3.2). A keyboard cursor over the hex grid so a
 // blind player can survey the battlefield: it starts on the active man and
 // walks the six hex neighbours, announcing each tile's terrain and what stands
@@ -1383,6 +1433,22 @@
 			&& ::UnseenBanner.EventNav.isActive())
 		{
 			::UnseenBanner.EventNav.sendKey(::UnseenBanner.KeyCodes[_key.getKey()]);
+			return true;
+		}
+
+		// Company/campaign readout (phase 4.4), only on the plain map (no event
+		// screen up). Fire on release, exactly like the event cursor above: this is
+		// the same state and the map delivers the release of g (which carries no
+		// native map binding, so nothing swallows it — that swallowing is a
+		// tactical-combat quirk). Consume both states so the key stays ours.
+		local code = _key.getKey();
+		if (!::UnseenBanner.EventNav.isActive() && ::UnseenBanner.WorldStatus.handles(code))
+		{
+			if (_key.getState() == 0)
+			{
+				::UnseenBanner.WorldStatus.announce();
+			}
+
 			return true;
 		}
 
