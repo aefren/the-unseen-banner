@@ -241,11 +241,32 @@ objetos, estados, terreno… todo vive ahí).
       **T** lee estado del hermano activo (vida, AP, fatiga, moral — la respuesta
       a "cuántos AP quedan", que no está en la ficha); **Tab** el orden de turnos
       de la ronda (tú/aliados/enemigos, respetando niebla); **B** los enemigos
-      visibles ordenados por cercanía con distancia. Además la ficha de personaje
-      (C/I) ahora lee al hermano activo (vida/fatiga máx., resolución, iniciativa,
-      habilidad/defensa c.a.c. y a distancia, armadura) al abrirse — primera
-      pasada; la navegación completa por hermano/perks/equipo sigue siendo 2.4.
-      Puro Squirrel salvo cadenas en `L10n`. Verificado de oído.
+      visibles ordenados por cercanía con distancia.
+      **Ampliado** (jul 2026): **V** inspecciona la unidad bajo el cursor de
+      hexágonos — aliada o enemiga — leyendo el mismo embudo que el tooltip del
+      ratón (`actor.getTooltip`): vida, armadura cabeza/cuerpo, fatiga, moral,
+      cuándo actúa, efectos de estado; respeta niebla de guerra (oponente no
+      descubierto = "Hidden opponent", visto antes pero fuera de vista = solo
+      nombre). La ficha de personaje (C/I) es ahora una **lista navegable**:
+      arriba/abajo recorren, una a una, identidad, trasfondo, XP, ánimo, vida,
+      fatiga, resolución, iniciativa, habilidad/defensa c.a.c. y a distancia,
+      armadura, heridas, rasgos, perks y equipo; A/D (y flechas/Tab, como en
+      vanilla) cambian de hermano mostrado, releyendo su ficha desde el
+      principio — completa la navegación por hermano/perks/equipo prevista en
+      2.4 para el caso táctico (queda pendiente el equivalente en el mapamundi).
+      Trampa cazada y con lección reutilizable: el hook original comprobaba
+      `isVisible()` justo tras `show()`, pero ese flag solo se activa en el
+      callback asíncrono `onScreenShown` — la pantalla nunca se detectaba
+      abierta. Segunda trampa, más sutil: durante el combate el motor **traga
+      el evento de soltar** (`state==0`) de toda tecla con binding nativo
+      (A/D paneo de cámara, T/B toggles de overlays) — solo llega si se
+      mantiene Shift; V y las flechas, sin binding nativo, sí entregan el
+      soltar. Los manejadores actuaban al soltar, así que T/B/A/D-cambio de
+      hermano solo respondían con Shift. Arreglado actuando en la pulsación
+      (`state==1`) con un antirrebote por reloj real (`Time.getRealTimeF`,
+      0.2 s) para no disparar en avalancha al mantener la tecla — ver
+      `KeyGate` en el mod. Puro Squirrel salvo cadenas en `L10n`. Verificado
+      de oído.
 - [x] 3.5 Inicio/fin de turno, moral, heridas y muertes como eventos hablados.
       **Hecho** (jul 2026): el embudo `turnsequencebar_onEntityEnteredFirstSlotFully`
       anuncia "Your turn: nombre, N action points" solo en tus turnos (narrar los

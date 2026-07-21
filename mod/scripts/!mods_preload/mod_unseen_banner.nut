@@ -14,7 +14,8 @@
 	CombatLog = null,
 	Combat = null,
 	Readout = null,
-	CombatResult = null
+	CombatResult = null,
+	SheetNav = null
 };
 
 ::UnseenBanner.Mod = ::Hooks.register(::UnseenBanner.ID, ::UnseenBanner.Version, ::UnseenBanner.Name);
@@ -246,9 +247,20 @@
 	CycleKeys = {
 		[36] = true // z
 	},
+	// v inspects the unit standing on the cursor tile — the same facts the mouse
+	// hover tooltip shows (armour, health, morale, fatigue, status effects, when it
+	// acts), respecting fog of war. Works for enemies and allies alike, so a blind
+	// player can size up any unit on the field, not just survey where it stands.
+	InspectKeys = {
+		[32] = true // v
+	},
 	function handles(_code)
 	{
 		return (_code in this.DirKeys) || (_code in this.RecenterKeys) || (_code in this.CycleKeys);
+	},
+	function handlesInspect(_code)
+	{
+		return _code in this.InspectKeys;
 	},
 	function reset()
 	{
@@ -414,6 +426,105 @@
 		}
 
 		::UnseenBanner.sendMessage("interrupt", name, "tile.readout", "" + tile.Type, detail);
+	},
+	// On-demand detail for whatever stands on the cursor tile (the v key). Reads the
+	// same funnel the mouse tooltip is built from (actor.getTooltip), honouring fog
+	// of war exactly as vanilla does: a dead/removed unit or an empty tile is
+	// nothing; an undiscovered enemy is "Hidden opponent"; a discovered-but-unseen
+	// one gives only its name. Everything else gets the full readout. Cover/scenery
+	// on the tile is not a combatant, so it is called out by name only. All facts
+	// are Squirrel actor APIs — nothing is scraped from the DOM.
+	function inspect(_active)
+	{
+		this.ensureAnchored(_active);
+		local tile = this.m.CursorTile;
+
+		if (tile == null || tile.IsEmpty)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			return;
+		}
+
+		local e = tile.getEntity();
+		if (e == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			return;
+		}
+
+		if (!::isKindOf(e, "actor"))
+		{
+			// Cover or decoration — worth naming (it affects line of sight and
+			// defence) but there are no combat stats to read.
+			::UnseenBanner.sendMessage("interrupt", e.getName(), "combat.inspect.object");
+			return;
+		}
+
+		if (!e.isAlive() || e.isDying() || !e.isPlacedOnMap())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			return;
+		}
+
+		if (!e.isDiscovered())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.hidden");
+			return;
+		}
+
+		local name = e.getName();
+		if (e.isHiddenToPlayer())
+		{
+			// Discovered before but not currently in sight: name only, no live stats.
+			::UnseenBanner.sendMessage("interrupt", name, "combat.inspect", "sight", "");
+			return;
+		}
+
+		local kind = "enemy";
+		if (_active != null && e.getID() == _active.getID()) kind = "self";
+		else if (e.isPlayerControlled()) kind = "ally";
+
+		// When it next acts, mirroring the tooltip's "Acting right now / Turn done /
+		// Acts in N turns" line. getTurnsUntilActive returns the slot index in this
+		// round's queue (0 = acting now), or null once it has acted or drops out.
+		local timing = "none";
+		local activeE = ::Tactical.TurnSequenceBar.getActiveEntity();
+		if (activeE != null && activeE.getID() == e.getID())
+		{
+			timing = "now";
+		}
+		else if (e.isTurnDone())
+		{
+			timing = "done";
+		}
+		else
+		{
+			local t = ::Tactical.TurnSequenceBar.getTurnsUntilActive(e.getID());
+			if (t != null && t > 0) timing = "" + t;
+		}
+
+		// Status effects and temporary injuries, exactly the set the tooltip lists.
+		local effects = "";
+		local ec = 0;
+		local ses = e.getSkills().query(::Const.SkillType.StatusEffect | ::Const.SkillType.TemporaryInjury, false, true);
+		foreach( s in ses )
+		{
+			if (s == null) continue;
+			if (ec > 0) effects += "\n";
+			effects += s.getName();
+			ec += 1;
+		}
+
+		local detail = kind + "|" + e.getLevel()
+			+ "|" + timing
+			+ "|" + e.getHitpoints() + "|" + e.getHitpointsMax()
+			+ "|" + e.getFatigue() + "|" + e.getFatigueMax()
+			+ "|" + e.getArmor(::Const.BodyPart.Head) + "|" + e.getArmorMax(::Const.BodyPart.Head)
+			+ "|" + e.getArmor(::Const.BodyPart.Body) + "|" + e.getArmorMax(::Const.BodyPart.Body)
+			+ "|" + e.getMoraleState()
+			+ "|" + effects;
+
+		::UnseenBanner.sendMessage("interrupt", name, "combat.inspect", "ok", detail);
 	}
 };
 
@@ -677,21 +788,244 @@
 		}
 
 		::UnseenBanner.sendMessage("interrupt", text, "combat.enemies", "" + scored.len());
+	}
+};
+
+// The tactical character screen (C/I) as a keyboard-navigable list (roadmap 2.2 /
+// completing 3.4). Vanilla renders the shown brother's whole sheet to a texture no
+// screen reader can see, but every fact it is built from is a Squirrel actor API,
+// so we rebuild the sheet as an ordered list of one-fact-per-entry lines and let
+// the player walk it with Up/Down, reading one attribute at a time. A/D (and the
+// left/right/Tab the screen already binds) switch brother; we drive the same
+// vanilla switch so the visible sheet keeps up, and mirror the move on our own
+// copy of the roster to know which brother is now shown — the selection lives in
+// the screen's JS, unreadable from here, but the roster order (getInstancesOfFaction,
+// the exact source the screen queries) is reproducible, so an identical +1/-1 wrap
+// from the same start stays in lockstep.
+::UnseenBanner.SheetNav <- {
+	m = {
+		Brothers = null,
+		BroIndex = 0,
+		Items = null,
+		ItemIndex = 0,
+		Active = false
 	},
-	// Attribute sheet of the man shown on the tactical character screen (C/I).
-	// A first pass: it speaks the core attributes the sheet is built around, read
-	// straight from the actor's current properties. Full per-brother navigation
-	// and perks/equipment remain the larger DOM task (roadmap 2.4).
-	function sheet(_active)
+	// d / right / Tab -> next brother; a / left -> previous. Same keys the vanilla
+	// character screen already uses, so muscle memory carries over.
+	NextKeys = {
+		[14] = true, // d
+		[50] = true, // right
+		[38] = true  // tab
+	},
+	PrevKeys = {
+		[11] = true, // a
+		[48] = true  // left
+	},
+	// Up / Down walk the sheet list one entry at a time.
+	MoveKeys = {
+		[49] = "up",
+		[51] = "down"
+	},
+	function isActive()
 	{
-		local p = _active.getCurrentProperties();
-		local detail = _active.getHitpointsMax() + "|" + _active.getFatigueMax()
-			+ "|" + p.getBravery() + "|" + p.getInitiative()
-			+ "|" + p.getMeleeSkill() + "|" + p.getRangedSkill()
-			+ "|" + p.getMeleeDefense() + "|" + p.getRangedDefense()
-			+ "|" + _active.getArmor(::Const.BodyPart.Head)
-			+ "|" + _active.getArmor(::Const.BodyPart.Body);
-		::UnseenBanner.sendMessage("interrupt", _active.getName(), "combat.sheet", "", detail);
+		return this.m.Active;
+	},
+	function handles(_code)
+	{
+		return (_code in this.NextKeys) || (_code in this.PrevKeys) || (_code in this.MoveKeys);
+	},
+	function isMove(_code)
+	{
+		return _code in this.MoveKeys;
+	},
+	function isNext(_code)
+	{
+		return _code in this.NextKeys;
+	},
+	function reset()
+	{
+		this.m.Active = false;
+		this.m.Brothers = null;
+		this.m.Items = null;
+		this.m.BroIndex = 0;
+		this.m.ItemIndex = 0;
+	},
+	// Called when the screen becomes visible. _active is the man whose sheet the
+	// screen opens on (the active brother in battle, or null in battle preparation,
+	// where it defaults to the first of the roster — the same one the screen shows).
+	function open(_active)
+	{
+		local raw = ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player);
+		local list = [];
+		if (raw != null)
+		{
+			foreach( b in raw )
+			{
+				if (b != null) list.push(b);
+			}
+		}
+		this.m.Brothers = list;
+
+		this.m.BroIndex = 0;
+		if (_active != null)
+		{
+			for (local i = 0; i < list.len(); i += 1)
+			{
+				if (list[i].getID() == _active.getID())
+				{
+					this.m.BroIndex = i;
+					break;
+				}
+			}
+		}
+
+		this.m.Active = true;
+		this.buildItems();
+		this.m.ItemIndex = 0;
+		this.announceItem();
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function current()
+	{
+		if (this.m.Brothers == null || this.m.Brothers.len() == 0) return null;
+		return this.m.Brothers[this.m.BroIndex];
+	},
+	// Mirror a brother switch the same way the vanilla screen does (next/previous
+	// non-null with wrap; the tactical roster is dense, so a plain modular step
+	// matches). Rebuild the sheet for the new man and read from its top.
+	function switchBrother(_next)
+	{
+		if (this.m.Brothers == null || this.m.Brothers.len() == 0) return;
+		local n = this.m.Brothers.len();
+		if (_next) this.m.BroIndex = (this.m.BroIndex + 1) % n;
+		else this.m.BroIndex = (this.m.BroIndex - 1 + n) % n;
+
+		this.buildItems();
+		this.m.ItemIndex = 0;
+		this.announceItem();
+	},
+	// Move within the current sheet, clamping at the ends (no wrap, so the edges are
+	// discoverable). Re-reading the same entry at an edge is intentional feedback.
+	function move(_code)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else this.m.ItemIndex += 1;
+
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+
+		this.announceItem();
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
+	},
+	// Build the ordered list of sheet entries for the shown brother. Each entry is a
+	// tagged line the companion localizes; the framing words ("Resolve", "Head
+	// armor"...) stay on that side, this only supplies the numbers and the already
+	// localized game names. Attributes come first (what the user asked to read one
+	// by one), then injuries, traits, perks and worn equipment as list entries.
+	// Player-only facts (background, mood, XP, perks, traits) are gated by class so
+	// a non-brother player-faction unit still gets a valid, reduced sheet.
+	function buildItems()
+	{
+		local bro = this.current();
+		local items = [];
+		if (bro == null)
+		{
+			this.m.Items = items;
+			return;
+		}
+
+		local isPlayer = ::isKindOf(bro, "player");
+		local p = bro.getCurrentProperties();
+
+		local function entry(_cat, _texto, _valor, _detalle)
+		{
+			return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle };
+		}
+
+		items.push(entry("combat.sheet.identity", bro.getName(), "" + bro.getLevel(), ""));
+
+		if (isPlayer)
+		{
+			local bg = bro.getBackground();
+			items.push(entry("combat.sheet.background", bg != null ? bg.getName() : "", "", ""));
+			items.push(entry("combat.sheet.xp", "", "" + bro.getXP(), "" + bro.getXPForNextLevel()));
+			items.push(entry("combat.sheet.mood", "", "" + bro.getMoodState(), ""));
+		}
+
+		items.push(entry("combat.sheet.hp", "", "" + bro.getHitpoints(), "" + bro.getHitpointsMax()));
+		items.push(entry("combat.sheet.fatigue", "", "" + bro.getFatigue(), "" + bro.getFatigueMax()));
+		items.push(entry("combat.sheet.resolve", "", "" + p.getBravery(), ""));
+		items.push(entry("combat.sheet.initiative", "", "" + p.getInitiative(), ""));
+		items.push(entry("combat.sheet.mskill", "", "" + p.getMeleeSkill(), ""));
+		items.push(entry("combat.sheet.rskill", "", "" + p.getRangedSkill(), ""));
+		items.push(entry("combat.sheet.mdef", "", "" + p.getMeleeDefense(), ""));
+		items.push(entry("combat.sheet.rdef", "", "" + p.getRangedDefense(), ""));
+		items.push(entry("combat.sheet.armor.head", "", "" + bro.getArmor(::Const.BodyPart.Head), "" + bro.getArmorMax(::Const.BodyPart.Head)));
+		items.push(entry("combat.sheet.armor.body", "", "" + bro.getArmor(::Const.BodyPart.Body), "" + bro.getArmorMax(::Const.BodyPart.Body)));
+
+		items.push(this.listEntry(bro, "combat.sheet.injuries",
+			::Const.SkillType.Injury | ::Const.SkillType.PermanentInjury | ::Const.SkillType.TemporaryInjury | ::Const.SkillType.SemiInjury));
+
+		if (isPlayer)
+		{
+			items.push(this.listEntry(bro, "combat.sheet.traits", ::Const.SkillType.Trait));
+			items.push(this.listEntry(bro, "combat.sheet.perks", ::Const.SkillType.Perk));
+		}
+
+		items.push(this.equipEntry(bro));
+
+		this.m.Items = items;
+	},
+	// One list entry (injuries / traits / perks): the already-localized skill names
+	// newline-joined in the text, the count in valor so the companion can say
+	// "none" or pluralize.
+	function listEntry(_bro, _cat, _mask)
+	{
+		local skills = _bro.getSkills().query(_mask, false, true);
+		local text = "";
+		local n = 0;
+		foreach( s in skills )
+		{
+			if (s == null) continue;
+			if (n > 0) text += "\n";
+			text += s.getName();
+			n += 1;
+		}
+		return { cat = _cat, texto = text, valor = "" + n, detalle = "" };
+	},
+	// Worn equipment: the fixed slots the paperdoll shows (weapon, shield/offhand,
+	// helmet, body armour, accessory), in reading order, names newline-joined.
+	function equipEntry(_bro)
+	{
+		local inv = _bro.getItems();
+		local slots = [
+			::Const.ItemSlot.Mainhand,
+			::Const.ItemSlot.Offhand,
+			::Const.ItemSlot.Head,
+			::Const.ItemSlot.Body,
+			::Const.ItemSlot.Accessory
+		];
+		local text = "";
+		local n = 0;
+		foreach( sl in slots )
+		{
+			local it = inv.getItemAtSlot(sl);
+			if (it == null) continue;
+			if (n > 0) text += "\n";
+			text += it.getName();
+			n += 1;
+		}
+		return { cat = "combat.sheet.equipment", texto = text, valor = "" + n, detalle = "" };
 	}
 };
 
@@ -828,6 +1162,44 @@
 		{
 			::UnseenBanner.sendMessage("interrupt", "", "combat.result.loot.partial");
 		}
+	}
+};
+
+// Key-repeat gate for our tactical hotkeys. During active combat the engine
+// swallows the RELEASE event (state 0) of any key that still carries a native
+// binding — camera pan (Q/W/E/A/S/D), overlay toggles (T/B), brother switch
+// (A/D) — and only delivers the PRESS (state 1), which then auto-repeats while the
+// key is held. Verified live via a key-log: V and the arrows (no native binding)
+// deliver a release; T/B/A/D do not, so a release-driven handler never fires for
+// them without a modifier held. So we act on the press instead, and this gate
+// debounces the auto-repeat by real wall-clock time (real, not virtual, so it
+// still ticks while the character screen pauses the game). A delivered release
+// clears the entry, so a deliberate re-tap of a key that DOES report release fires
+// again at once.
+::UnseenBanner.KeyGate <- {
+	m = {
+		Last = {}
+	},
+	// Minimum seconds between two firings of the same held key. Long enough to
+	// swallow the ~40 ms auto-repeat, short enough that hold-to-repeat still feels
+	// responsive and deliberate taps are never dropped.
+	RepeatSeconds = 0.2,
+	function shouldFire(_code, _now)
+	{
+		if (_code in this.m.Last && _now - this.m.Last[_code] < this.RepeatSeconds)
+		{
+			return false;
+		}
+		this.m.Last[_code] <- _now;
+		return true;
+	},
+	function release(_code)
+	{
+		if (_code in this.m.Last) delete this.m.Last[_code];
+	},
+	function reset()
+	{
+		this.m.Last = {};
 	}
 };
 
@@ -984,6 +1356,8 @@
 	{
 		__original();
 		::UnseenBanner.TileCursor.reset();
+		::UnseenBanner.SheetNav.reset();
+		::UnseenBanner.KeyGate.reset();
 	}
 
 	q.onKeyInput = @(__original) function( _key )
@@ -1004,10 +1378,49 @@
 			return true;
 		}
 
+		// Character screen (C/I) as a keyboard-navigable sheet. Up/Down walk the shown
+		// brother's attribute list; the switch keys change brother, driving the same
+		// vanilla switch so the visible sheet keeps up. Only our nav keys are stolen —
+		// close and start-battle keep their native behavior. This runs before
+		// __original because the screen is shown from within this state, which swallows
+		// the keyboard while it is up.
+		if (this.isInCharacterScreen()
+			&& ::UnseenBanner.SheetNav.isActive()
+			&& ::UnseenBanner.SheetNav.handles(code))
+		{
+			// Act on the press (state 1), gated against auto-repeat: the screen pauses
+			// the game and swallows the release of the brother-switch keys, so a
+			// release-driven handler would never fire (see KeyGate). Consume both
+			// states so no vanilla behavior leaks through.
+			if (_key.getState() == 1)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					if (::UnseenBanner.SheetNav.isMove(code))
+					{
+						::UnseenBanner.SheetNav.move(code);
+					}
+					else
+					{
+						local next = ::UnseenBanner.SheetNav.isNext(code);
+						if (next) this.m.CharacterScreen.switchToNextBrother();
+						else this.m.CharacterScreen.switchToPreviousBrother();
+						::UnseenBanner.SheetNav.switchBrother(next);
+					}
+				}
+			}
+			else if (_key.getState() == 0)
+			{
+				::UnseenBanner.KeyGate.release(code);
+			}
+			return true;
+		}
+
 		local isCursorKey = ::UnseenBanner.TileCursor.handles(code);
+		local isInspectKey = ::UnseenBanner.TileCursor.handlesInspect(code);
 		local isActKey = ::UnseenBanner.Combat.handles(code);
 		local isReadoutKey = ::UnseenBanner.Readout.handles(code);
-		if ((isCursorKey || isActKey || isReadoutKey)
+		if ((isCursorKey || isInspectKey || isActKey || isReadoutKey)
 			&& !this.isInLoadingScreen()
 			&& !this.isBattleEnded()
 			&& !this.isInCharacterScreen()
@@ -1017,17 +1430,28 @@
 			local active = this.Tactical.TurnSequenceBar.getActiveEntity();
 			if (active != null && active.isPlayerControlled())
 			{
-				// Act on release only (state 0), matching the cursor keys, so a
-				// held key never fires the action twice; the press is still
-				// consumed so no vanilla behavior leaks through.
-				if (_key.getState() == 0)
+				// Act on the press (state 1), gated against auto-repeat: during active
+				// combat the engine swallows the release of natively-bound keys (camera
+				// pan Q/W/E/A/S/D, overlay toggles T/B), so a release-driven handler
+				// only fires with a modifier held (see KeyGate). Consume both states so
+				// no vanilla behavior (panning, toggles) leaks through on a held key.
+				if (_key.getState() == 1)
 				{
-					if (isCursorKey)
-						::UnseenBanner.TileCursor.onKey(code, active, this.Tactical.Entities, (_key.getModifier() & 1) != 0, this);
-					else if (isActKey)
-						::UnseenBanner.Combat.onKey(code, active, this, ::UnseenBanner.TileCursor.getTile(active));
-					else
-						::UnseenBanner.Readout.onKey(code, active, this.Tactical.Entities);
+					if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+					{
+						if (isCursorKey)
+							::UnseenBanner.TileCursor.onKey(code, active, this.Tactical.Entities, (_key.getModifier() & 1) != 0, this);
+						else if (isInspectKey)
+							::UnseenBanner.TileCursor.inspect(active);
+						else if (isActKey)
+							::UnseenBanner.Combat.onKey(code, active, this, ::UnseenBanner.TileCursor.getTile(active));
+						else
+							::UnseenBanner.Readout.onKey(code, active, this.Tactical.Entities);
+					}
+				}
+				else if (_key.getState() == 0)
+				{
+					::UnseenBanner.KeyGate.release(code);
 				}
 				return true;
 			}
@@ -1114,23 +1538,34 @@
 		::UnseenBanner.sendMessage("queue", "" + _round, "combat.round");
 	}
 
-	// Character sheet readout (the C/I screen). The tactical screen only opens it
-	// for the active, player-controlled brother, so that is who we read. Announced
-	// straight from Squirrel actor APIs — the DOM sheet is unreadable, but the same
-	// facts it is built from are all queryable here.
-	q.showCharacterScreen = @(__original) function( _forced = false )
-	{
-		local wasVisible = this.m.CharacterScreen.isVisible();
-		__original(_forced);
+});
 
-		if (!wasVisible && this.m.CharacterScreen.isVisible())
+// Character sheet (the C/I screen). The screen's Visible flag flips only in
+// onScreenShown — the asynchronous callback Coherent fires once the show
+// animation is done — so hooking the state's showCharacterScreen and checking
+// isVisible() right after show() never triggers (it is still false there; this
+// exact bug ate the sheet readout once). onScreenShown/onScreenHidden are the
+// deterministic points, the same pattern as the event and combat-result screens.
+// The class is shared with the world's own character screen, so the tactical
+// gate is ::Tactical.isActive(); the world sheet remains roadmap 2.2.
+::UnseenBanner.Mod.hook("scripts/ui/screens/character/character_screen", function(q) {
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+
+		if (::Tactical.isActive())
 		{
-			local active = this.Tactical.TurnSequenceBar.getActiveEntity();
-			if (active != null && active.isPlayerControlled())
-			{
-				::UnseenBanner.Readout.sheet(active);
-			}
+			// In battle the screen opens on the active brother; in battle
+			// preparation there is none and SheetNav falls back to the first of
+			// the roster — the same man the screen shows.
+			::UnseenBanner.SheetNav.open(::Tactical.TurnSequenceBar.getActiveEntity());
 		}
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.SheetNav.close();
 	}
 });
 

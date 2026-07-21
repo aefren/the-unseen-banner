@@ -119,7 +119,12 @@ namespace TheUnseenBanner.Companion
                     "combat.status" => ComposeStatus(texto, valor, detalle),
                     "combat.turnorder" => ComposeTurnOrder(texto),
                     "combat.enemies" => ComposeEnemies(texto, valor),
-                    "combat.sheet" => ComposeSheet(texto, detalle),
+                    "combat.inspect" => ComposeInspect(texto, valor, detalle),
+                    "combat.sheet.mood" => L10n.F("combat.sheet.mood", L10n.T("combat.mood." + valor)),
+                    "combat.sheet.injuries" => ComposeSheetList("combat.sheet.injuries", texto, valor),
+                    "combat.sheet.traits" => ComposeSheetList("combat.sheet.traits", texto, valor),
+                    "combat.sheet.perks" => ComposeSheetList("combat.sheet.perks", texto, valor),
+                    "combat.sheet.equipment" => ComposeSheetList("combat.sheet.equipment", texto, valor),
                     "combat.result.casualties" => L10n.F("combat.result.casualties", JoinNames(texto)),
                     "combat.result.stats" => ComposeResultStats(texto),
                     "combat.result.loot" => ComposeResultLoot(texto, valor),
@@ -306,15 +311,60 @@ namespace TheUnseenBanner.Companion
                 : L10n.F("combat.enemies", countText, list);
         }
 
-        /// <summary>Compose the character-sheet readout for the C/I screen (phase
-        /// 3.4, first pass). detail packs the ten core attributes the sheet is built
-        /// around, in the order the format string consumes them.</summary>
-        private static string ComposeSheet(string name, string detail)
+        /// <summary>Compose the on-demand unit inspection (the v key): the same facts
+        /// the mouse tooltip shows for any unit on the field, respecting fog of war.
+        /// valor is "sight" (discovered but out of sight, name only) or "ok" (full).
+        /// For the full case detail packs "kind|level|timing|hp|hpMax|fat|fatMax|
+        /// armHead|armHeadMax|armBody|armBodyMax|morale|effects", where effects is a
+        /// newline-separated list of already-localized names (possibly empty).</summary>
+        private static string ComposeInspect(string name, string valor, string detail)
         {
+            if (valor == "sight")
+                return L10n.F("combat.inspect.sight", name);
+
             string[] p = detail.Split('|');
-            object At(int i) => i < p.Length ? p[i] : "0";
-            return L10n.F("combat.sheet", name,
-                At(0), At(1), At(2), At(3), At(4), At(5), At(6), At(7), At(8), At(9));
+            string At(int i) => i < p.Length ? p[i] : "";
+
+            string kind = At(0);
+            string header = kind switch
+            {
+                "self" => L10n.F("combat.inspect.header.self", name, At(1)),
+                "ally" => L10n.F("combat.inspect.header.ally", name, At(1)),
+                _ => L10n.F("combat.inspect.header.enemy", name, At(1)),
+            };
+
+            string morale = L10n.T("combat.morale." + At(11));
+            string body = L10n.F("combat.inspect.body",
+                At(3), At(4), At(7), At(8), At(9), At(10), At(5), At(6), morale);
+
+            string timing = At(2) switch
+            {
+                "now" => L10n.T("combat.inspect.timing.now"),
+                "done" => L10n.T("combat.inspect.timing.done"),
+                "1" => L10n.T("combat.inspect.timing.turns.one"),
+                "none" => "",
+                "" => "",
+                string t => L10n.F("combat.inspect.timing.turns", t),
+            };
+
+            string result = header + " " + body;
+            if (timing.Length > 0) result += " " + timing;
+
+            string effects = JoinNames(At(12));
+            if (effects.Length > 0) result += " " + L10n.F("combat.inspect.effects", effects);
+
+            return result;
+        }
+
+        /// <summary>Compose one list entry of the character sheet (injuries, traits,
+        /// perks, equipment). text is a newline-separated list of already-localized
+        /// names; count is in <paramref name="countText"/>. An empty list reads as
+        /// the category's "none" phrase.</summary>
+        private static string ComposeSheetList(string cat, string text, string countText)
+        {
+            if (countText == "0" || text.Length == 0)
+                return L10n.T(cat + ".none");
+            return L10n.F(cat, JoinNames(text));
         }
 
         /// <summary>Join a newline-separated list of already-localized game names

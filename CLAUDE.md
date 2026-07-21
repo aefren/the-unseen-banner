@@ -134,6 +134,15 @@ Estas reglas salieron de bugs reales en F&H1 y GK. No reinventarlas:
   juego.
 - **Toda constante afinable va a config** (rangos, cadencias, volúmenes, teclas).
 - **JS inyectado en ES3**: Chromium 48, sin `let/const`, arrows ni template literals.
+- **Tecla de mod que coincide con un binding nativo → actuar en la pulsación
+  (`state==1`), no en el soltar.** Durante el combate táctico el motor traga el
+  evento de soltar (`state==0`) de toda tecla con binding nativo (paneo de
+  cámara, toggles de overlay…); solo llega si se mantiene Shift. Una tecla sin
+  binding (como una recién elegida para el mod) sí entrega el soltar, lo que
+  hace el bug fácil de pasar por alto hasta que se prueba justo esa tecla.
+  Actuar en la pulsación exige antirrebote por reloj real (`Time.getRealTimeF`,
+  no `getVirtualTime`, para que siga corriendo con el juego en pausa) — ver
+  `KeyGate` en `mod_unseen_banner.nut`.
 
 ## Disciplina de verificación
 
