@@ -97,6 +97,8 @@ namespace TheUnseenBanner.Companion
             ["menu.previous_banner"] = "Previous banner.",
             ["menu.next_banner"] = "Next banner.",
             ["menu.banner"] = "Banner {0}.",
+            ["event.screen"] = "{0}. {1}",
+            ["event.option"] = "Option {1} of {2}: {0}",
         };
     }
 }

@@ -8,7 +8,8 @@
 	Version = "0.1.0",
 	Mod = null,
 	JSConnection = null,
-	MenuNav = null
+	MenuNav = null,
+	EventNav = null
 };
 
 ::UnseenBanner.Mod = ::Hooks.register(::UnseenBanner.ID, ::UnseenBanner.Version, ::UnseenBanner.Name);
@@ -16,6 +17,7 @@
 
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/smoke_test.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/menu_nav.js");
+::Hooks.registerJS("ui/mods/mod_unseen_banner/event_nav.js");
 ::Hooks.registerCSS("ui/mods/mod_unseen_banner/menu_nav.css");
 
 // Single choke point for every message sent to the companion app, so the
@@ -148,6 +150,56 @@
 	}
 };
 
+// World event screen (phase 1.1): reads the event's title and body when it
+// appears and adds an Up/Down/Enter cursor over its option buttons. The screen
+// lives inside world_state; keys are stolen from that state's onKeyInput (see
+// the hook below) and forwarded to event_nav.js. The engine's native number
+// keys 1-6 keep selecting buttons directly, untouched.
+::UnseenBanner.EventNav = {
+	m = {
+		JSHandle = null,
+		Active = false
+	},
+	function connect()
+	{
+		this.m.JSHandle = ::UI.connect("UnseenBannerEventNav", this);
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function sendKey(_name)
+	{
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("onKeyForwarded", _name);
+		}
+	},
+	function onEventShown()
+	{
+		this.m.Active = true;
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("onEventShown", null);
+		}
+	},
+	function onEventHidden()
+	{
+		this.m.Active = false;
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("onEventHidden", null);
+		}
+	},
+	// Receives a single table from JS (SQ.call only carries one args value).
+	// Interrupt channel: the event screen is modal, so its narration takes
+	// over from whatever was being said, exactly like the menu screen.
+	function onEventAnnouncement(_data)
+	{
+		::UnseenBanner.sendMessage("interrupt", _data.texto, _data.categoria, _data.valor, _data.detalle);
+	}
+};
+
 // Engine key codes (see MSU's KeyMapSQ, the reference for this enum).
 // Tunable/remappable keys should eventually go through MSU keybinds and its
 // settings UI (roadmap fase 5, "toda constante afinable va a config").
@@ -163,6 +215,7 @@
 	{
 		::UnseenBanner.JSConnection.connect();
 		::UnseenBanner.MenuNav.connect();
+		::UnseenBanner.EventNav.connect();
 		::logInfo("UnseenBanner: root_state.onInit hook fired (class hooking alive).");
 		onInit();
 	}
@@ -212,6 +265,43 @@
 			&& this.isKeyInputPermitted())
 		{
 			::UnseenBanner.MenuNav.sendKey(::UnseenBanner.KeyCodes[_key.getKey()]);
+			return true;
+		}
+
+		return __original(_key);
+	}
+});
+
+// The event screen notifies the backend when its slide-in finishes
+// (onScreenShown) and after it hides (onScreenHidden). Those are the
+// deterministic points at which the DOM is populated and stable, so we
+// announce there and clear the cursor on hide.
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/world_event_screen", function(q) {
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.EventNav.onEventShown();
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.EventNav.onEventHidden();
+	}
+});
+
+// The event screen has no state of its own; it is shown inside world_state, so
+// its keyboard cursor is driven from world_state.onKeyInput. Up/Down/Enter are
+// stolen only while the event is up; every other key (including the native 1-6
+// button shortcuts) keeps its normal behavior.
+::UnseenBanner.Mod.hook("scripts/states/world_state", function(q) {
+	q.onKeyInput = @(__original) function( _key )
+	{
+		if (_key.getState() == 0
+			&& _key.getKey() in ::UnseenBanner.KeyCodes
+			&& ::UnseenBanner.EventNav.isActive())
+		{
+			::UnseenBanner.EventNav.sendKey(::UnseenBanner.KeyCodes[_key.getKey()]);
 			return true;
 		}
 

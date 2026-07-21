@@ -167,8 +167,16 @@ puro, luego menús, luego combate, luego mundo, luego pulido. Cada ítem queda
 Los **eventos de texto** son la joya narrativa del juego y son solo texto +
 opciones: el equivalente a los diálogos de F&H1.
 
-- [ ] 1.1 Pantalla de evento: narrar título + cuerpo al abrirse, opciones al
-      enfocarlas (canal interrupt), resultado al elegir (canal cola).
+- [x] 1.1 Pantalla de evento. **Hecho** (jul 2026): título + cuerpo se narran
+      juntos al abrirse (canal interrupt, una sola alocución para que no se
+      corte a sí misma); cursor de teclado propio sobre los botones de opción
+      (`event_nav.js` + hooks de `world_event_screen` y `onKeyInput` en
+      `world_state`, mismo patrón que 1.2). Un primer Enter sin foco enfoca la
+      primera opción en vez de activarla, para que un evento recién abierto no
+      se cierre por un Enter accidental. Las teclas numéricas 1-6 nativas del
+      juego se mantienen intactas. El resultado de elegir una opción se cubre
+      porque activar el botón dispara el evento siguiente (o el cierre), que
+      vuelve a pasar por el mismo anuncio de apertura. Verificado de oído.
 - [x] 1.2 Menú principal y New Campaign. **Hecho** (jul 2026): cursor de
       teclado sobre el menú principal funcionando y verificado de oído
       (flechas anuncian el botón enfocado por canal interrupt, Enter activa;
