@@ -156,7 +156,10 @@ puro, luego menús, luego combate, luego mundo, luego pulido. Cada ítem queda
       zips a `data/` + launcher y DLL de desarrollo a `win32/`) y
       `dev_uninstall_mod.bat` (lo retira todo, incluido el `settings.toml`
       generado, dejando el juego intacto). Único camino permitido hacia la
-      carpeta del juego. *Pendiente:* build empaquetable para distribución
+      carpeta del juego. Como jugar requiere abrir varios ejecutables (la app
+      compañera de voz y el launcher del juego), y para evitar esa fricción,
+      `play.bat` en la raíz los lanza ambos con un solo doble clic
+      (verificado jul 2026). *Pendiente:* build empaquetable para distribución
       (Nexus), se hará en 5.3.
 
 ### Fase 1 — Texto puro (máximo valor / mínimo riesgo)
