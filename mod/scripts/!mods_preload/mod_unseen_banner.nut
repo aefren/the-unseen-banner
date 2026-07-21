@@ -361,6 +361,8 @@
 		local tile = this.m.CursorTile;
 		local name = "";
 		local kind = "empty";
+		local hp = "";
+		local hpMax = "";
 
 		// A non-empty tile can hold an actor OR a non-actor object (cover and
 		// decorations such as a brush), so the actor-only API must be gated by an
@@ -382,6 +384,12 @@
 						kind = "ally";
 					else
 						kind = "enemy";
+
+					// Current health, appended right after the name so surveying the
+					// field (X to recentre, Z/Shift+Z to cycle enemies, or any cursor
+					// step onto a unit) says at once how hurt it is.
+					hp = "" + e.getHitpoints();
+					hpMax = "" + e.getHitpointsMax();
 				}
 				else
 				{
@@ -405,7 +413,10 @@
 			if (dist > 0) dir = activeTile.getDirectionTo(tile);
 		}
 
-		local detail = kind + "|" + dist + "|" + dir;
+		// hp/hpMax are empty for empty tiles and scenery; the companion only voices
+		// the health clause for an actor. They sit before the optional target fields
+		// so those stay at the tail regardless of whether a unit is present.
+		local detail = kind + "|" + dist + "|" + dir + "|" + hp + "|" + hpMax;
 
 		// With a skill armed, tack on two more fields so the companion can say
 		// whether the tile is a legal target and, for an attackable actor on it,
@@ -693,14 +704,16 @@
 // pack their entries newline-separated in the message text (game names never
 // contain newlines), each line tagged so the companion can localize the framing.
 ::UnseenBanner.Readout = {
-	// t = active man's status, tab = turn order, b = visible enemies. t and b are
-	// bound in vanilla to purely visual overlay toggles (skill trees / blocked
-	// tiles); our hook consumes them during the player's turn, which a sighted
-	// tester loses but a blind player never needs. tab is unbound in vanilla.
+	// t = active man's status, tab = turn order, b = visible enemies, k = active
+	// man's usable skills. t and b are bound in vanilla to purely visual overlay
+	// toggles (skill trees / blocked tiles); our hook consumes them during the
+	// player's turn, which a sighted tester loses but a blind player never needs.
+	// tab is unbound in vanilla; k is free.
 	Keys = {
 		[30] = "status",   // t
 		[38] = "turnorder", // tab
-		[12] = "enemies"   // b
+		[12] = "enemies",  // b
+		[21] = "skills"    // k
 	},
 	function handles(_code)
 	{
@@ -712,6 +725,7 @@
 		if (what == "status") this.status(_active);
 		else if (what == "turnorder") this.turnOrder(_active);
 		else if (what == "enemies") this.enemies(_active, _entities);
+		else if (what == "skills") this.skills(_active);
 	},
 	function status(_active)
 	{
@@ -788,6 +802,36 @@
 		}
 
 		::UnseenBanner.sendMessage("interrupt", text, "combat.enemies", "" + scored.len());
+	},
+	// The active man's usable skills — the numbered action bar read aloud (the k
+	// key). queryActives() is the exact list, in the exact order, that the number
+	// hotkeys index into (setActionStateBySkillIndex), so slot N here is the key the
+	// player presses. Each line is "slot\tname\tap\tfatigue\tusable", where usable is
+	// 1 only when the skill can actually be used this instant (affordable AP+fatigue
+	// and not otherwise blocked), so the readout answers "what can I do right now".
+	function skills(_active)
+	{
+		local list = _active.getSkills().queryActives();
+		local text = "";
+		local count = 0;
+		for (local i = 0; i < list.len(); i += 1)
+		{
+			local s = list[i];
+			if (s == null) continue;
+			local usable = (s.isUsable() && s.isAffordable()) ? "1" : "0";
+			if (count > 0) text += "\n";
+			text += (i + 1) + "\t" + s.getName() + "\t" + s.getActionPointCost()
+				+ "\t" + s.getFatigueCost() + "\t" + usable;
+			count += 1;
+		}
+
+		if (count == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.skills.empty");
+			return;
+		}
+
+		::UnseenBanner.sendMessage("interrupt", text, "combat.skills", "" + count);
 	}
 };
 
@@ -973,6 +1017,11 @@
 		items.push(entry("combat.sheet.armor.head", "", "" + bro.getArmor(::Const.BodyPart.Head), "" + bro.getArmorMax(::Const.BodyPart.Head)));
 		items.push(entry("combat.sheet.armor.body", "", "" + bro.getArmor(::Const.BodyPart.Body), "" + bro.getArmorMax(::Const.BodyPart.Body)));
 
+		// Active skills, so any brother's abilities can be read here — not just the
+		// active man's via the k key. Same source (queryActives) the numbered action
+		// bar uses, but without the "usable now" flag: it is not this man's turn.
+		items.push(this.skillsEntry(bro));
+
 		items.push(this.listEntry(bro, "combat.sheet.injuries",
 			::Const.SkillType.Injury | ::Const.SkillType.PermanentInjury | ::Const.SkillType.TemporaryInjury | ::Const.SkillType.SemiInjury));
 
@@ -1002,6 +1051,22 @@
 			n += 1;
 		}
 		return { cat = _cat, texto = text, valor = "" + n, detalle = "" };
+	},
+	// Active skills for the sheet: each line is "name\tap\tfatigue" (no slot number,
+	// since a non-active brother's hotkeys are not live, and no usability flag).
+	function skillsEntry(_bro)
+	{
+		local list = _bro.getSkills().queryActives();
+		local text = "";
+		local n = 0;
+		foreach( s in list )
+		{
+			if (s == null) continue;
+			if (n > 0) text += "\n";
+			text += s.getName() + "\t" + s.getActionPointCost() + "\t" + s.getFatigueCost();
+			n += 1;
+		}
+		return { cat = "combat.sheet.skills", texto = text, valor = "" + n, detalle = "" };
 	},
 	// Worn equipment: the fixed slots the paperdoll shows (weapon, shield/offhand,
 	// helmet, body armour, accessory), in reading order, names newline-joined.

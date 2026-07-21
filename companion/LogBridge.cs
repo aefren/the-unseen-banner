@@ -119,8 +119,10 @@ namespace TheUnseenBanner.Companion
                     "combat.status" => ComposeStatus(texto, valor, detalle),
                     "combat.turnorder" => ComposeTurnOrder(texto),
                     "combat.enemies" => ComposeEnemies(texto, valor),
+                    "combat.skills" => ComposeSkills(texto, valor),
                     "combat.inspect" => ComposeInspect(texto, valor, detalle),
                     "combat.sheet.mood" => L10n.F("combat.sheet.mood", L10n.T("combat.mood." + valor)),
+                    "combat.sheet.skills" => ComposeSheetSkills(texto, valor),
                     "combat.sheet.injuries" => ComposeSheetList("combat.sheet.injuries", texto, valor),
                     "combat.sheet.traits" => ComposeSheetList("combat.sheet.traits", texto, valor),
                     "combat.sheet.perks" => ComposeSheetList("combat.sheet.perks", texto, valor),
@@ -164,6 +166,8 @@ namespace TheUnseenBanner.Companion
             string kind = parts.Length > 0 ? parts[0] : "";
             string distText = parts.Length > 1 ? parts[1] : "0";
             string dirText = parts.Length > 2 ? parts[2] : "-1";
+            string hpText = parts.Length > 3 ? parts[3] : "";
+            string hpMaxText = parts.Length > 4 ? parts[4] : "";
 
             string terrainText = L10n.T("tile.terrain." + terrain);
             string occupant = kind switch
@@ -174,6 +178,11 @@ namespace TheUnseenBanner.Companion
                 "object" => L10n.F("tile.object", name),
                 _ => L10n.T("tile.empty"),
             };
+
+            // Health clause, only for an actor (empty for scenery/empty tiles), spoken
+            // right after the occupant name.
+            if ((kind == "self" || kind == "ally" || kind == "enemy") && hpText.Length > 0)
+                occupant += ", " + L10n.F("tile.health", hpText, hpMaxText);
 
             string position = ComposePosition(distText, dirText);
             string readout = position.Length > 0
@@ -190,16 +199,17 @@ namespace TheUnseenBanner.Companion
         /// <summary>The target-preview clause of a tile readout while a skill is
         /// armed (phase 3.3): empty when no skill is armed, otherwise "valid" /
         /// "not a valid target" and the hit chance when there is an actor to hit.
-        /// </summary>
+        /// The two target fields sit at indices 5/6, after the always-present
+        /// kind/distance/direction/hp/hpMax.</summary>
         private static string ComposeTarget(string[] parts)
         {
-            if (parts.Length <= 3) return "";
+            if (parts.Length <= 5) return "";
 
-            string targetable = parts[3];
+            string targetable = parts[5];
             if (targetable == "0") return L10n.T("tile.target.invalid");
             if (targetable != "1") return "";
 
-            string hitText = parts.Length > 4 ? parts[4] : "-";
+            string hitText = parts.Length > 6 ? parts[6] : "-";
             return int.TryParse(hitText, out int hit)
                 ? L10n.F("tile.target.hit", hit)
                 : L10n.T("tile.target.valid");
@@ -311,6 +321,31 @@ namespace TheUnseenBanner.Companion
                 : L10n.F("combat.enemies", countText, list);
         }
 
+        /// <summary>Compose the active man's skills readout (the k key): the numbered
+        /// action bar. text is newline-separated "slot\tname\tap\tfatigue\tusable"
+        /// lines in hotkey order; valor is the count. A skill that cannot be used this
+        /// instant (usable == "0") is flagged so the player knows what is greyed out.
+        /// </summary>
+        private static string ComposeSkills(string text, string countText)
+        {
+            var entries = new System.Collections.Generic.List<string>();
+            foreach (string line in text.Split('\n'))
+            {
+                if (line.Length == 0) continue;
+                string[] f = line.Split('\t');
+                if (f.Length < 4) continue;
+
+                string entry = L10n.F("combat.skills.entry", f[0], f[1], f[2], f[3]);
+                if (f.Length > 4 && f[4] == "0") entry += " " + L10n.T("combat.skills.unavailable");
+                entries.Add(entry);
+            }
+
+            string list = string.Join(". ", entries);
+            return countText == "1"
+                ? L10n.F("combat.skills.one", list)
+                : L10n.F("combat.skills", countText, list);
+        }
+
         /// <summary>Compose the on-demand unit inspection (the v key): the same facts
         /// the mouse tooltip shows for any unit on the field, respecting fog of war.
         /// valor is "sight" (discovered but out of sight, name only) or "ok" (full).
@@ -354,6 +389,27 @@ namespace TheUnseenBanner.Companion
             if (effects.Length > 0) result += " " + L10n.F("combat.inspect.effects", effects);
 
             return result;
+        }
+
+        /// <summary>Compose the character sheet's active-skills entry. text is
+        /// newline-separated "name\tap\tfatigue" lines; count is in valor. Unlike the
+        /// k-key readout there is no slot number or usability flag — this is any
+        /// brother's ability list, not the active man's live action bar.</summary>
+        private static string ComposeSheetSkills(string text, string countText)
+        {
+            if (countText == "0" || text.Length == 0)
+                return L10n.T("combat.sheet.skills.none");
+
+            var entries = new System.Collections.Generic.List<string>();
+            foreach (string line in text.Split('\n'))
+            {
+                if (line.Length == 0) continue;
+                string[] f = line.Split('\t');
+                if (f.Length < 3) continue;
+                entries.Add(L10n.F("combat.sheet.skills.entry", f[0], f[1], f[2]));
+            }
+
+            return L10n.F("combat.sheet.skills", string.Join(", ", entries));
         }
 
         /// <summary>Compose one list entry of the character sheet (injuries, traits,
