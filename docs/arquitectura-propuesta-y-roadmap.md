@@ -236,9 +236,22 @@ objetos, estados, terreno… todo vive ahí).
       que el `onUpdate` drena. Trampa cazada: `Tactical`/`Const` son globales de
       la raíz — hay que leerlos como `::Tactical`, no `_state.Tactical`. Puro
       Squirrel salvo cadenas en `L10n`. Verificado de oído.
-- [ ] 3.4 Readouts a demanda: tecla para estado del hermano activo, tecla para
-      orden de turnos, tecla para resumen de enemigos (patrón Tab/Shift+Tab).
-- [ ] 3.5 Inicio/fin de turno, moral, heridas y muertes como eventos hablados.
+- [x] 3.4 Readouts a demanda: tecla para estado del hermano activo, tecla para
+      orden de turnos, tecla para resumen de enemigos. **Hecho** (jul 2026):
+      **T** lee estado del hermano activo (vida, AP, fatiga, moral — la respuesta
+      a "cuántos AP quedan", que no está en la ficha); **Tab** el orden de turnos
+      de la ronda (tú/aliados/enemigos, respetando niebla); **B** los enemigos
+      visibles ordenados por cercanía con distancia. Además la ficha de personaje
+      (C/I) ahora lee al hermano activo (vida/fatiga máx., resolución, iniciativa,
+      habilidad/defensa c.a.c. y a distancia, armadura) al abrirse — primera
+      pasada; la navegación completa por hermano/perks/equipo sigue siendo 2.4.
+      Puro Squirrel salvo cadenas en `L10n`. Verificado de oído.
+- [x] 3.5 Inicio/fin de turno, moral, heridas y muertes como eventos hablados.
+      **Hecho** (jul 2026): el embudo `turnsequencebar_onEntityEnteredFirstSlotFully`
+      anuncia "Your turn: nombre, N action points" solo en tus turnos (narrar los
+      enemigos ahogaría el log); `turnsequencebar_onNextRound` anuncia "Round N".
+      Moral, heridas y muertes ya las narra el log de combate (3.1), así que no se
+      duplican. Canal cola. Verificado de oído.
 
 ### Fase 4 — Mapamundi (tiempo real pausable)
 

@@ -134,6 +134,29 @@ namespace TheUnseenBanner.Companion
             ["combat.move.blocked"] = "Can't reach that tile.",
             ["combat.move.no_ap"] = "Not enough action points to move.",
             ["combat.move.rooted"] = "You are rooted and can't move.",
+            // On-demand readouts (phase 3.4).
+            ["combat.status"] = "{0}. Health {1} of {2}. {3} of {4} action points. Fatigue {5} of {6}. Morale: {7}.",
+            ["combat.morale.0"] = "Fleeing",
+            ["combat.morale.1"] = "Breaking",
+            ["combat.morale.2"] = "Wavering",
+            ["combat.morale.3"] = "Steady",
+            ["combat.morale.4"] = "Confident",
+            ["combat.morale.5"] = "Unbreakable",
+            ["combat.turnorder"] = "Turn order: {0}.",
+            ["combat.turnorder.self"] = "{0}, you",
+            ["combat.turnorder.ally"] = "{0}",
+            ["combat.turnorder.enemy"] = "enemy {0}",
+            ["combat.turnorder.empty"] = "No turn order available.",
+            ["combat.enemies"] = "{0} enemies. {1}.",
+            ["combat.enemies.one"] = "1 enemy. {0}.",
+            ["combat.enemies.entry"] = "{0} at {1} tiles",
+            ["combat.enemies.entry.one"] = "{0} at 1 tile",
+            ["combat.enemies.empty"] = "No enemies in sight.",
+            // Turn and round events (phase 3.5).
+            ["combat.turn.player"] = "Your turn: {0}, {1} action points.",
+            ["combat.round"] = "Round {0}.",
+            // Character sheet readout for the C/I screen (first pass).
+            ["combat.sheet"] = "{0}. Maximum health {1}. Maximum fatigue {2}. Resolve {3}. Initiative {4}. Melee skill {5}. Ranged skill {6}. Melee defense {7}. Ranged defense {8}. Head armor {9}. Body armor {10}.",
         };
     }
 }

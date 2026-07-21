@@ -12,7 +12,8 @@
 	EventNav = null,
 	TileCursor = null,
 	CombatLog = null,
-	Combat = null
+	Combat = null,
+	Readout = null
 };
 
 ::UnseenBanner.Mod = ::Hooks.register(::UnseenBanner.ID, ::UnseenBanner.Version, ::UnseenBanner.Name);
@@ -559,6 +560,126 @@
 	}
 };
 
+// On-demand readouts (phase 3.4) and the character-sheet readout for the C/I
+// screen. Everything here is pull, not push: dedicated keys speak the active
+// man's live resources, the turn order, or the visible enemies, and opening the
+// tactical character screen speaks the shown man's attribute sheet. All facts
+// are Squirrel APIs (actor + properties + turn sequence bar), so nothing is
+// scraped from the DOM; the companion owns every connective word. List readouts
+// pack their entries newline-separated in the message text (game names never
+// contain newlines), each line tagged so the companion can localize the framing.
+::UnseenBanner.Readout = {
+	// t = active man's status, tab = turn order, b = visible enemies. All are
+	// free of vanilla tactical bindings (see the KeyMapSQ reference memory).
+	Keys = {
+		[30] = "status",   // t
+		[38] = "turnorder", // tab
+		[12] = "enemies"   // b
+	},
+	function handles(_code)
+	{
+		return _code in this.Keys;
+	},
+	function onKey(_code, _active, _entities)
+	{
+		local what = this.Keys[_code];
+		if (what == "status") this.status(_active);
+		else if (what == "turnorder") this.turnOrder(_active);
+		else if (what == "enemies") this.enemies(_active, _entities);
+	},
+	function status(_active)
+	{
+		// Health, action points, fatigue as current/max pairs plus the morale
+		// index (the companion maps it to a word). This is the readout that
+		// answers "how many action points do I have left" without a screen.
+		local detail = _active.getHitpoints() + "/" + _active.getHitpointsMax()
+			+ "|" + _active.getActionPoints() + "/" + _active.getActionPointsMax()
+			+ "|" + _active.getFatigue() + "/" + _active.getFatigueMax();
+		::UnseenBanner.sendMessage("interrupt", _active.getName(), "combat.status",
+			"" + _active.getMoraleState(), detail);
+	},
+	function turnOrder(_active)
+	{
+		// The remaining turn queue for this round (index 0 is whoever is acting).
+		// Hidden enemies are left out to keep fog-of-war parity. Each line is
+		// "s"/"a"/"e" (self/ally/enemy) + the already-localized name.
+		local entities = ::Tactical.TurnSequenceBar.getCurrentEntities();
+		local text = "";
+		local count = 0;
+		foreach( e in entities )
+		{
+			if (e == null || !e.isAlive() || e.isHiddenToPlayer()) continue;
+
+			local tag = "e";
+			if (_active != null && e.getID() == _active.getID()) tag = "s";
+			else if (e.isPlayerControlled()) tag = "a";
+
+			if (count > 0) text += "\n";
+			text += tag + e.getName();
+			count += 1;
+		}
+
+		if (count == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.turnorder.empty");
+			return;
+		}
+
+		::UnseenBanner.sendMessage("interrupt", text, "combat.turnorder");
+	},
+	function enemies(_active, _entities)
+	{
+		// Visible, living hostiles sorted nearest-first. Each line is the hex
+		// distance from the active man, a space, then the name.
+		local activeTile = _active.getTile();
+		local scored = [];
+		foreach( e in _entities.getAllHostilesAsArray() )
+		{
+			if (e != null && e.isAlive() && !e.isHiddenToPlayer() && e.getTile() != null)
+			{
+				scored.push({ e = e, d = activeTile.getDistanceTo(e.getTile()) });
+			}
+		}
+
+		if (scored.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.enemies.empty");
+			return;
+		}
+
+		scored.sort(function ( _a, _b )
+		{
+			if (_a.d > _b.d) return 1;
+			if (_a.d < _b.d) return -1;
+			return 0;
+		});
+
+		local text = "";
+		for (local i = 0; i < scored.len(); i += 1)
+		{
+			if (i > 0) text += "\n";
+			text += scored[i].d + " " + scored[i].e.getName();
+		}
+
+		::UnseenBanner.sendMessage("interrupt", text, "combat.enemies", "" + scored.len());
+	},
+	// Attribute sheet of the man shown on the tactical character screen (C/I).
+	// A first pass: it speaks the core attributes the sheet is built around, read
+	// straight from the actor's current properties. Full per-brother navigation
+	// and perks/equipment remain the larger DOM task (roadmap 2.4).
+	function sheet(_active)
+	{
+		local p = _active.getCurrentProperties();
+		local detail = _active.getHitpointsMax() + "|" + _active.getFatigueMax()
+			+ "|" + p.getBravery() + "|" + p.getInitiative()
+			+ "|" + p.getMeleeSkill() + "|" + p.getRangedSkill()
+			+ "|" + p.getMeleeDefense() + "|" + p.getRangedDefense()
+			+ "|" + _active.getArmor(::Const.BodyPart.Head)
+			+ "|" + _active.getArmor(::Const.BodyPart.Body);
+		::UnseenBanner.sendMessage("interrupt", _active.getName(), "combat.sheet", "", detail);
+	}
+};
+
 // Engine key codes (see MSU's KeyMapSQ, the reference for this enum).
 // Tunable/remappable keys should eventually go through MSU keybinds and its
 // settings UI (roadmap fase 5, "toda constante afinable va a config").
@@ -706,7 +827,8 @@
 		local code = _key.getKey();
 		local isCursorKey = ::UnseenBanner.TileCursor.handles(code);
 		local isActKey = ::UnseenBanner.Combat.handles(code);
-		if ((isCursorKey || isActKey)
+		local isReadoutKey = ::UnseenBanner.Readout.handles(code);
+		if ((isCursorKey || isActKey || isReadoutKey)
 			&& !this.isInLoadingScreen()
 			&& !this.isBattleEnded()
 			&& !this.isInCharacterScreen()
@@ -723,8 +845,10 @@
 				{
 					if (isCursorKey)
 						::UnseenBanner.TileCursor.onKey(code, active, this.Tactical.Entities, (_key.getModifier() & 1) != 0, this);
-					else
+					else if (isActKey)
 						::UnseenBanner.Combat.onKey(code, active, this, ::UnseenBanner.TileCursor.getTile(active));
+					else
+						::UnseenBanner.Readout.onKey(code, active, this.Tactical.Entities);
 				}
 				return true;
 			}
@@ -777,6 +901,50 @@
 		if (name != "")
 		{
 			::UnseenBanner.sendMessage("interrupt", name, "combat.skill.deselected");
+		}
+	}
+
+	// Turn and round events (phase 3.5). A brother becoming active is the moment a
+	// blind player most needs called out — the combat log narrates hits, morale,
+	// wounds and deaths already, but never "it is now your turn". This funnel fires
+	// exactly when an entity fully takes the first slot (and, for player units, is
+	// where vanilla unlocks input), so it is the natural place to announce a turn.
+	// Only player-controlled turns are spoken; narrating every enemy turn would
+	// drown out the log. Queue channel: a turn event must not be dropped and should
+	// fall in order with the combat lines around it.
+	q.turnsequencebar_onEntityEnteredFirstSlotFully = @(__original) function( _entity )
+	{
+		__original(_entity);
+
+		if (_entity != null && _entity.isPlayerControlled() && _entity.isAlive())
+		{
+			::UnseenBanner.sendMessage("queue", _entity.getName(), "combat.turn.player",
+				"" + _entity.getActionPoints());
+		}
+	}
+
+	q.turnsequencebar_onNextRound = @(__original) function( _round )
+	{
+		__original(_round);
+		::UnseenBanner.sendMessage("queue", "" + _round, "combat.round");
+	}
+
+	// Character sheet readout (the C/I screen). The tactical screen only opens it
+	// for the active, player-controlled brother, so that is who we read. Announced
+	// straight from Squirrel actor APIs — the DOM sheet is unreadable, but the same
+	// facts it is built from are all queryable here.
+	q.showCharacterScreen = @(__original) function( _forced = false )
+	{
+		local wasVisible = this.m.CharacterScreen.isVisible();
+		__original(_forced);
+
+		if (!wasVisible && this.m.CharacterScreen.isVisible())
+		{
+			local active = this.Tactical.TurnSequenceBar.getActiveEntity();
+			if (active != null && active.isPlayerControlled())
+			{
+				::UnseenBanner.Readout.sheet(active);
+			}
 		}
 	}
 });

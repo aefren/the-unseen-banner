@@ -116,6 +116,10 @@ namespace TheUnseenBanner.Companion
                     "tile.readout" => ComposeTileReadout(valor, texto, detalle),
                     "combat.skill.selected" => ComposeSkillSelected(texto, valor, detalle),
                     "combat.move" => ComposeMove(valor),
+                    "combat.status" => ComposeStatus(texto, valor, detalle),
+                    "combat.turnorder" => ComposeTurnOrder(texto),
+                    "combat.enemies" => ComposeEnemies(texto, valor),
+                    "combat.sheet" => ComposeSheet(texto, detalle),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
@@ -228,6 +232,85 @@ namespace TheUnseenBanner.Companion
             return dist == 1
                 ? L10n.F("tile.position.one", hour)
                 : L10n.F("tile.position", dist, hour);
+        }
+
+        /// <summary>Compose the active man's status readout (phase 3.4): the T key.
+        /// detail is "hp/hpmax|ap/apmax|fat/fatmax"; valor is the morale index the
+        /// Squirrel side sends, mapped to a word here so it stays translatable.
+        /// </summary>
+        private static string ComposeStatus(string name, string moraleIndex, string detail)
+        {
+            string[] parts = detail.Split('|');
+            (string cur, string max) Pair(int i)
+            {
+                if (i >= parts.Length) return ("0", "0");
+                string[] p = parts[i].Split('/');
+                return (p.Length > 0 ? p[0] : "0", p.Length > 1 ? p[1] : "0");
+            }
+
+            var (hp, hpMax) = Pair(0);
+            var (ap, apMax) = Pair(1);
+            var (fat, fatMax) = Pair(2);
+            string morale = L10n.T("combat.morale." + moraleIndex);
+
+            return L10n.F("combat.status", name, hp, hpMax, ap, apMax, fat, fatMax, morale);
+        }
+
+        /// <summary>Compose the turn-order readout (phase 3.4): the Tab key. The
+        /// text is newline-separated entries, each a one-char tag (s self, a ally,
+        /// e enemy) followed by the already-localized name.</summary>
+        private static string ComposeTurnOrder(string text)
+        {
+            var entries = new System.Collections.Generic.List<string>();
+            foreach (string line in text.Split('\n'))
+            {
+                if (line.Length == 0) continue;
+                string tag = line.Substring(0, 1);
+                string name = line.Substring(1);
+                entries.Add(tag switch
+                {
+                    "s" => L10n.F("combat.turnorder.self", name),
+                    "a" => L10n.F("combat.turnorder.ally", name),
+                    _ => L10n.F("combat.turnorder.enemy", name),
+                });
+            }
+
+            return L10n.F("combat.turnorder", string.Join(", ", entries));
+        }
+
+        /// <summary>Compose the visible-enemies readout (phase 3.4): the B key. The
+        /// text is newline-separated "distance name" entries, nearest first; valor
+        /// is the count.</summary>
+        private static string ComposeEnemies(string text, string countText)
+        {
+            var entries = new System.Collections.Generic.List<string>();
+            foreach (string line in text.Split('\n'))
+            {
+                if (line.Length == 0) continue;
+                int sp = line.IndexOf(' ');
+                if (sp <= 0) continue;
+                string dist = line.Substring(0, sp);
+                string name = line.Substring(sp + 1);
+                entries.Add(dist == "1"
+                    ? L10n.F("combat.enemies.entry.one", name)
+                    : L10n.F("combat.enemies.entry", name, dist));
+            }
+
+            string list = string.Join(", ", entries);
+            return countText == "1"
+                ? L10n.F("combat.enemies.one", list)
+                : L10n.F("combat.enemies", countText, list);
+        }
+
+        /// <summary>Compose the character-sheet readout for the C/I screen (phase
+        /// 3.4, first pass). detail packs the ten core attributes the sheet is built
+        /// around, in the order the format string consumes them.</summary>
+        private static string ComposeSheet(string name, string detail)
+        {
+            string[] p = detail.Split('|');
+            object At(int i) => i < p.Length ? p[i] : "0";
+            return L10n.F("combat.sheet", name,
+                At(0), At(1), At(2), At(3), At(4), At(5), At(6), At(7), At(8), At(9));
         }
     }
 }
