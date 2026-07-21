@@ -169,14 +169,16 @@ opciones: el equivalente a los diálogos de F&H1.
 
 - [ ] 1.1 Pantalla de evento: narrar título + cuerpo al abrirse, opciones al
       enfocarlas (canal interrupt), resultado al elegir (canal cola).
-- [ ] 1.2 Menú principal y opciones. **Parcial** (jul 2026): cursor de
+- [x] 1.2 Menú principal y New Campaign. **Hecho** (jul 2026): cursor de
       teclado sobre el menú principal funcionando y verificado de oído
       (flechas anuncian el botón enfocado por canal interrupt, Enter activa;
       `menu_nav.js` + hook de `onKeyInput` en `main_menu_state`). Cubre
       también los botones que añaden otros mods (p. ej. "Mod Options" de
-      MSU) por leer el DOM renderizado. Pendiente: submenús (Options, New
-      Campaign... — las teclas ya les respetan su comportamiento nativo,
-      pero aún no se narran), y anuncio del propio menú al aparecer.
+      MSU) por leer el DOM renderizado. El propio menú se anuncia al
+      aparecer, verificado de oído. El flujo completo de New Campaign se
+      narra y el jugador ciego ya puede iniciar una campaña sin asistencia
+      visual (verificado jul 2026). *Pendiente, se deja para más adelante:*
+      narrar el submenú de Options.
 - [ ] 1.3 Navegación por teclado de los eventos si el foco es solo-ratón
       (primer contacto con el problema de navegación — empezar aquí porque
       son listas simples de opciones).
