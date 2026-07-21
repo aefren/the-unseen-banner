@@ -6,7 +6,8 @@ using System.Reflection;
 namespace TheUnseenBanner.Companion
 {
     /// <summary>
-    /// Every string the companion speaks about itself (not game text) lives here.
+    /// Every string added by the mod lives here. Game text is passed in already
+    /// localized from the rendered DOM and is only interpolated into these phrases.
     /// English defaults are compiled in; a translation is a plain-text file
     /// <c>lang/&lt;code&gt;.lang</c> next to the exe ("key = value" per line, "#"
     /// comments, UTF-8), selected by <see cref="Init"/>. Missing keys fall back to
@@ -84,6 +85,18 @@ namespace TheUnseenBanner.Companion
         private static readonly Dictionary<string, string> English = new(StringComparer.Ordinal)
         {
             ["companion.loaded"] = "The Unseen Banner, version {0}, loaded.",
+            ["menu.main"] = "Main menu. {0}.",
+            ["menu.screen"] = "{0}. {1}.",
+            ["menu.option.selected"] = "{1}: {0}, selected.",
+            ["menu.option.not_selected"] = "{1}: {0}, not selected.",
+            ["menu.option.selected_detail"] = "{1}: {0}, selected. {2}",
+            ["menu.checked"] = "{0}, checked.",
+            ["menu.not_checked"] = "{0}, not checked.",
+            ["menu.value"] = "{1}: {0}.",
+            ["menu.editing"] = "{1}: {0}. Editing.",
+            ["menu.previous_banner"] = "Previous banner.",
+            ["menu.next_banner"] = "Next banner.",
+            ["menu.banner"] = "Banner {0}.",
         };
     }
 }

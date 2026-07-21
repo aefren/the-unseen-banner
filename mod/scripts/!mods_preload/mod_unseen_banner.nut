@@ -33,14 +33,20 @@
 		if (ch == "\"") out += "\\\"";
 		else if (ch == "\\") out += "\\\\";
 		else if (ch == "\n") out += "\\n";
+		else if (ch == "\r") out += "\\r";
+		else if (ch == "\t") out += "\\t";
 		else out += ch;
 	}
 	return out;
 }
 
-::UnseenBanner.sendMessage <- function(_canal, _texto)
+::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null)
 {
-	local json = "{\"canal\":\"" + ::UnseenBanner.jsonEscape(_canal) + "\",\"texto\":\"" + ::UnseenBanner.jsonEscape(_texto) + "\"}";
+	local json = "{\"canal\":\"" + ::UnseenBanner.jsonEscape(_canal) + "\",\"texto\":\"" + ::UnseenBanner.jsonEscape(_texto) + "\"";
+	if (_categoria != null) json += ",\"categoria\":\"" + ::UnseenBanner.jsonEscape(_categoria) + "\"";
+	if (_valor != null) json += ",\"valor\":\"" + ::UnseenBanner.jsonEscape(_valor) + "\"";
+	if (_detalle != null) json += ",\"detalle\":\"" + ::UnseenBanner.jsonEscape(_detalle) + "\"";
+	json += "}";
 	::logInfo("UB_MSG:" + json);
 }
 
@@ -76,7 +82,9 @@
 // navegación de foco/cursor").
 ::UnseenBanner.MenuNav = {
 	m = {
-		JSHandle = null
+		JSHandle = null,
+		ActiveModule = null,
+		InMainMenuState = false
 	},
 	function connect()
 	{
@@ -89,9 +97,54 @@
 			this.m.JSHandle.asyncCall("onKeyForwarded", _name);
 		}
 	},
-	function onMenuFocusChanged(_texto)
+	function isActive()
 	{
-		::UnseenBanner.sendMessage("interrupt", _texto);
+		return this.m.InMainMenuState && (this.m.ActiveModule == "MainMenuModule" || this.m.ActiveModule == "NewCampaignModule");
+	},
+	function enterMainMenuState()
+	{
+		this.m.InMainMenuState = true;
+		this.m.ActiveModule = null;
+	},
+	function leaveMainMenuState()
+	{
+		this.m.InMainMenuState = false;
+		this.m.ActiveModule = null;
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("onStateExited", null);
+		}
+	},
+	function onModuleShown(_id)
+	{
+		if (this.m.InMainMenuState && (_id == "MainMenuModule" || _id == "NewCampaignModule"))
+		{
+			this.m.ActiveModule = _id;
+			if (this.m.JSHandle != null)
+			{
+				this.m.JSHandle.asyncCall("onModuleShown", _id);
+			}
+		}
+	},
+	function onModuleHidden(_id)
+	{
+		if (!this.m.InMainMenuState) return;
+
+		// Main and New Campaign animate at the same time. Only the module that
+		// is still active may clear the state when its hide animation finishes.
+		if (this.m.ActiveModule == _id)
+		{
+			this.m.ActiveModule = null;
+		}
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("onModuleHidden", _id);
+		}
+	},
+	// Receives a single table from JS (SQ.call only carries one args value).
+	function onMenuAnnouncement(_data)
+	{
+		::UnseenBanner.sendMessage("interrupt", _data.texto, _data.categoria, _data.valor, _data.detalle);
 	}
 };
 
@@ -115,20 +168,48 @@
 	}
 });
 
+// Module lifecycle is the deterministic point at which the animated DOM is
+// ready. Hooking the common base avoids polling and keeps the announcement
+// aligned with the screen the player can actually interact with.
+::UnseenBanner.Mod.hook("scripts/ui/screens/ui_module", function(q) {
+	q.onModuleShown = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.MenuNav.onModuleShown(this.m.ID);
+	}
+
+	q.onModuleHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.MenuNav.onModuleHidden(this.m.ID);
+	}
+});
+
 ::UnseenBanner.Mod.hook("scripts/states/main_menu_state", function(q) {
+	q.onInit = @(__original) function()
+	{
+		::UnseenBanner.MenuNav.enterMainMenuState();
+		__original();
+	}
+
+	q.onFinish = @(__original) function()
+	{
+		::UnseenBanner.MenuNav.leaveMainMenuState();
+		__original();
+	}
+
 	q.onKeyInput = @(__original) function( _key )
 	{
-		// Only steal keys while the main menu module itself is on screen;
-		// in submenus (Options, New Campaign...) arrows/enter must keep
-		// their native behavior (e.g. enter inside the company name input).
+		// Only steal keys while a menu handled by menu_nav.js is fully shown.
+		// All other submenus keep their native keyboard behavior.
 		//
 		// State 0 is key release (1 = press, repeated while held) — same
 		// event the vanilla menu uses for its own escape handling, and it
 		// cannot flood the JS side with key-repeat.
 		if (_key.getState() == 0
 			&& _key.getKey() in ::UnseenBanner.KeyCodes
-			&& this.m.MainMenuScreen != null
-			&& this.m.MainMenuScreen.isMainMenuVisible())
+			&& ::UnseenBanner.MenuNav.isActive()
+			&& this.isKeyInputPermitted())
 		{
 			::UnseenBanner.MenuNav.sendKey(::UnseenBanner.KeyCodes[_key.getKey()]);
 			return true;

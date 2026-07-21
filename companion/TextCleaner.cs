@@ -29,8 +29,11 @@ namespace TheUnseenBanner.Companion
             CommonOptions,
             RegexTimeout);
 
+        // <br> and <p> both mark a line/paragraph boundary. XBBCODE wraps event
+        // and origin descriptions in <p class="...">...</p>, so these must become
+        // newlines, not vanish — otherwise paragraphs run together when spoken.
         private static readonly Regex HtmlBreak = new(
-            @"<br\s*/?>",
+            @"<br\s*/?>|</?p\b[^>]*>",
             CommonOptions,
             RegexTimeout);
 

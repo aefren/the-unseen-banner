@@ -108,12 +108,25 @@ namespace TheUnseenBanner.Companion
                 var root = doc.RootElement;
                 string canal = root.GetProperty("canal").GetString() ?? "interrupt";
                 string texto = root.GetProperty("texto").GetString() ?? "";
-                Speech.Speak(texto, interrupt: canal == "interrupt");
+                string categoria = GetOptionalString(root, "categoria");
+                string valor = GetOptionalString(root, "valor");
+                string detalle = GetOptionalString(root, "detalle");
+                string spoken = categoria.Length > 0
+                    ? L10n.F(categoria, texto, valor, detalle)
+                    : texto;
+                Speech.Speak(spoken, interrupt: canal == "interrupt");
             }
             catch (Exception e)
             {
                 Console.WriteLine($"[LogBridge] Malformed message ignored: {json} ({e.Message})");
             }
+        }
+
+        private static string GetOptionalString(JsonElement root, string name)
+        {
+            return root.TryGetProperty(name, out JsonElement value)
+                ? value.GetString() ?? ""
+                : "";
         }
     }
 }
