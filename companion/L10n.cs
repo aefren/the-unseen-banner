@@ -250,17 +250,19 @@ namespace TheUnseenBanner.Companion
             ["combat.result.button.lootall"] = "Loot all items, button.",
             ["combat.result.button.lootall.disabled"] = "Loot all items, button, unavailable.",
             ["combat.result.button.continue"] = "Continue, button.",
-            // World-map company/campaign readout (phase 4.4, the g key). Day and
-            // time, brother count, money and daily wages, food and how long it
-            // lasts, and the active contract.
-            ["world.status.header"] = "Day {0}, {1}. {2} brothers.",
-            ["world.status.header.one"] = "Day {0}, {1}. 1 brother.",
-            ["world.status.day"] = "daytime",
-            ["world.status.night"] = "night",
-            ["world.status.money"] = "{0} crowns, {1} a day in wages.",
-            ["world.status.food"] = "Food {0}, {1} days left.",
-            ["world.status.food.one"] = "Food {0}, 1 day left.",
-            ["world.status.food.none"] = "Food {0}.",
+            // World-map company/campaign list (phase 4.4, G then Up/Down).
+            ["world.status.screen"] = "Company status. Use Up and Down to review. Press G to close.",
+            ["world.status.closed"] = "Company status closed.",
+            ["world.status.time.day"] = "Day {1}, daytime.",
+            ["world.status.time.night"] = "Day {1}, night.",
+            ["world.status.brothers"] = "{1} brothers.",
+            ["world.status.brothers.one"] = "1 brother.",
+            ["world.status.money"] = "Crowns: {1}.",
+            ["world.status.wages"] = "Daily wages: {1} crowns.",
+            ["world.status.food"] = "Food: {1}.",
+            ["world.status.food.days"] = "{1} days of food left.",
+            ["world.status.food.day"] = "1 day of food left.",
+            ["world.status.food.none"] = "No food upkeep.",
             ["world.status.contract"] = "Contract: {0}.",
             ["world.status.contract.none"] = "No active contract.",
         };

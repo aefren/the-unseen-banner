@@ -227,27 +227,46 @@
 	}
 };
 
-// World-map company/campaign readout (phase 4.4). A single key speaks the party
-// status that the map's topbar shows a sighted player: the day and time of day,
-// how many brothers, money and daily wages, food and how many days it lasts, and
-// the active contract. Pull, not push: nothing narrates until the key is pressed.
-// Every fact is a Squirrel API (World.Assets / World.getTime / World.Contracts /
-// the player roster), so nothing is scraped from the DOM; the companion owns the
-// framing words. Driven from world_state.onKeyInput (see the hook below), only on
-// the plain map (no event screen up).
+// World-map company/campaign readout (phase 4.4). The map's topbar status is a
+// short semantic list: day and time of day, brother count, crowns, daily wages,
+// food, days of food, and the active contract. Pull, not push: G opens/closes the
+// list and Up/Down read one fact at a time. Every fact is a Squirrel API
+// (World.Assets / World.getTime / World.Contracts / the player roster), so
+// nothing is scraped from the DOM; the companion owns the framing words.
 //
 // Key: g (code 17). g is unbound on the world map in vanilla — the letters the
 // map already claims are c/f/i/o/p/r/t (character, ?, inventory, obituary, perks,
 // relations, camp). Eventually remappable through MSU keybinds (roadmap fase 5).
 ::UnseenBanner.WorldStatus <- {
-	Keys = {
-		[17] = "status"   // g
+	m = {
+		Items = null,
+		ItemIndex = 0,
+		Active = false
+	},
+	ToggleKey = 17, // g
+	MoveKeys = {
+		[49] = "up",
+		[51] = "down"
+	},
+	function isActive()
+	{
+		return this.m.Active;
 	},
 	function handles(_code)
 	{
-		return _code in this.Keys;
+		return _code == this.ToggleKey || (this.m.Active && _code in this.MoveKeys);
 	},
-	function announce()
+	function reset()
+	{
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Active = false;
+	},
+	function item(_cat, _texto = "", _valor = "", _detalle = "")
+	{
+		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle };
+	},
+	function open()
 	{
 		local assets = ::World.Assets;
 		local money = assets.getMoney();
@@ -255,25 +274,62 @@
 		local food = assets.getFood();
 		local dailyFood = assets.getDailyFoodCost();
 		// Days of food left at the current rate; -1 signals "no upkeep" (an empty
-		// roster) so the companion can drop the days clause instead of dividing by
-		// zero.
+		// roster) so it gets a meaningful row without dividing by zero.
 		local foodDays = dailyFood > 0 ? (food / dailyFood).tointeger() : -1;
 		local brothers = ::World.getPlayerRoster().getSize();
 
 		local time = ::World.getTime();
 		local day = time.Days;
-		local isDay = time.IsDaytime ? 1 : 0;
+		local timeCat = time.IsDaytime ? "world.status.time.day" : "world.status.time.night";
 
-		// The contract title carries BBCode/colour markup, so it rides in `texto`,
-		// the field the companion runs through clean() before speaking. valor is 1
-		// only when a contract is active. The numbers pack pipe-separated in detalle.
+		// Contract titles carry BBCode/colour markup, so they ride in `texto`, the
+		// field the companion runs through clean() before speaking.
 		local contract = ::World.Contracts.getActiveContract();
 		local title = contract != null ? contract.getTitle() : "";
 
-		local detail = brothers + "|" + money + "|" + dailyMoney + "|"
-			+ food + "|" + dailyFood + "|" + foodDays + "|" + day + "|" + isDay;
-		::UnseenBanner.sendMessage("interrupt", title, "world.status",
-			(contract != null ? "1" : "0"), detail);
+		local items = [];
+		items.push(this.item("world.status.screen"));
+		items.push(this.item(timeCat, "", "" + day));
+		items.push(this.item(brothers == 1 ? "world.status.brothers.one" : "world.status.brothers", "", "" + brothers));
+		items.push(this.item("world.status.money", "", "" + money));
+		items.push(this.item("world.status.wages", "", "" + dailyMoney));
+		items.push(this.item("world.status.food", "", "" + food));
+		if (foodDays < 0) items.push(this.item("world.status.food.none"));
+		else items.push(this.item(foodDays == 1 ? "world.status.food.day" : "world.status.food.days", "", "" + foodDays));
+		items.push(this.item(contract != null ? "world.status.contract" : "world.status.contract.none", title));
+
+		this.m.Items = items;
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.announceItem();
+	},
+	function close(_announce = false)
+	{
+		this.reset();
+		if (_announce) ::UnseenBanner.sendMessage("interrupt", "", "world.status.closed");
+	},
+	function onKey(_code)
+	{
+		if (_code == this.ToggleKey)
+		{
+			if (this.m.Active) this.close(true);
+			else this.open();
+			return;
+		}
+
+		if (!this.m.Active || !(_code in this.MoveKeys)) return;
+		if (this.MoveKeys[_code] == "up") this.m.ItemIndex -= 1;
+		else this.m.ItemIndex += 1;
+
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
 	}
 };
 
@@ -1576,23 +1632,33 @@
 	q.onInit = @(__original) function()
 	{
 		::UnseenBanner.MenuNav.reset();
+		::UnseenBanner.WorldStatus.reset();
 		__original();
 	}
 
 	q.loading_screen_onScreenShown = @(__original) function()
 	{
 		::UnseenBanner.MenuNav.reset();
+		::UnseenBanner.WorldStatus.reset();
 		__original();
 	}
 
 	q.onFinish = @(__original) function()
 	{
 		::UnseenBanner.MenuNav.reset();
+		::UnseenBanner.WorldStatus.reset();
 		__original();
 	}
 
 	q.onKeyInput = @(__original) function( _key )
 	{
+		// Events and menu modules take priority over the map readout. They can open
+		// without a key handled here, so clear a stale list as soon as either is up.
+		if (::UnseenBanner.EventNav.isActive() || ::UnseenBanner.MenuNav.isActive())
+		{
+			::UnseenBanner.WorldStatus.reset();
+		}
+
 		if (_key.getState() == 0
 			&& _key.getKey() in ::UnseenBanner.KeyCodes
 			&& ::UnseenBanner.EventNav.isActive())
@@ -1615,21 +1681,25 @@
 			return true;
 		}
 
-		// Company/campaign readout (phase 4.4), only on the plain map (no event or
-		// menu screen up). Fire on release, exactly like the event cursor above: this
-		// is the same state and the map delivers the release of g (which carries no
-		// native map binding, so nothing swallows it — that swallowing is a
-		// tactical-combat quirk). Consume both states so the key stays ours.
+		// Company/campaign readout (phase 4.4), only on the plain map. G toggles the
+		// list and Up/Down move through it, all on release. Consume both key states so
+		// vanilla camera movement never competes with list navigation. Any unrelated
+		// map action closes the list before passing through, so arrows cannot remain
+		// captured after the player resumes normal play.
 		local code = _key.getKey();
 		if (!::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive()
 			&& ::UnseenBanner.WorldStatus.handles(code))
 		{
 			if (_key.getState() == 0)
 			{
-				::UnseenBanner.WorldStatus.announce();
+				::UnseenBanner.WorldStatus.onKey(code);
 			}
 
 			return true;
+		}
+		else if (::UnseenBanner.WorldStatus.isActive())
+		{
+			::UnseenBanner.WorldStatus.reset();
 		}
 
 		return __original(_key);
