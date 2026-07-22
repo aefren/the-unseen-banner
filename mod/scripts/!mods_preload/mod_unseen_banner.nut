@@ -1564,6 +1564,27 @@
 // stolen only while the event is up; every other key (including the native 1-6
 // button shortcuts) keeps its normal behavior.
 ::UnseenBanner.Mod.hook("scripts/states/world_state", function(q) {
+	// MenuNav's "active" flag is a menu module being shown, cleared when it hides.
+	// But entering gameplay tears menu modules down without a reliable hide event:
+	// loading a save from the main menu only hides main_menu_state (no onFinish), and
+	// loading from the in-game pause menu reuses this very world_state. Either way the
+	// LoadCampaignModule's onModuleHidden never fires, so ActiveModule would stay set
+	// and its guard would silently swallow the world-map keys (e.g. G reads nothing).
+	// Reset at both gameplay entry points so the map always starts with no menu held:
+	// onInit for a fresh state (new campaign, load from main menu), and the loading
+	// screen for an in-game reload of the same state.
+	q.onInit = @(__original) function()
+	{
+		::UnseenBanner.MenuNav.reset();
+		__original();
+	}
+
+	q.loading_screen_onScreenShown = @(__original) function()
+	{
+		::UnseenBanner.MenuNav.reset();
+		__original();
+	}
+
 	q.onFinish = @(__original) function()
 	{
 		::UnseenBanner.MenuNav.reset();
