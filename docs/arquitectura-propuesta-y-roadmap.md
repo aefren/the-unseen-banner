@@ -185,8 +185,17 @@ opciones: el equivalente a los diálogos de F&H1.
       MSU) por leer el DOM renderizado. El propio menú se anuncia al
       aparecer, verificado de oído. El flujo completo de New Campaign se
       narra y el jugador ciego ya puede iniciar una campaña sin asistencia
-      visual (verificado jul 2026). *Pendiente, se deja para más adelante:*
-      narrar el submenú de Options.
+      visual (verificado jul 2026).
+      **Ampliado** (jul 2026): el submenú de Options queda accesible desde el
+      menú principal, la pausa del mapamundi y la pausa táctica. El
+      `OptionsMenuModule` compartido se recorre como una lista semántica: un
+      selector cambia Video/Audio/Controls/Gameplay con izquierda/derecha;
+      arriba/abajo recorren los controles; Enter opera radios, casillas y
+      botones; izquierda/derecha ajustan resolución y sliders. Los cuatro
+      volúmenes usan pasos de 10 puntos y anuncian el porcentaje. Todo dispara
+      los eventos DOM nativos, de modo que Apply/Ok siguen siendo los únicos
+      puntos que guardan cambios y Escape conserva el back nativo. Verificado
+      de oído con NVDA en las tres superficies.
 - [ ] 1.3 Navegación por teclado de los eventos si el foco es solo-ratón
       (primer contacto con el problema de navegación — empezar aquí porque
       son listas simples de opciones).
@@ -208,9 +217,11 @@ opciones: el equivalente a los diálogos de F&H1.
       en Cancel); el de nombrar una partida nueva se deja al campo de texto
       nativo (el motor ya le entrega el teclado, como en New Campaign), solo
       se anuncia el prompt al abrirse y se detecta su cierre de forma
-      perezosa en la siguiente tecla. Cargar en combate táctico (el menú de
-      pausa también aparece ahí) queda fuera: se anuncia al abrirse pero no es
-      navegable por teclado. Verificado de oído: cargar desde el menú
+      perezosa en la siguiente tecla. La ampliación posterior de Options
+      añadió el mismo reenvío de teclado en `tactical_state`, por lo que el
+      menú de pausa táctico y sus módulos compartidos ya son navegables; el
+      flujo específico de cargar durante un combate queda pendiente de una
+      prueba auditiva propia. Verificado de oído: cargar desde el menú
       principal, abrir el menú de pausa en el mapa, guardar una partida nueva
       con nombre y cargarla de vuelta.
 

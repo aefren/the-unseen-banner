@@ -1,6 +1,6 @@
-// The Unseen Banner — keyboard cursor for the main menu and the complete
-// New Campaign flow. ES3 only: Chromium 48, no let/const, arrows or template
-// literals.
+// The Unseen Banner — keyboard cursor for the shared menu modules: main/pause,
+// New Campaign, Load/Save and Options. ES3 only: Chromium 48, no let/const,
+// arrows or template literals.
 //
 // The engine does not forward raw keyboard events to this DOM, so Up, Down
 // and Enter arrive from Squirrel. All game-owned labels and descriptions are
@@ -15,7 +15,8 @@ var UnseenBannerMenuNav = function ()
 		MainMenuModule: -1,
 		NewCampaignModule: -1,
 		LoadCampaignModule: -1,
-		SaveCampaignModule: -1
+		SaveCampaignModule: -1,
+		OptionsMenuModule: -1
 	};
 	this.mEditingInput = null;
 	// Popup dialogs (Enter Name for a new save, Delete confirmation) have no module
@@ -227,6 +228,174 @@ UnseenBannerMenuNav.prototype.announceCampaignScreen = function (_id)
 	this.sendAnnouncement('menu.campaign.screen', title, String(count), '');
 };
 
+// --- Options screen ---------------------------------------------------------
+// OptionsMenuModule is shared by the main menu and both in-game pause menus.
+// Its four tabs all feed the game's own datasource; we operate the rendered
+// controls and trigger their native events so Apply / Ok remain the only places
+// that persist changes.
+
+UnseenBannerMenuNav.prototype.getOptionsModule = function ()
+{
+	return $('.options-menu-module.display-block:first');
+};
+
+UnseenBannerMenuNav.prototype.getOptionsTabButtons = function ()
+{
+	return this.getOptionsModule().find('.l-tab-button-bar div.ui-control');
+};
+
+UnseenBannerMenuNav.prototype.getSelectedOptionsTab = function ()
+{
+	var tabs = this.getOptionsTabButtons();
+	var selected = tabs.filter('.is-selected:first');
+	return selected.length > 0 ? selected : tabs.first();
+};
+
+UnseenBannerMenuNav.prototype.getActiveOptionsPanel = function ()
+{
+	var module = this.getOptionsModule();
+	var content = module.find('.ui-control.dialog:first > .content:first');
+	return content.children('.display-block:first');
+};
+
+UnseenBannerMenuNav.prototype.getOptionsItems = function ()
+{
+	var self = this;
+	var module = this.getOptionsModule();
+	var panel = this.getActiveOptionsPanel();
+	var items = [];
+	var selectedTab = this.getSelectedOptionsTab();
+
+	// Treat the four visual tab buttons as one semantic setting. Left / Right on
+	// this item changes panel; Down then enters that panel's controls.
+	if (selectedTab.length > 0)
+		items.push({ type: 'options-tab', element: selectedTab });
+
+	// Resolution is a long visual list. Expose it as one setting whose value is
+	// the selected row, adjusted with Left / Right instead of making the player
+	// traverse every resolution before reaching the rest of the Video panel.
+	if (panel.hasClass('video-panel'))
+	{
+		var list = panel.find('.ui-control.list:first');
+		var resolution = list.find('.list-entry.is-selected:first');
+		if (resolution.length === 0)
+			resolution = list.find('.list-entry:first');
+		if (resolution.length > 0)
+			items.push({ type: 'resolution', element: resolution, list: list });
+	}
+
+	panel.find('input').each(function ()
+	{
+		var element = $(this);
+		var inputType = (element.attr('type') || '').toLowerCase();
+		if (!self.isAvailable(element))
+			return;
+
+		if (inputType === 'range')
+			items.push({ type: 'slider', element: element });
+		else if (inputType === 'radio')
+			items.push({ type: 'radio', element: element });
+		else if (inputType === 'checkbox')
+			items.push({ type: 'checkbox', element: element });
+	});
+
+	module.find('.footer .l-button-bar div.ui-control').each(function ()
+	{
+		if (self.isButton(this) && $(this).is(':visible'))
+			items.push({ type: 'button', element: $(this) });
+	});
+
+	return items;
+};
+
+UnseenBannerMenuNav.prototype.readOptionsSliderLabel = function (_slider)
+{
+	var slider = $(_slider);
+	var label = slider.closest('.volume-control').find('.volume-label:first');
+	return label.length > 0 ? label.text() : this.readControlTitle(slider);
+};
+
+UnseenBannerMenuNav.prototype.announceOptionsScreen = function ()
+{
+	var module = this.getOptionsModule();
+	var title = module.find('.ui-control.dialog:first > .header:first .title:first').text();
+	var tab = this.getSelectedOptionsTab();
+	this.sendAnnouncement('menu.options.screen', title, this.readButtonLabel(tab), '');
+};
+
+UnseenBannerMenuNav.prototype.switchOptionsTab = function (_direction)
+{
+	var tabs = this.getOptionsTabButtons();
+	var selected = this.getSelectedOptionsTab();
+	var index = tabs.index(selected);
+	if (tabs.length === 0)
+		return;
+	if (index < 0)
+		index = 0;
+
+	index = (index + _direction + tabs.length) % tabs.length;
+	$(tabs[index]).trigger('click');
+	this.mIndices.OptionsMenuModule = 0;
+
+	var items = this.getOptionsItems();
+	if (items.length > 0)
+	{
+		this.focusItem(items[0]);
+		this.announceItem(items[0]);
+	}
+};
+
+UnseenBannerMenuNav.prototype.adjustOptionsSlider = function (_item, _direction)
+{
+	var element = _item.element;
+	var value = parseFloat(element.val());
+	var min = parseFloat(element.attr('min'));
+	var max = parseFloat(element.attr('max'));
+	var step = parseFloat(element.attr('step'));
+
+	if (isNaN(value)) value = 0;
+	if (isNaN(min)) min = value;
+	if (isNaN(max)) max = value;
+	if (isNaN(step) || step <= 0) step = 1;
+	// The vanilla audio panel declares mVolumeStep = 10 even though the HTML
+	// range keeps step=1 for mouse input. Ten percentage points per key press is
+	// the intended keyboard-sized adjustment and avoids one hundred presses.
+	if (element.hasClass('volume-slider')) step = 10;
+
+	value = Math.max(min, Math.min(max, value + (_direction * step)));
+	element.val(value).trigger('change');
+	this.announceItem(_item);
+};
+
+UnseenBannerMenuNav.prototype.adjustResolution = function (_item, _direction)
+{
+	var entries = _item.list.find('.list-entry');
+	var index = entries.index(_item.element);
+	if (entries.length === 0)
+		return;
+	if (index < 0)
+		index = 0;
+
+	index = Math.max(0, Math.min(entries.length - 1, index + _direction));
+	var target = $(entries[index]);
+	target.trigger('click');
+	_item.element = target;
+	this.focusItem(_item);
+	this.announceItem(_item);
+};
+
+UnseenBannerMenuNav.prototype.adjustOptionsItem = function (_item, _direction)
+{
+	if (_item.type === 'options-tab')
+		this.switchOptionsTab(_direction);
+	else if (_item.type === 'slider')
+		this.adjustOptionsSlider(_item, _direction);
+	else if (_item.type === 'resolution')
+		this.adjustResolution(_item, _direction);
+	else
+		this.announceItem(_item);
+};
+
 // --- Popups (Enter Name / Delete confirmation) ------------------------------
 // These are created synchronously when we click Save (on a New Savegame) or
 // Delete, and live inside the module container. They fire no lifecycle event, so
@@ -308,6 +477,8 @@ UnseenBannerMenuNav.prototype.getItems = function ()
 		return this.getNewCampaignItems();
 	if (this.mActiveModule === 'LoadCampaignModule' || this.mActiveModule === 'SaveCampaignModule')
 		return this.getCampaignItems(this.mActiveModule);
+	if (this.mActiveModule === 'OptionsMenuModule')
+		return this.getOptionsItems();
 	return [];
 };
 
@@ -318,14 +489,21 @@ UnseenBannerMenuNav.prototype.focusItem = function (_item)
 	{
 		focusTarget = _item.element.parent();
 	}
+	else if (_item.type === 'slider')
+	{
+		var sliderControl = _item.element.closest('.volume-control, .scale-control');
+		if (sliderControl.length > 0)
+			focusTarget = sliderControl;
+	}
 
 	$('.unseen-banner-focus').removeClass('unseen-banner-focus');
 	focusTarget.addClass('unseen-banner-focus');
 
-	var list = _item.element.closest('.ui-control.list');
+	var list = _item.type === 'resolution' ? _item.list : _item.element.closest('.ui-control.list');
 	if (list.length > 0 && typeof list.scrollListToElement === 'function')
 	{
-		list.scrollListToElement(_item.element.closest('.control'));
+		var scrollTarget = _item.type === 'resolution' ? _item.element : _item.element.closest('.control');
+		list.scrollListToElement(scrollTarget);
 	}
 };
 
@@ -359,6 +537,20 @@ UnseenBannerMenuNav.prototype.announceItem = function (_item)
 	else if (_item.type === 'popup-button')
 	{
 		this.sendAnnouncement('', this.readButtonLabel(element), '', '');
+	}
+	else if (_item.type === 'options-tab')
+	{
+		this.sendAnnouncement('menu.options.tab', this.readButtonLabel(element), '', '');
+	}
+	else if (_item.type === 'resolution')
+	{
+		this.sendAnnouncement('menu.options.value', this.readControlTitle(element),
+			this.readButtonLabel(element), '');
+	}
+	else if (_item.type === 'slider')
+	{
+		this.sendAnnouncement('menu.options.percent', this.readOptionsSliderLabel(element),
+			String(parseInt(element.val(), 10)), '');
 	}
 	else if (_item.type === 'radio')
 	{
@@ -476,6 +668,14 @@ UnseenBannerMenuNav.prototype.activateItem = function (_item)
 		return;
 	}
 
+	if (_item.type === 'options-tab' || _item.type === 'resolution' || _item.type === 'slider')
+	{
+		// These settings are adjusted with Left / Right. Enter simply repeats the
+		// current value so it never changes a setting unexpectedly.
+		this.announceItem(_item);
+		return;
+	}
+
 	if (_item.type === 'radio')
 	{
 		element.iCheck('check');
@@ -525,6 +725,17 @@ UnseenBannerMenuNav.prototype.activateItem = function (_item)
 			return;
 		}
 
+		if (this.mActiveModule === 'OptionsMenuModule')
+		{
+			var isApply = element.closest('.l-apply-button').length > 0;
+			element.trigger('click');
+			// Ok and Cancel close the module and the incoming menu announces itself.
+			// Apply stays on this screen, so it needs explicit confirmation.
+			if (isApply)
+				this.sendAnnouncement('menu.options.applied', '', '', '');
+			return;
+		}
+
 		panelBefore = this.getActiveNewPanel();
 		element.trigger('click');
 		panelAfter = this.getActiveNewPanel();
@@ -567,6 +778,14 @@ UnseenBannerMenuNav.prototype.onModuleShown = function (_id)
 		this.mIndices.NewCampaignModule = -1;
 		this.announceNewCampaignPage();
 	}
+	else if (_id === 'OptionsMenuModule')
+	{
+		this.mIndices.OptionsMenuModule = 0;
+		var optionItems = this.getOptionsItems();
+		if (optionItems.length > 0)
+			this.focusItem(optionItems[0]);
+		this.announceOptionsScreen();
+	}
 	else
 	{
 		this.mIndices[_id] = -1;
@@ -603,8 +822,8 @@ UnseenBannerMenuNav.prototype.setIndex = function (_inPopup, _index)
 		this.mIndices[this.mActiveModule] = _index;
 };
 
-// Called from main_menu_state.onKeyInput (or world_state.onKeyInput in-game) with
-// "up", "down" or "enter".
+// Called from main_menu_state.onKeyInput, or the world/tactical equivalents,
+// with "up", "down", "enter" and (for Options only) "left" / "right".
 UnseenBannerMenuNav.prototype.onKeyForwarded = function (_name)
 {
 	// The Enter Name popup closes itself on the field's own Enter/Escape, with no
@@ -622,6 +841,20 @@ UnseenBannerMenuNav.prototype.onKeyForwarded = function (_name)
 		return;
 
 	index = inPopup ? this.mPopupIndex : this.mIndices[this.mActiveModule];
+	if ((_name === 'left' || _name === 'right') && this.mActiveModule === 'OptionsMenuModule')
+	{
+		if (index < 0 || index >= items.length)
+		{
+			index = 0;
+			this.setIndex(false, index);
+			this.focusItem(items[index]);
+			this.announceItem(items[index]);
+			return;
+		}
+		this.adjustOptionsItem(items[index], _name === 'right' ? 1 : -1);
+		return;
+	}
+
 	if (_name === 'enter')
 	{
 		// Swallow the key-release of the Enter that just left a text field,

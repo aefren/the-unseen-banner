@@ -93,17 +93,17 @@
 		JSHandle = null,
 		ActiveModule = null
 	},
-	// The menu modules this cursor drives, across both surfaces that host them: the
-	// main menu (main_menu_state) and the in-game pause menu (world_state).
-	// MainMenuModule and LoadCampaignModule appear in both; NewCampaignModule only in
-	// the main menu, SaveCampaignModule only in-game. Every one inherits ui_module, so
-	// the ui_module hook below already reports them here by ID — activeness is just
-	// "one of these is fully shown", regardless of which state hosts it.
+	// The menu modules this cursor drives across every surface that hosts them: the
+	// main menu (main_menu_state) and the world/tactical pause menus. OptionsMenuModule
+	// itself is shared by all three. Every one inherits ui_module, so the ui_module
+	// hook below already reports them here by ID — activeness is just "one of these is
+	// fully shown", regardless of which state hosts it.
 	RecognizedModules = {
 		MainMenuModule = true,
 		NewCampaignModule = true,
 		LoadCampaignModule = true,
-		SaveCampaignModule = true
+		SaveCampaignModule = true,
+		OptionsMenuModule = true
 	},
 	function connect()
 	{
@@ -119,6 +119,20 @@
 	function isActive()
 	{
 		return this.m.ActiveModule != null;
+	},
+	function handlesKey(_code)
+	{
+		return _code in ::UnseenBanner.KeyCodes
+			|| (this.m.ActiveModule == "OptionsMenuModule"
+				&& _code in ::UnseenBanner.OptionsKeyCodes);
+	},
+	function getKeyName(_code)
+	{
+		if (_code in ::UnseenBanner.KeyCodes)
+		{
+			return ::UnseenBanner.KeyCodes[_code];
+		}
+		return ::UnseenBanner.OptionsKeyCodes[_code];
 	},
 	// Called from a state hook when the surface itself goes away, so a stale module
 	// never keeps the cursor "active" after the screen is gone.
@@ -1333,6 +1347,14 @@
 	[51] = "down"
 };
 
+// Left / Right are adjustment keys only inside Options. Keeping them out of the
+// shared KeyCodes table prevents the event cursor and New Campaign flow from
+// stealing native horizontal input they do not handle.
+::UnseenBanner.OptionsKeyCodes <- {
+	[48] = "left",
+	[50] = "right"
+};
+
 ::UnseenBanner.Mod.hook("scripts/root_state", function(q) {
 	local onInit = q.onInit;
 	q.onInit = @() function()
@@ -1384,11 +1406,11 @@
 		// event the vanilla menu uses for its own escape handling, and it
 		// cannot flood the JS side with key-repeat.
 		if (_key.getState() == 0
-			&& _key.getKey() in ::UnseenBanner.KeyCodes
+			&& ::UnseenBanner.MenuNav.handlesKey(_key.getKey())
 			&& ::UnseenBanner.MenuNav.isActive()
 			&& this.isKeyInputPermitted())
 		{
-			::UnseenBanner.MenuNav.sendKey(::UnseenBanner.KeyCodes[_key.getKey()]);
+			::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(_key.getKey()));
 			return true;
 		}
 
@@ -1454,11 +1476,11 @@
 		// the menu stack (submenu -> pause menu -> resume). The event screen and a menu
 		// are never up at once.
 		if (_key.getState() == 0
-			&& _key.getKey() in ::UnseenBanner.KeyCodes
+			&& ::UnseenBanner.MenuNav.handlesKey(_key.getKey())
 			&& !::UnseenBanner.EventNav.isActive()
 			&& ::UnseenBanner.MenuNav.isActive())
 		{
-			::UnseenBanner.MenuNav.sendKey(::UnseenBanner.KeyCodes[_key.getKey()]);
+			::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(_key.getKey()));
 			return true;
 		}
 
@@ -1513,14 +1535,34 @@
 	q.onInit = @(__original) function()
 	{
 		__original();
+		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.TileCursor.reset();
 		::UnseenBanner.SheetNav.reset();
 		::UnseenBanner.KeyGate.reset();
 	}
 
+	q.onFinish = @(__original) function()
+	{
+		::UnseenBanner.MenuNav.reset();
+		__original();
+	}
+
 	q.onKeyInput = @(__original) function( _key )
 	{
 		local code = _key.getKey();
+
+		// The tactical pause menu uses the same modules as the other menu surfaces.
+		// Consume both key states while one is up so native camera bindings cannot
+		// leak through, but act only on release to avoid the press auto-repeat. The
+		// arrow releases were verified to reach this hook even in tactical combat.
+		if (::UnseenBanner.MenuNav.isActive() && ::UnseenBanner.MenuNav.handlesKey(code))
+		{
+			if (_key.getState() == 0)
+			{
+				::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(code));
+			}
+			return true;
+		}
 
 		// Post-combat result screen. The state swallows every key once the battle
 		// has ended (isBattleEnded short-circuits its own onKeyInput), so this must
@@ -1726,4 +1768,3 @@
 		::UnseenBanner.SheetNav.close();
 	}
 });
-

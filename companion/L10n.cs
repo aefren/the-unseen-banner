@@ -108,6 +108,13 @@ namespace TheUnseenBanner.Companion
             ["menu.campaign.disabled"] = "Unavailable.",
             ["menu.popup.delete"] = "Delete {0}? Choose Cancel or Ok.",
             ["menu.save.name_prompt"] = "Type a name for the save, then press Enter to confirm or Escape to cancel.",
+            // Options screen. Game-owned labels (tabs and setting names) arrive
+            // from the rendered DOM; only the connective speech lives here.
+            ["menu.options.screen"] = "{0}. {1} tab. Up and down move, left and right adjust, Enter activates, Escape goes back.",
+            ["menu.options.tab"] = "{0} tab, selected.",
+            ["menu.options.value"] = "{0}: {1}.",
+            ["menu.options.percent"] = "{0}: {1} percent.",
+            ["menu.options.applied"] = "Options applied.",
             ["event.screen"] = "{0}. {1}",
             ["event.option"] = "Option {1} of {2}: {0}",
             // Tactical tile readout (phase 3.2). Terrain names keyed by the
