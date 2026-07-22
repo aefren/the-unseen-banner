@@ -130,6 +130,8 @@ namespace TheUnseenBanner.Companion
                     "combat.result.casualties" => L10n.F("combat.result.casualties", JoinNames(texto)),
                     "combat.result.stats" => ComposeResultStats(texto),
                     "combat.result.loot" => ComposeResultLoot(texto, valor),
+                    "menu.campaign" => ComposeCampaignEntry(texto, valor, detalle),
+                    "menu.campaign.screen" => ComposeCampaignScreen(texto, valor),
                     "world.status" => ComposeWorldStatus(texto, valor, detalle),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
@@ -274,6 +276,43 @@ namespace TheUnseenBanner.Companion
             string morale = L10n.T("combat.morale." + moraleIndex);
 
             return L10n.F("combat.status", name, hp, hpMax, ap, apMax, fat, fatMax, morale);
+        }
+
+        /// <summary>Compose one row of the Load/Save campaign list. The name is
+        /// already-rendered game text (cleaned downstream); detalle packs the game's
+        /// own "day" and "date" labels as "day|date"; valor is "sel" for the selected
+        /// row, "dis" for an incompatible one, empty otherwise. The New Savegame row
+        /// arrives here too, with empty day/date.</summary>
+        private static string ComposeCampaignEntry(string name, string state, string detail)
+        {
+            string[] p = detail.Split('|');
+            string day = p.Length > 0 ? p[0] : "";
+            string date = p.Length > 1 ? p[1] : "";
+
+            string info = name;
+            if (day.Length > 0) info += ", " + day;
+            if (date.Length > 0) info += ", " + date;
+
+            string suffix = state switch
+            {
+                "sel" => L10n.T("menu.campaign.selected"),
+                "dis" => L10n.T("menu.campaign.disabled"),
+                _ => "",
+            };
+            return suffix.Length > 0 ? info + ". " + suffix : info + ".";
+        }
+
+        /// <summary>Compose the Load/Save screen announcement: the dialog title plus
+        /// how many saves are listed, singular/empty aware. The count is the raw row
+        /// count, so on the Save screen it includes the New Savegame slot.</summary>
+        private static string ComposeCampaignScreen(string title, string countText)
+        {
+            int.TryParse(countText, out int n);
+            string count = n <= 0
+                ? L10n.T("menu.campaign.screen.empty")
+                : (n == 1 ? L10n.T("menu.campaign.screen.one")
+                          : L10n.F("menu.campaign.screen.count", n));
+            return L10n.F("menu.campaign.screen", title, count);
         }
 
         /// <summary>Compose the world-map company readout (phase 4.4): the g key.

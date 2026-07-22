@@ -13,9 +13,17 @@ var UnseenBannerMenuNav = function ()
 	this.mActiveModule = null;
 	this.mIndices = {
 		MainMenuModule: -1,
-		NewCampaignModule: -1
+		NewCampaignModule: -1,
+		LoadCampaignModule: -1,
+		SaveCampaignModule: -1
 	};
 	this.mEditingInput = null;
+	// Popup dialogs (Enter Name for a new save, Delete confirmation) have no module
+	// lifecycle of their own, so when one is open this holds { type, dialog } and the
+	// cursor drives it instead of the module behind it. mPopupIndex is its own cursor,
+	// kept apart from mIndices so returning to the module restores its position.
+	this.mPopup = null;
+	this.mPopupIndex = -1;
 	// Timestamp of the last edit-exit triggered by Enter. If the engine also
 	// delivers that same Enter's key-release to Squirrel (now that the input
 	// is blurred), the forwarded 'enter' would immediately re-open the field;
@@ -164,12 +172,142 @@ UnseenBannerMenuNav.prototype.getNewCampaignItems = function ()
 	return items;
 };
 
+// --- Load/Save campaign screens ---------------------------------------------
+// Both are the same list-of-saves dialog (only the footer button differs), shown
+// as their own ui_module; the module DOM class distinguishes them.
+
+UnseenBannerMenuNav.prototype.getCampaignModule = function (_id)
+{
+	var cls = _id === 'LoadCampaignModule' ? '.load-campaign-menu-module' : '.save-campaign-menu-module';
+	return $(cls + '.display-block:first');
+};
+
+UnseenBannerMenuNav.prototype.getCampaignItems = function (_id)
+{
+	var self = this;
+	var module = this.getCampaignModule(_id);
+	var items = [];
+
+	// Saved-game rows, in list order. The New Savegame row (save screen only) is a
+	// campaign entry too, so it arrives here with no special-casing.
+	module.find('.ui-control.campaign').each(function ()
+	{
+		if ($(this).is(':visible'))
+			items.push({ type: 'campaign', element: $(this) });
+	});
+
+	// Footer buttons (Load/Save, Cancel, Delete) always follow, enabled or not, so
+	// the navigation order stays stable as a selection enables them; a disabled one
+	// announces itself as unavailable and refuses activation (see activateItem).
+	module.find('.footer .l-button-bar div.ui-control').each(function ()
+	{
+		if (self.isButton(this) && $(this).is(':visible'))
+			items.push({ type: 'button', element: $(this) });
+	});
+
+	return items;
+};
+
+UnseenBannerMenuNav.prototype.readCampaignEntry = function (_entry)
+{
+	return {
+		name: _entry.find('.is-campaign-name:first').text(),
+		day: _entry.find('.is-day-name:first').text(),
+		date: _entry.find('.is-date-time:first').text(),
+		selected: _entry.hasClass('is-selected'),
+		disabled: _entry.hasClass('is-disabled')
+	};
+};
+
+UnseenBannerMenuNav.prototype.announceCampaignScreen = function (_id)
+{
+	var module = this.getCampaignModule(_id);
+	var title = module.find('.ui-control.dialog:first > .header:first .title:first').text();
+	var count = module.find('.ui-control.campaign').length;
+	this.sendAnnouncement('menu.campaign.screen', title, String(count), '');
+};
+
+// --- Popups (Enter Name / Delete confirmation) ------------------------------
+// These are created synchronously when we click Save (on a New Savegame) or
+// Delete, and live inside the module container. They fire no lifecycle event, so
+// we look for them right after the click and, for the native-driven Enter Name
+// field, notice when they vanish (see onKeyForwarded).
+
+UnseenBannerMenuNav.prototype.detectPopup = function ()
+{
+	if (this.mActiveModule !== 'LoadCampaignModule' && this.mActiveModule !== 'SaveCampaignModule')
+		return null;
+	var dialog = this.getCampaignModule(this.mActiveModule).find('.popup-dialog:first');
+	return dialog.length > 0 ? dialog : null;
+};
+
+UnseenBannerMenuNav.prototype.getPopupItems = function ()
+{
+	if (this.mPopup === null)
+		return [];
+	var dialog = this.mPopup.dialog;
+	var items = [];
+	var cancel = dialog.find('.footer .l-cancel-button .button-1:first');
+	var ok = dialog.find('.footer .l-ok-button .button-1:first');
+	// Cancel first, so it is the default focus on a Delete confirmation.
+	if (cancel.length > 0)
+		items.push({ type: 'popup-button', role: 'cancel', element: cancel });
+	if (ok.length > 0)
+		items.push({ type: 'popup-button', role: 'ok', element: ok });
+	return items;
+};
+
+UnseenBannerMenuNav.prototype.openPopup = function (_dialog)
+{
+	var hasInput = _dialog.find('input:first').length > 0;
+	this.mPopup = { type: hasInput ? 'enter-name' : 'delete', dialog: _dialog };
+	this.mPopupIndex = -1;
+	$('.unseen-banner-focus').removeClass('unseen-banner-focus');
+
+	if (this.mPopup.type === 'enter-name')
+	{
+		// The game already focused the text field (its show code does), and the
+		// engine routes the keyboard straight to a focused input, so typing, Enter
+		// (confirm) and Escape (cancel) are all handled natively by the field. We only
+		// speak the prompt and stay out of the way until the popup closes.
+		this.sendAnnouncement('menu.save.name_prompt', '', '', '');
+	}
+	else
+	{
+		// The campaign name sits in the warning span of the confirmation text.
+		var name = _dialog.find('.font-color-label-warning:first').text();
+		this.sendAnnouncement('menu.popup.delete', name, '', '');
+		var items = this.getPopupItems();
+		if (items.length > 0)
+		{
+			this.mPopupIndex = 0; // Cancel
+			this.focusItem(items[0]);
+		}
+	}
+};
+
+UnseenBannerMenuNav.prototype.closePopup = function (_reannounce)
+{
+	this.mPopup = null;
+	this.mPopupIndex = -1;
+	$('.unseen-banner-focus').removeClass('unseen-banner-focus');
+	if (_reannounce && (this.mActiveModule === 'LoadCampaignModule' || this.mActiveModule === 'SaveCampaignModule'))
+	{
+		this.mIndices[this.mActiveModule] = -1;
+		this.announceCampaignScreen(this.mActiveModule);
+	}
+};
+
 UnseenBannerMenuNav.prototype.getItems = function ()
 {
+	if (this.mPopup !== null)
+		return this.getPopupItems();
 	if (this.mActiveModule === 'MainMenuModule')
 		return this.getMainItems();
 	if (this.mActiveModule === 'NewCampaignModule')
 		return this.getNewCampaignItems();
+	if (this.mActiveModule === 'LoadCampaignModule' || this.mActiveModule === 'SaveCampaignModule')
+		return this.getCampaignItems(this.mActiveModule);
 	return [];
 };
 
@@ -208,6 +346,17 @@ UnseenBannerMenuNav.prototype.announceItem = function (_item)
 	var detail = '';
 
 	if (_item.type === 'button')
+	{
+		this.sendAnnouncement(element.is('[disabled]') ? 'menu.button.disabled' : '',
+			this.readButtonLabel(element), '', '');
+	}
+	else if (_item.type === 'campaign')
+	{
+		var entry = this.readCampaignEntry(element);
+		var state = entry.disabled ? 'dis' : (entry.selected ? 'sel' : '');
+		this.sendAnnouncement('menu.campaign', entry.name, state, entry.day + '|' + entry.date);
+	}
+	else if (_item.type === 'popup-button')
 	{
 		this.sendAnnouncement('', this.readButtonLabel(element), '', '');
 	}
@@ -308,6 +457,25 @@ UnseenBannerMenuNav.prototype.activateItem = function (_item)
 	var panelBefore;
 	var panelAfter;
 
+	if (_item.type === 'campaign')
+	{
+		// Clicking a row selects it (the game's handler marks it and enables the
+		// footer buttons); the actual Load/Save is a separate press on that button,
+		// so a stray Enter never loads or overwrites by accident.
+		element.trigger('click');
+		this.announceItem(_item);
+		return;
+	}
+
+	if (_item.type === 'popup-button')
+	{
+		// Cancel dismisses; Ok confirms a delete (the game refreshes the list) — either
+		// way the popup is gone afterwards, so drop back to the module and re-read it.
+		element.trigger('click');
+		this.closePopup(true);
+		return;
+	}
+
 	if (_item.type === 'radio')
 	{
 		element.iCheck('check');
@@ -337,6 +505,26 @@ UnseenBannerMenuNav.prototype.activateItem = function (_item)
 	}
 	else if (_item.type === 'button')
 	{
+		if (element.is('[disabled]'))
+		{
+			// Load/Save/Delete before a save is chosen: nothing to do, just re-read it
+			// so the player hears it is still unavailable.
+			this.announceItem(_item);
+			return;
+		}
+
+		if (this.mActiveModule === 'LoadCampaignModule' || this.mActiveModule === 'SaveCampaignModule')
+		{
+			element.trigger('click');
+			// Save-on-New-Savegame and Delete open a popup synchronously; Load, Cancel
+			// and overwrite-Save instead move to another module (handled by
+			// onModuleShown/onModuleHidden), leaving no popup behind.
+			var popup = this.detectPopup();
+			if (popup !== null)
+				this.openPopup(popup);
+			return;
+		}
+
 		panelBefore = this.getActiveNewPanel();
 		element.trigger('click');
 		panelAfter = this.getActiveNewPanel();
@@ -352,10 +540,12 @@ UnseenBannerMenuNav.prototype.activateItem = function (_item)
 
 UnseenBannerMenuNav.prototype.onModuleShown = function (_id)
 {
-	if (_id !== 'MainMenuModule' && _id !== 'NewCampaignModule')
+	if (!(_id in this.mIndices))
 		return;
 
 	this.stopEditing();
+	this.mPopup = null;
+	this.mPopupIndex = -1;
 	this.mActiveModule = _id;
 	$('.unseen-banner-focus').removeClass('unseen-banner-focus');
 
@@ -372,10 +562,15 @@ UnseenBannerMenuNav.prototype.onModuleShown = function (_id)
 			this.sendAnnouncement('menu.main', this.readButtonLabel(items[index].element), '', '');
 		}
 	}
-	else
+	else if (_id === 'NewCampaignModule')
 	{
 		this.mIndices.NewCampaignModule = -1;
 		this.announceNewCampaignPage();
+	}
+	else
+	{
+		this.mIndices[_id] = -1;
+		this.announceCampaignScreen(_id);
 	}
 };
 
@@ -384,6 +579,8 @@ UnseenBannerMenuNav.prototype.onModuleHidden = function (_id)
 	if (this.mActiveModule === _id)
 	{
 		this.stopEditing();
+		this.mPopup = null;
+		this.mPopupIndex = -1;
 		this.mActiveModule = null;
 		$('.unseen-banner-focus').removeClass('unseen-banner-focus');
 	}
@@ -392,26 +589,46 @@ UnseenBannerMenuNav.prototype.onModuleHidden = function (_id)
 UnseenBannerMenuNav.prototype.onStateExited = function ()
 {
 	this.stopEditing();
+	this.mPopup = null;
+	this.mPopupIndex = -1;
 	this.mActiveModule = null;
 	$('.unseen-banner-focus').removeClass('unseen-banner-focus');
 };
 
-// Called from main_menu_state.onKeyInput with "up", "down" or "enter".
+UnseenBannerMenuNav.prototype.setIndex = function (_inPopup, _index)
+{
+	if (_inPopup)
+		this.mPopupIndex = _index;
+	else
+		this.mIndices[this.mActiveModule] = _index;
+};
+
+// Called from main_menu_state.onKeyInput (or world_state.onKeyInput in-game) with
+// "up", "down" or "enter".
 UnseenBannerMenuNav.prototype.onKeyForwarded = function (_name)
 {
+	// The Enter Name popup closes itself on the field's own Enter/Escape, with no
+	// event we can hook; if we still think a popup is open but its DOM is gone, drop
+	// the popup state first so this key resumes driving the module behind it.
+	if (this.mPopup !== null && this.mPopup.dialog.closest('body').length === 0)
+	{
+		this.closePopup(true);
+	}
+
+	var inPopup = this.mPopup !== null;
 	var items = this.getItems();
 	var index;
 	if (items.length === 0 || this.mActiveModule === null)
 		return;
 
-	index = this.mIndices[this.mActiveModule];
+	index = inPopup ? this.mPopupIndex : this.mIndices[this.mActiveModule];
 	if (_name === 'enter')
 	{
 		// Swallow the key-release of the Enter that just left a text field,
 		// which the engine may deliver to Squirrel now that the input is
 		// blurred; without this it would immediately re-open the field. The
 		// window auto-expires so a later, deliberate Enter still works.
-		if (this.mEnterExitAt > 0 && ((new Date()).getTime() - this.mEnterExitAt) < 300)
+		if (!inPopup && this.mEnterExitAt > 0 && ((new Date()).getTime() - this.mEnterExitAt) < 300)
 		{
 			this.mEnterExitAt = 0;
 			return;
@@ -419,7 +636,7 @@ UnseenBannerMenuNav.prototype.onKeyForwarded = function (_name)
 		if (index < 0 || index >= items.length)
 		{
 			index = 0;
-			this.mIndices[this.mActiveModule] = index;
+			this.setIndex(inPopup, index);
 			this.focusItem(items[index]);
 			this.announceItem(items[index]);
 			return;
@@ -439,7 +656,7 @@ UnseenBannerMenuNav.prototype.onKeyForwarded = function (_name)
 	else
 		index = (index - 1 + items.length) % items.length;
 
-	this.mIndices[this.mActiveModule] = index;
+	this.setIndex(inPopup, index);
 	this.focusItem(items[index]);
 	this.announceItem(items[index]);
 };

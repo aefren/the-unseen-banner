@@ -97,6 +97,17 @@ namespace TheUnseenBanner.Companion
             ["menu.previous_banner"] = "Previous banner.",
             ["menu.next_banner"] = "Next banner.",
             ["menu.banner"] = "Banner {0}.",
+            // Load / Save campaign screens.
+            ["menu.button.disabled"] = "{0}, unavailable.",
+            ["menu.campaign.screen"] = "{0}. {1}",
+            ["menu.campaign.screen.one"] = "1 save game.",
+            ["menu.campaign.screen.count"] = "{0} save games.",
+            ["menu.campaign.screen.empty"] = "No save games.",
+            ["menu.campaign"] = "{0}",
+            ["menu.campaign.selected"] = "Selected.",
+            ["menu.campaign.disabled"] = "Unavailable.",
+            ["menu.popup.delete"] = "Delete {0}? Choose Cancel or Ok.",
+            ["menu.save.name_prompt"] = "Type a name for the save, then press Enter to confirm or Escape to cancel.",
             ["event.screen"] = "{0}. {1}",
             ["event.option"] = "Option {1} of {2}: {0}",
             // Tactical tile readout (phase 3.2). Terrain names keyed by the

@@ -190,6 +190,29 @@ opciones: el equivalente a los diálogos de F&H1.
 - [ ] 1.3 Navegación por teclado de los eventos si el foco es solo-ratón
       (primer contacto con el problema de navegación — empezar aquí porque
       son listas simples de opciones).
+- [x] 1.4 Cargar/Guardar campaña, en el menú principal y en el menú de pausa
+      del mapamundi. **Hecho** (jul 2026): adelantado fuera de orden porque
+      desbloquea no tener que rejugar el tutorial en cada sesión de prueba.
+      `LoadCampaignModule` y `SaveCampaignModule` son `ui_module` como los ya
+      cubiertos, así que `MenuNav` los reconoce igual (ya no depende de estar
+      en `main_menu_state`: la actividad es "hay un módulo reconocido
+      mostrado", sea cual sea el estado que lo aloja). El menú de pausa
+      (`MainMenuModule` con Resume/Load/Save/Options/Retire/Quit) se navega
+      gratis por ser botones DOM iguales a los del menú principal; solo hacía
+      falta reenviarle teclas desde `world_state.onKeyInput`, con Escape
+      dejado al manejador nativo (pop del `MenuStack`). Lista de partidas
+      navegable (nombre + día + fecha, "Selected"/"Unavailable"), botones de
+      pie (Load/Save/Cancel/Delete) que anuncian "unavailable" si están
+      deshabilitados. Los dos popups sin ciclo de módulo propio: el de
+      confirmar borrado se navega con cursor propio (Cancel/Ok, foco inicial
+      en Cancel); el de nombrar una partida nueva se deja al campo de texto
+      nativo (el motor ya le entrega el teclado, como en New Campaign), solo
+      se anuncia el prompt al abrirse y se detecta su cierre de forma
+      perezosa en la siguiente tecla. Cargar en combate táctico (el menú de
+      pausa también aparece ahí) queda fuera: se anuncia al abrirse pero no es
+      navegable por teclado. Verificado de oído: cargar desde el menú
+      principal, abrir el menú de pausa en el mapa, guardar una partida nueva
+      con nombre y cargarla de vuelta.
 
 ### Fase 2 — Tooltips y gestión de la compañía
 

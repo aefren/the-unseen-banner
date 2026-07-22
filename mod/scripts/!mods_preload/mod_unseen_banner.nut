@@ -91,8 +91,19 @@
 ::UnseenBanner.MenuNav = {
 	m = {
 		JSHandle = null,
-		ActiveModule = null,
-		InMainMenuState = false
+		ActiveModule = null
+	},
+	// The menu modules this cursor drives, across both surfaces that host them: the
+	// main menu (main_menu_state) and the in-game pause menu (world_state).
+	// MainMenuModule and LoadCampaignModule appear in both; NewCampaignModule only in
+	// the main menu, SaveCampaignModule only in-game. Every one inherits ui_module, so
+	// the ui_module hook below already reports them here by ID — activeness is just
+	// "one of these is fully shown", regardless of which state hosts it.
+	RecognizedModules = {
+		MainMenuModule = true,
+		NewCampaignModule = true,
+		LoadCampaignModule = true,
+		SaveCampaignModule = true
 	},
 	function connect()
 	{
@@ -107,16 +118,12 @@
 	},
 	function isActive()
 	{
-		return this.m.InMainMenuState && (this.m.ActiveModule == "MainMenuModule" || this.m.ActiveModule == "NewCampaignModule");
+		return this.m.ActiveModule != null;
 	},
-	function enterMainMenuState()
+	// Called from a state hook when the surface itself goes away, so a stale module
+	// never keeps the cursor "active" after the screen is gone.
+	function reset()
 	{
-		this.m.InMainMenuState = true;
-		this.m.ActiveModule = null;
-	},
-	function leaveMainMenuState()
-	{
-		this.m.InMainMenuState = false;
 		this.m.ActiveModule = null;
 		if (this.m.JSHandle != null)
 		{
@@ -125,7 +132,7 @@
 	},
 	function onModuleShown(_id)
 	{
-		if (this.m.InMainMenuState && (_id == "MainMenuModule" || _id == "NewCampaignModule"))
+		if (_id in this.RecognizedModules)
 		{
 			this.m.ActiveModule = _id;
 			if (this.m.JSHandle != null)
@@ -136,10 +143,9 @@
 	},
 	function onModuleHidden(_id)
 	{
-		if (!this.m.InMainMenuState) return;
-
-		// Main and New Campaign animate at the same time. Only the module that
-		// is still active may clear the state when its hide animation finishes.
+		// Modules that animate together (e.g. main menu sliding out as a submenu
+		// slides in) each report their hide; only the one still marked active clears
+		// the state, so the incoming module's onModuleShown is not undone.
 		if (this.m.ActiveModule == _id)
 		{
 			this.m.ActiveModule = null;
@@ -1359,13 +1365,13 @@
 ::UnseenBanner.Mod.hook("scripts/states/main_menu_state", function(q) {
 	q.onInit = @(__original) function()
 	{
-		::UnseenBanner.MenuNav.enterMainMenuState();
+		::UnseenBanner.MenuNav.reset();
 		__original();
 	}
 
 	q.onFinish = @(__original) function()
 	{
-		::UnseenBanner.MenuNav.leaveMainMenuState();
+		::UnseenBanner.MenuNav.reset();
 		__original();
 	}
 
@@ -1426,6 +1432,12 @@
 // stolen only while the event is up; every other key (including the native 1-6
 // button shortcuts) keeps its normal behavior.
 ::UnseenBanner.Mod.hook("scripts/states/world_state", function(q) {
+	q.onFinish = @(__original) function()
+	{
+		::UnseenBanner.MenuNav.reset();
+		__original();
+	}
+
 	q.onKeyInput = @(__original) function( _key )
 	{
 		if (_key.getState() == 0
@@ -1436,13 +1448,28 @@
 			return true;
 		}
 
-		// Company/campaign readout (phase 4.4), only on the plain map (no event
-		// screen up). Fire on release, exactly like the event cursor above: this is
-		// the same state and the map delivers the release of g (which carries no
+		// In-game menus (pause menu, load, save) run through the same keyboard cursor
+		// as the main menu. They are shown inside world_state, so keys are stolen here
+		// while one is fully up; Escape (41) is left to the native handler, which pops
+		// the menu stack (submenu -> pause menu -> resume). The event screen and a menu
+		// are never up at once.
+		if (_key.getState() == 0
+			&& _key.getKey() in ::UnseenBanner.KeyCodes
+			&& !::UnseenBanner.EventNav.isActive()
+			&& ::UnseenBanner.MenuNav.isActive())
+		{
+			::UnseenBanner.MenuNav.sendKey(::UnseenBanner.KeyCodes[_key.getKey()]);
+			return true;
+		}
+
+		// Company/campaign readout (phase 4.4), only on the plain map (no event or
+		// menu screen up). Fire on release, exactly like the event cursor above: this
+		// is the same state and the map delivers the release of g (which carries no
 		// native map binding, so nothing swallows it — that swallowing is a
 		// tactical-combat quirk). Consume both states so the key stays ours.
 		local code = _key.getKey();
-		if (!::UnseenBanner.EventNav.isActive() && ::UnseenBanner.WorldStatus.handles(code))
+		if (!::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive()
+			&& ::UnseenBanner.WorldStatus.handles(code))
 		{
 			if (_key.getState() == 0)
 			{
