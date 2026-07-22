@@ -311,10 +311,12 @@ objetos, estados, terreno… todo vive ahí).
       duplican. Canal cola. Verificado de oído.
 - [x] 3.6 Pantalla de resultado post-combate (Victoria/Derrota, estadísticas y
       botín). **Hecho** (jul 2026): la pantalla se traga todo el teclado en
-      vanilla (mouse-only) — se lee sola al aparecer (resultado, bajas,
-      estadísticas por superviviente, botín) y se opera con tres teclas nuevas:
-      Enter (continuar, como el botón), L (coger todo el botín), R (repetir el
-      readout). De paso se cazaron dos crashes silenciosos del cursor de
+      vanilla (mouse-only). **Ampliado y verificado de oído**: ahora se presenta
+      como una lista lineal: arriba/abajo recorren por separado el resultado, cada
+      baja, cada superviviente con sus estadísticas y cada objeto del botín. Al
+      final están «Loot all items» y «Continue» como botones de la misma lista,
+      activables con Enter; L conserva el atajo para recogerlo todo y R repite la
+      fila actual. De paso se cazaron dos crashes silenciosos del cursor de
       hexágonos (3.2): `tile.getEntity()` puede devolver un objeto de
       cobertura/decoración, no solo un actor — llamar `getID`/`isPlayerControlled`
       sobre él lanzaba y abortaba el anuncio entero, dejando esa casilla muda; se

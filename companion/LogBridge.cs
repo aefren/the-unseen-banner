@@ -128,9 +128,7 @@ namespace TheUnseenBanner.Companion
                     "combat.sheet.traits" => ComposeSheetList("combat.sheet.traits", texto, valor),
                     "combat.sheet.perks" => ComposeSheetList("combat.sheet.perks", texto, valor),
                     "combat.sheet.equipment" => ComposeSheetList("combat.sheet.equipment", texto, valor),
-                    "combat.result.casualties" => L10n.F("combat.result.casualties", JoinNames(texto)),
-                    "combat.result.stats" => ComposeResultStats(texto),
-                    "combat.result.loot" => ComposeResultLoot(texto, valor),
+                    "combat.result.stat" => ComposeResultStat(texto, valor, detalle),
                     "menu.campaign" => ComposeCampaignEntry(texto, valor, detalle),
                     "menu.campaign.screen" => ComposeCampaignScreen(texto, valor),
                     "world.status" => ComposeWorldStatus(texto, valor, detalle),
@@ -513,35 +511,16 @@ namespace TheUnseenBanner.Companion
             return string.Join(", ", names);
         }
 
-        /// <summary>Compose the post-combat statistics readout (phase 3.6). Each
-        /// line is "name\tkills\txp\tleveled\twounded" (leveled/wounded 1 or 0),
-        /// one per surviving brother.</summary>
-        private static string ComposeResultStats(string text)
+        /// <summary>Compose one survivor row in the navigable post-combat result
+        /// list. detail packs "xp|leveled|wounded", with the flags as 1 or 0.</summary>
+        private static string ComposeResultStat(string name, string kills, string detail)
         {
-            var entries = new System.Collections.Generic.List<string>();
-            foreach (string line in text.Split('\n'))
-            {
-                if (line.Length == 0) continue;
-                string[] f = line.Split('\t');
-                if (f.Length < 3) continue;
-
-                string entry = L10n.F("combat.result.stats.entry", f[0], f[1], f[2]);
-                if (f.Length > 3 && f[3] == "1") entry += ", " + L10n.T("combat.result.stats.leveled");
-                if (f.Length > 4 && f[4] == "1") entry += ", " + L10n.T("combat.result.stats.wounded");
-                entries.Add(entry);
-            }
-
-            return L10n.F("combat.result.stats", string.Join(". ", entries));
-        }
-
-        /// <summary>Compose the post-combat loot readout (phase 3.6): a
-        /// newline-separated list of item names and the count in valor.</summary>
-        private static string ComposeResultLoot(string text, string countText)
-        {
-            string list = JoinNames(text);
-            return countText == "1"
-                ? L10n.F("combat.result.loot.one", list)
-                : L10n.F("combat.result.loot", countText, list);
+            string[] p = detail.Split('|');
+            string xp = p.Length > 0 ? p[0] : "0";
+            string entry = L10n.F("combat.result.stats.entry", name, kills, xp);
+            if (p.Length > 1 && p[1] == "1") entry += ", " + L10n.T("combat.result.stats.leveled");
+            if (p.Length > 2 && p[2] == "1") entry += ", " + L10n.T("combat.result.stats.wounded");
+            return entry + ".";
         }
     }
 }

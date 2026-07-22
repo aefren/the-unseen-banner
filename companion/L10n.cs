@@ -233,17 +233,23 @@ namespace TheUnseenBanner.Companion
             ["combat.mood.5"] = "Eager",
             ["combat.mood.6"] = "Euphoric",
             // Post-combat result screen (phase 3.6).
-            ["combat.result.casualties"] = "Fallen: {0}.",
-            ["combat.result.stats"] = "Statistics. {0}.",
+            ["combat.result.screen"] = "{0}. Use Up and Down to review the results and buttons.",
+            ["combat.result.casualty"] = "Fallen: {0}.",
+            ["combat.result.casualties.none"] = "No fallen brothers.",
+            ["combat.result.stats.heading"] = "Statistics.",
+            ["combat.result.stats.none"] = "No survivor statistics.",
             ["combat.result.stats.entry"] = "{0}: {1} kills, {2} XP",
             ["combat.result.stats.leveled"] = "leveled up",
             ["combat.result.stats.wounded"] = "wounded",
-            ["combat.result.loot"] = "Loot: {0} items. {1}.",
-            ["combat.result.loot.one"] = "Loot: 1 item. {0}.",
+            ["combat.result.loot.heading"] = "Loot: {1} items.",
+            ["combat.result.loot.heading.one"] = "Loot: 1 item.",
+            ["combat.result.loot.item"] = "{0}.",
             ["combat.result.loot.none"] = "No loot.",
             ["combat.result.loot.taken"] = "All loot taken.",
             ["combat.result.loot.partial"] = "Stash full. Some loot was left behind.",
-            ["combat.result.hint"] = "Press L to take all loot, Enter to continue, R to repeat.",
+            ["combat.result.button.lootall"] = "Loot all items, button.",
+            ["combat.result.button.lootall.disabled"] = "Loot all items, button, unavailable.",
+            ["combat.result.button.continue"] = "Continue, button.",
             // World-map company/campaign readout (phase 4.4, the g key). Day and
             // time, brother count, money and daily wages, food and how long it
             // lasts, and the active contract.

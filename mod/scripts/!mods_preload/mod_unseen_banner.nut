@@ -1186,20 +1186,54 @@
 
 // Post-combat result screen (the Victory/Defeat screen with its statistics and
 // loot). Once the battle ends the tactical state swallows every key, so this
-// screen is mouse-only in vanilla — unreachable by a blind player. Two halves:
-// the whole screen is read aloud when it appears, and three keys make it
-// operable — enter continues, l takes all the loot, r repeats the readout.
-// The outcome line is the game's own rendered text (forwarded verbatim like the
-// combat log); every other word is the companion's.
+// screen is mouse-only in vanilla — unreachable by a blind player. Flatten its
+// Statistics and Loot panels into one semantic list: outcome, each casualty,
+// each survivor's statistics, each loot item, then the real action buttons.
+// Up/Down reads one entry at a time and Enter activates the focused button. The
+// old L/R shortcuts remain available for loot-all and repeating the current row.
+// The outcome and all names are the game's own text; framing words stay in L10n.
 ::UnseenBanner.CombatResult = {
+	m = {
+		Items = null,
+		ItemIndex = 0,
+		CanLoot = false
+	},
 	Keys = {
-		[39] = "continue", // enter -> leave, same as the Continue button
-		[22] = "lootall",  // l -> take all loot into the stash
-		[28] = "repeat"    // r -> read the outcome and statistics again
+		[49] = "up",
+		[51] = "down",
+		[39] = "activate", // enter -> activate the focused button
+		[22] = "lootall",  // l -> retain the direct loot-all shortcut
+		[28] = "repeat"    // r -> repeat the focused row
 	},
 	function handles(_code)
 	{
 		return _code in this.Keys;
+	},
+	function reset()
+	{
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.CanLoot = false;
+	},
+	function item(_cat, _texto = "", _valor = "", _detalle = "", _action = null)
+	{
+		return {
+			cat = _cat,
+			texto = _texto,
+			valor = _valor,
+			detalle = _detalle,
+			action = _action
+		};
+	},
+	function open(_screen)
+	{
+		this.reset();
+		this.buildItems(_screen);
+		this.announceItem();
+	},
+	function close()
+	{
+		this.reset();
 	},
 	function onKey(_code, _state)
 	{
@@ -1207,45 +1241,49 @@
 		if (screen == null) return;
 
 		local what = this.Keys[_code];
-		if (what == "continue") screen.onLeaveButtonPressed();
+		if (what == "up" || what == "down") this.move(what);
+		else if (what == "activate") this.activate(screen);
 		else if (what == "lootall") this.lootAll(screen);
-		else if (what == "repeat") this.announce(screen);
+		else if (what == "repeat") this.announceItem();
 	},
-	function announce(_screen)
+	function buildItems(_screen)
 	{
+		local result = [];
+
 		// Outcome first, as the game's own sentence ("Victory. The enemy was
-		// destroyed in 3 rounds.").
+		// destroyed in 3 rounds"), plus the short navigation hint spoken once.
 		local info = _screen.onQueryCombatInformation();
 		if (info != null)
 		{
 			local line = info.title;
 			if (info.subTitle != null && info.subTitle != "") line += ". " + info.subTitle;
-			::UnseenBanner.sendMessage("queue", line + ".");
+			result.push(this.item("combat.result.screen", line));
+			this.m.CanLoot = info.loot;
 		}
 
-		// Casualties: the dead are not on the statistics panel (only survivors
-		// are), yet losing a brother is the fact that matters most. Their deaths
-		// were already narrated by the combat log, but a roll-up confirms it.
+		// Casualties are not in vanilla's statistics panel, which only contains
+		// survivors. Give each fallen brother a row so a long death toll never turns
+		// into one uninterruptible announcement.
 		local casualties = ::Tactical.getCasualtyRoster().getAll();
-		local dead = "";
 		local deadCount = 0;
-		foreach( c in casualties )
+		if (casualties != null)
 		{
-			if (c == null) continue;
-			if (deadCount > 0) dead += "\n";
-			dead += c.getName();
-			deadCount += 1;
+			foreach( c in casualties )
+			{
+				if (c == null) continue;
+				result.push(this.item("combat.result.casualty", c.getName()));
+				deadCount += 1;
+			}
 		}
-		if (deadCount > 0)
+		if (deadCount == 0)
 		{
-			::UnseenBanner.sendMessage("queue", dead, "combat.result.casualties", "" + deadCount);
+			result.push(this.item("combat.result.casualties.none"));
 		}
 
-		// Per-survivor statistics, mirroring the panel: name, kills, xp, plus
-		// whether they levelled up or came out wounded. One tab-separated line
-		// each (names never contain tabs), newline between them.
+		// Per-survivor statistics mirror the panel: name, kills, XP, plus whether
+		// the brother levelled up or came out wounded. One brother is one row.
+		result.push(this.item("combat.result.stats.heading"));
 		local roster = ::Tactical.CombatResultRoster;
-		local stats = "";
 		local statCount = 0;
 		if (roster != null)
 		{
@@ -1255,50 +1293,93 @@
 				local cs = bro.getCombatStats();
 				local level = bro.isLeveled() ? "1" : "0";
 				local wound = bro.getDaysWounded() > 0 ? "1" : "0";
-				if (statCount > 0) stats += "\n";
-				stats += bro.getName() + "\t" + cs.Kills + "\t" + cs.XPGained + "\t" + level + "\t" + wound;
+				result.push(this.item("combat.result.stat", bro.getName(), "" + cs.Kills,
+					"" + cs.XPGained + "|" + level + "|" + wound));
 				statCount += 1;
 			}
 		}
-		if (statCount > 0)
+		if (statCount == 0)
 		{
-			::UnseenBanner.sendMessage("queue", stats, "combat.result.stats");
+			result.push(this.item("combat.result.stats.none"));
 		}
 
-		this.announceLoot(_screen);
-	},
-	function announceLoot(_screen)
-	{
+		// Loot also becomes a heading plus one item per row. The action buttons are
+		// appended only after all information, as in every other accessible list.
 		local items = ::Tactical.CombatResultLoot.getItems();
-		local loot = "";
 		local lootCount = 0;
 		if (items != null)
 		{
 			foreach( item in items )
 			{
 				if (item == null) continue;
-				if (lootCount > 0) loot += "\n";
-				loot += item.getName();
 				lootCount += 1;
 			}
 		}
 
 		if (lootCount == 0)
 		{
-			::UnseenBanner.sendMessage("queue", "", "combat.result.loot.none");
+			result.push(this.item("combat.result.loot.none"));
 		}
 		else
 		{
-			::UnseenBanner.sendMessage("queue", loot, "combat.result.loot", "" + lootCount);
+			local heading = lootCount == 1 ? "combat.result.loot.heading.one" : "combat.result.loot.heading";
+			result.push(this.item(heading, "", "" + lootCount));
+			foreach( item in items )
+			{
+				if (item == null) continue;
+				result.push(this.item("combat.result.loot.item", item.getName()));
+			}
 		}
 
-		// Close with the key hint so a first-time player knows the screen is
-		// operable and how. Cheap to repeat on the r key.
-		::UnseenBanner.sendMessage("queue", "", "combat.result.hint");
+		if (this.m.CanLoot)
+		{
+			local lootButton = lootCount == 0
+				? "combat.result.button.lootall.disabled"
+				: "combat.result.button.lootall";
+			result.push(this.item(lootButton, "", "", "", "lootall"));
+		}
+		result.push(this.item("combat.result.button.continue", "", "", "", "continue"));
+		this.m.Items = result;
+	},
+	function move(_direction)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		if (_direction == "up") this.m.ItemIndex -= 1;
+		else this.m.ItemIndex += 1;
+
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
+	},
+	function activate(_screen)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local action = this.m.Items[this.m.ItemIndex].action;
+		if (action == "lootall") this.lootAll(_screen);
+		else if (action == "continue") _screen.onLeaveButtonPressed();
+		else this.announceItem();
+	},
+	function selectAction(_action)
+	{
+		if (this.m.Items == null) return;
+		for (local i = 0; i < this.m.Items.len(); i += 1)
+		{
+			if (this.m.Items[i].action == _action)
+			{
+				this.m.ItemIndex = i;
+				return;
+			}
+		}
 	},
 	function lootAll(_screen)
 	{
-		if (::Tactical.CombatResultLoot.isEmpty())
+		if (!this.m.CanLoot || ::Tactical.CombatResultLoot.isEmpty())
 		{
 			::UnseenBanner.sendMessage("interrupt", "", "combat.result.loot.none");
 			return;
@@ -1308,6 +1389,9 @@
 		// the stash. Report by whether anything is left rather than by parsing its
 		// UI-data return, so a full stash is called out.
 		_screen.onLootAllItemsButtonPressed();
+		_screen.loadItemLists();
+		this.buildItems(_screen);
+		this.selectAction("lootall");
 
 		if (::Tactical.CombatResultLoot.isEmpty())
 		{
@@ -1457,15 +1541,21 @@
 });
 
 // Post-combat result screen (phase 3.6). onScreenShown is the deterministic point
-// at which the screen is fully up (same pattern as the event screen), so the
-// outcome, casualties, per-survivor statistics and loot are read there. The keys
-// that operate it are handled from tactical_state.onKeyInput above, since that is
-// where the engine routes keyboard while the battle is ending.
+// at which the screen is fully up (same pattern as the event screen), so its
+// flattened result list is built there. onScreenHidden clears the cursor. Keys are
+// handled from tactical_state.onKeyInput, where the engine routes keyboard while
+// the battle is ending.
 ::UnseenBanner.Mod.hook("scripts/ui/screens/tactical/tactical_combat_result_screen", function(q) {
 	q.onScreenShown = @(__original) function()
 	{
 		__original();
-		::UnseenBanner.CombatResult.announce(this);
+		::UnseenBanner.CombatResult.open(this);
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.CombatResult.close();
 	}
 });
 
@@ -1558,18 +1648,35 @@
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.TileCursor.reset();
 		::UnseenBanner.SheetNav.reset();
+		::UnseenBanner.CombatResult.reset();
 		::UnseenBanner.KeyGate.reset();
 	}
 
 	q.onFinish = @(__original) function()
 	{
 		::UnseenBanner.MenuNav.reset();
+		::UnseenBanner.CombatResult.reset();
 		__original();
 	}
 
 	q.onKeyInput = @(__original) function( _key )
 	{
 		local code = _key.getKey();
+
+		// Post-combat result screen. The state swallows every key once the battle
+		// has ended (isBattleEnded short-circuits its own onKeyInput), so this must
+		// run before every other cursor to keep list navigation and its buttons
+		// reachable even if another UI module left stale navigation state behind.
+		if (this.m.TacticalCombatResultScreen != null
+			&& this.m.TacticalCombatResultScreen.isVisible()
+			&& ::UnseenBanner.CombatResult.handles(code))
+		{
+			if (_key.getState() == 0)
+			{
+				::UnseenBanner.CombatResult.onKey(code, this);
+			}
+			return true;
+		}
 
 		// The tactical pause menu uses the same modules as the other menu surfaces.
 		// Consume both key states while one is up so native camera bindings cannot
@@ -1580,20 +1687,6 @@
 			if (_key.getState() == 0)
 			{
 				::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(code));
-			}
-			return true;
-		}
-
-		// Post-combat result screen. The state swallows every key once the battle
-		// has ended (isBattleEnded short-circuits its own onKeyInput), so this must
-		// run before __original to keep Continue / loot / repeat reachable.
-		if (this.m.TacticalCombatResultScreen != null
-			&& this.m.TacticalCombatResultScreen.isVisible()
-			&& ::UnseenBanner.CombatResult.handles(code))
-		{
-			if (_key.getState() == 0)
-			{
-				::UnseenBanner.CombatResult.onKey(code, this);
 			}
 			return true;
 		}
