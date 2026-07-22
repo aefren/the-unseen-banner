@@ -21,8 +21,8 @@ cd companion && dotnet build -c Debug
 # Ejecutarla (habla por Tolk al arrancar; requiere NVDA o SAPI)
 cd companion/bin/Debug/net8.0 && ./TheUnseenBanner.Companion.exe
 
-# Lanzar el juego sin Steam (steam_appid.txt ya está en su sitio)
-"Battle Brothers/win32/BattleBrothers.exe"
+# Lanzar juego + app compañera en desarrollo (ver docs/desarrollo-copia-local.md)
+./play.bat
 ```
 
 No hay tests todavía. `dotnet build` con 0 warnings es el listón mínimo, pero
@@ -70,19 +70,16 @@ pensado para que cambiar de puente no obligue a tocar los hooks.
 
 El log verificado está en `C:\Users\alfre\OneDrive\Documentos\Battle Brothers\log.html`.
 
-**Cómo se lanza el juego en desarrollo**: `dev_install.bat` y luego
-`Battle Brothers/win32/bb-launcher-steam.exe` (launcher de
-[awesome-battle-brothers](https://github.com/shabbywu/awesome-battle-brothers):
-carga el exe parcheado en memoria, activa `CoherentUIGTDevelopment.dll` y abre
-el debugger de Coherent en `127.0.0.1:19999`). El UI Inspector
-(`plugin/UI Inspector/bb-ui-inspector/bb-ui-inspector.exe`) corre desde
-`plugin/` y se conecta a ese puerto; el mismo puerto habla el protocolo
-DevTools por WebSocket (`/devtools/page/0`), utilizable también por scripts.
+**Cómo se lanza el juego en desarrollo**: `dev_install.bat` y luego `play.bat`.
+El detalle del launcher de desarrollo, el debugger de Coherent
+(`127.0.0.1:19999`, WebSocket DevTools en `/devtools/page/0`) y el UI Inspector
+está en `docs/desarrollo-copia-local.md`.
 
 El roadmap completo por fases está en [docs/arquitectura-propuesta-y-roadmap.md](docs/arquitectura-propuesta-y-roadmap.md).
 **Léelo antes de planificar trabajo nuevo**, junto con
 [docs/lecciones-de-fh1-y-graveyard-keeper.md](docs/lecciones-de-fh1-y-graveyard-keeper.md),
-que destila lo aprendido en los dos mods anteriores.
+que destila lo aprendido en los dos mods anteriores. La carpeta `docs/` entera
+es **documentación interna, gitignorada**: existe solo en local, no en GitHub.
 
 ### Estructura
 
@@ -97,10 +94,11 @@ que destila lo aprendido en los dos mods anteriores.
   las copia al output. Las DLL son de **64 bits**: valen para la compañera
   (proceso aparte), pero la vía 3 del puente (DLL inyectada en el juego, que es
   de 32 bits) necesitaría las variantes de 32.
-- `docs/` — arquitectura, lecciones previas, receta de copia local sin Steam.
+- `docs/` — arquitectura, lecciones previas, recetas de desarrollo.
+  **Gitignorada** (documentación interna, solo local).
 - `Battle Brothers/` — copia local del juego. **Gitignorada** (copyright), igual que
   `decompiled/` (los `.nut` decompilados) y `tools/`. Se reproduce a mano en cada
-  máquina; ver [docs/desarrollo-copia-local-sin-steam.md](docs/desarrollo-copia-local-sin-steam.md).
+  máquina; ver [docs/desarrollo-copia-local.md](docs/desarrollo-copia-local.md).
 
 ## Convenciones que vienen de sangre derramada
 

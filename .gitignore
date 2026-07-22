@@ -7,6 +7,9 @@ decompiled/
 # Herramientas de terceros descargadas (mod kit, Modern Hooks, MSU...)
 tools/
 
+# Documentación de diseño interna (se mantiene en local, fuera de GitHub)
+docs/
+
 # Artefactos de build
 build/
 dist/
