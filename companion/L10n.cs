@@ -198,6 +198,7 @@ namespace TheUnseenBanner.Companion
             ["combat.inspect.object"] = "{0}.",
             // Character sheet as a navigable list for the C/I screen. Up/Down walk
             // these entries one at a time for the shown brother.
+            ["combat.sheet.brother"] = "{0}. {1}",
             ["combat.sheet.identity"] = "{0}, level {1}.",
             ["combat.sheet.background"] = "Background: {0}.",
             ["combat.sheet.xp"] = "{1} experience, {2} needed for next level.",

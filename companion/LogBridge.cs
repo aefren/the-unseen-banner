@@ -111,6 +111,7 @@ namespace TheUnseenBanner.Companion
                 string categoria = GetOptionalString(root, "categoria");
                 string valor = GetOptionalString(root, "valor");
                 string detalle = GetOptionalString(root, "detalle");
+                string hermano = GetOptionalString(root, "hermano");
                 string spoken = categoria switch
                 {
                     "tile.readout" => ComposeTileReadout(valor, texto, detalle),
@@ -137,6 +138,12 @@ namespace TheUnseenBanner.Companion
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
                 };
+                // When changing the brother shown on the tactical character sheet,
+                // keep his name and the retained attribute in one utterance. Two
+                // consecutive interrupt messages would make the attribute cut off
+                // the name before NVDA could finish it.
+                if (hermano.Length > 0)
+                    spoken = L10n.F("combat.sheet.brother", hermano, spoken);
                 Speech.Speak(spoken, interrupt: canal == "interrupt");
             }
             catch (Exception e)

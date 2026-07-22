@@ -48,12 +48,13 @@
 	return out;
 }
 
-::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null)
+::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null)
 {
 	local json = "{\"canal\":\"" + ::UnseenBanner.jsonEscape(_canal) + "\",\"texto\":\"" + ::UnseenBanner.jsonEscape(_texto) + "\"";
 	if (_categoria != null) json += ",\"categoria\":\"" + ::UnseenBanner.jsonEscape(_categoria) + "\"";
 	if (_valor != null) json += ",\"valor\":\"" + ::UnseenBanner.jsonEscape(_valor) + "\"";
 	if (_detalle != null) json += ",\"detalle\":\"" + ::UnseenBanner.jsonEscape(_detalle) + "\"";
+	if (_hermano != null) json += ",\"hermano\":\"" + ::UnseenBanner.jsonEscape(_hermano) + "\"";
 	json += "}";
 	::logInfo("UB_MSG:" + json);
 }
@@ -909,13 +910,14 @@
 // completing 3.4). Vanilla renders the shown brother's whole sheet to a texture no
 // screen reader can see, but every fact it is built from is a Squirrel actor API,
 // so we rebuild the sheet as an ordered list of one-fact-per-entry lines and let
-// the player walk it with Up/Down, reading one attribute at a time. A/D (and the
-// left/right/Tab the screen already binds) switch brother; we drive the same
-// vanilla switch so the visible sheet keeps up, and mirror the move on our own
-// copy of the roster to know which brother is now shown — the selection lives in
-// the screen's JS, unreadable from here, but the roster order (getInstancesOfFaction,
-// the exact source the screen queries) is reproducible, so an identical +1/-1 wrap
-// from the same start stays in lockstep.
+// the player walk it with Up/Down or jump with Home/End, reading one attribute at
+// a time. A/D (and the left/right/Tab the screen already binds) switch brother;
+// we drive the same vanilla switch so the visible sheet keeps up, and mirror the
+// move on our own copy of the roster to know which brother is now shown — the
+// selection lives in the screen's JS, unreadable from here, but the roster order
+// (getInstancesOfFaction, the exact source the screen queries) is reproducible, so
+// an identical +1/-1 wrap from the same start stays in lockstep. The item index is
+// preserved across brother switches so the same attribute can be compared quickly.
 ::UnseenBanner.SheetNav <- {
 	m = {
 		Brothers = null,
@@ -935,8 +937,11 @@
 		[11] = true, // a
 		[48] = true  // left
 	},
-	// Up / Down walk the sheet list one entry at a time.
+	// Up / Down walk the sheet list one entry at a time; Home / End jump to its
+	// boundaries. Engine codes come from MSU's KeyMapSQ, not DOM/ASCII key codes.
 	MoveKeys = {
+		[44] = "end",
+		[45] = "home",
 		[49] = "up",
 		[51] = "down"
 	},
@@ -1009,37 +1014,52 @@
 	},
 	// Mirror a brother switch the same way the vanilla screen does (next/previous
 	// non-null with wrap; the tactical roster is dense, so a plain modular step
-	// matches). Rebuild the sheet for the new man and read from its top.
+	// matches). Rebuild the sheet for the new man but preserve the item index, then
+	// announce his name and the same attribute in one interrupt message. Keeping it
+	// as one message matters: a second interrupt would cut the name off.
 	function switchBrother(_next)
 	{
 		if (this.m.Brothers == null || this.m.Brothers.len() == 0) return;
+		local itemIndex = this.m.ItemIndex;
 		local n = this.m.Brothers.len();
 		if (_next) this.m.BroIndex = (this.m.BroIndex + 1) % n;
 		else this.m.BroIndex = (this.m.BroIndex - 1 + n) % n;
 
 		this.buildItems();
-		this.m.ItemIndex = 0;
-		this.announceItem();
+		this.m.ItemIndex = itemIndex;
+		if (this.m.Items != null && this.m.Items.len() > 0)
+		{
+			if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+			if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		}
+		this.announceItem(true);
 	},
 	// Move within the current sheet, clamping at the ends (no wrap, so the edges are
-	// discoverable). Re-reading the same entry at an edge is intentional feedback.
+	// discoverable), or jump straight to either edge. Re-reading the same entry at
+	// an edge is intentional feedback.
 	function move(_code)
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local dir = this.MoveKeys[_code];
 		if (dir == "up") this.m.ItemIndex -= 1;
-		else this.m.ItemIndex += 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
 
 		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
 		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
 
 		this.announceItem();
 	},
-	function announceItem()
+	function announceItem(_includeBrother = false)
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local it = this.m.Items[this.m.ItemIndex];
-		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
+		// Identity already contains the brother's name, so do not say it twice when
+		// that is the retained item.
+		local bro = _includeBrother && it.cat != "combat.sheet.identity" ? this.current() : null;
+		local name = bro != null ? bro.getName() : null;
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle, name);
 	},
 	// Build the ordered list of sheet entries for the shown brother. Each entry is a
 	// tagged line the companion localizes; the framing words ("Resolve", "Head
@@ -1579,9 +1599,9 @@
 		}
 
 		// Character screen (C/I) as a keyboard-navigable sheet. Up/Down walk the shown
-		// brother's attribute list; the switch keys change brother, driving the same
-		// vanilla switch so the visible sheet keeps up. Only our nav keys are stolen —
-		// close and start-battle keep their native behavior. This runs before
+		// brother's attribute list, Home/End jump to its boundaries, and the switch
+		// keys change brother while retaining the current item. Only our nav keys are
+		// stolen — close and start-battle keep their native behavior. This runs before
 		// __original because the screen is shown from within this state, which swallows
 		// the keyboard while it is up.
 		if (this.isInCharacterScreen()

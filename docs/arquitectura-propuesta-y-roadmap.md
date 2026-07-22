@@ -284,10 +284,12 @@ objetos, estados, terreno… todo vive ahí).
       nombre). La ficha de personaje (C/I) es ahora una **lista navegable**:
       arriba/abajo recorren, una a una, identidad, trasfondo, XP, ánimo, vida,
       fatiga, resolución, iniciativa, habilidad/defensa c.a.c. y a distancia,
-      armadura, heridas, rasgos, perks y equipo; A/D (y flechas/Tab, como en
-      vanilla) cambian de hermano mostrado, releyendo su ficha desde el
-      principio — completa la navegación por hermano/perks/equipo prevista en
-      2.4 para el caso táctico (queda pendiente el equivalente en el mapamundi).
+      armadura, heridas, rasgos, perks y equipo; Home/End saltan al inicio/final.
+      A/D (y flechas/Tab, como en vanilla) cambian de hermano mostrado conservando
+      la posición de la lista y anuncian nombre + el mismo atributo, para comparar
+      hermanos rápidamente — completa la navegación por hermano/perks/equipo
+      prevista en 2.4 para el caso táctico (queda pendiente el equivalente en el
+      mapamundi).
       Trampa cazada y con lección reutilizable: el hook original comprobaba
       `isVisible()` justo tras `show()`, pero ese flag solo se activa en el
       callback asíncrono `onScreenShown` — la pantalla nunca se detectaba
