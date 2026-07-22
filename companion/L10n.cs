@@ -250,6 +250,13 @@ namespace TheUnseenBanner.Companion
             ["combat.result.button.lootall"] = "Loot all items, button.",
             ["combat.result.button.lootall.disabled"] = "Loot all items, button, unavailable.",
             ["combat.result.button.continue"] = "Continue, button.",
+            // Battle confirmation dialog (the End Round popup and quit-battle prompts)
+            // as a navigable list. The message row carries the game's own title (valor)
+            // and body (texto); the button labels mirror the visible Yes/No/Ok.
+            ["combat.dialog.screen"] = "{1}. {0}. Use Up and Down to review, Enter to choose, Escape to cancel.",
+            ["combat.dialog.button.confirm"] = "Yes, button.",
+            ["combat.dialog.button.confirm.mono"] = "Ok, button.",
+            ["combat.dialog.button.cancel"] = "No, button.",
             // World-map company/campaign list (phase 4.4, G then Up/Down).
             ["world.status.screen"] = "Company status. Use Up and Down to review. Press G to close.",
             ["world.status.closed"] = "Company status closed.",

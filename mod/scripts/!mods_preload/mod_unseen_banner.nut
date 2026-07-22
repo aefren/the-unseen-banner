@@ -15,7 +15,8 @@
 	Combat = null,
 	Readout = null,
 	CombatResult = null,
-	SheetNav = null
+	SheetNav = null,
+	DialogNav = null
 };
 
 ::UnseenBanner.Mod = ::Hooks.register(::UnseenBanner.ID, ::UnseenBanner.Version, ::UnseenBanner.Name);
@@ -1460,6 +1461,131 @@
 	}
 };
 
+// Battle confirmation dialog (the generic Yes/No popup). Pressing R brings up the
+// "End Round" prompt, and quitting a battle brings up its own; vanilla draws them as
+// a modal texture whose Yes/No buttons only the mouse can reach. While the popup is
+// up the state parks a MenuStack backstep and swallows the keyboard, and Escape does
+// not dismiss it either — so a blind player who opens one is trapped with no way out.
+// We flatten the popup into a tiny navigable list: the message first, then the
+// confirm and (for a real choice) cancel buttons. Up/Down reads one entry, Enter
+// activates the focused button, and Escape cancels outright. Title and body are the
+// game's own words, handed straight to dialog_screen.show, so nothing is scraped from
+// the DOM; only the fixed button labels and the framing live in L10n. Buttons fire
+// through the screen's own onOkPressed / onCancelPressed — exactly what a click calls.
+::UnseenBanner.DialogNav = {
+	m = {
+		Items = null,
+		ItemIndex = 0,
+		Active = false,
+		Title = "",
+		Text = "",
+		IsMonologue = false
+	},
+	// enter activates the focused button; escape cancels (native does nothing with it
+	// while the dialog is up). Up/Down walk the list. Codes are MSU KeyMapSQ, not ASCII.
+	Keys = {
+		[49] = "up",
+		[51] = "down",
+		[39] = "activate",
+		[41] = "cancel"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function handles(_code)
+	{
+		return _code in this.Keys;
+	},
+	function reset()
+	{
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Active = false;
+		this.m.Title = "";
+		this.m.Text = "";
+		this.m.IsMonologue = false;
+	},
+	function item(_cat, _texto = "", _valor = "", _action = null)
+	{
+		return { cat = _cat, texto = _texto, valor = _valor, action = _action };
+	},
+	// Captured from dialog_screen.show before the modal animates in; open() then builds
+	// the list once onScreenShown confirms the DOM is fully up (the deterministic point,
+	// same pattern as the event and combat-result screens).
+	function prime(_title, _text, _isMonologue)
+	{
+		this.m.Title = _title == null ? "" : _title;
+		this.m.Text = _text == null ? "" : _text;
+		this.m.IsMonologue = _isMonologue;
+	},
+	function open()
+	{
+		local items = [];
+		// The message row carries the game's own title and body verbatim (cleaned on the
+		// companion side); the framing and the navigation hint stay in L10n.
+		items.push(this.item("combat.dialog.screen", this.m.Text, this.m.Title));
+		if (this.m.IsMonologue)
+		{
+			// An info popup: a single "Ok", no cancel button or callback.
+			items.push(this.item("combat.dialog.button.confirm.mono", "", "", "ok"));
+		}
+		else
+		{
+			items.push(this.item("combat.dialog.button.confirm", "", "", "ok"));
+			items.push(this.item("combat.dialog.button.cancel", "", "", "cancel"));
+		}
+		this.m.Items = items;
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.announceItem();
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function onKey(_code)
+	{
+		local what = this.Keys[_code];
+		if (what == "up" || what == "down") this.move(what);
+		else if (what == "activate") this.activate();
+		else if (what == "cancel") this.cancel();
+	},
+	function move(_direction)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		if (_direction == "up") this.m.ItemIndex -= 1;
+		else this.m.ItemIndex += 1;
+
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function activate()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local action = this.m.Items[this.m.ItemIndex].action;
+		// The message row has no action, so Enter on it just re-reads it. Buttons go
+		// through the screen's own handlers, which hide the dialog and fire the callback.
+		if (action == "ok") ::DialogScreen.onOkPressed();
+		else if (action == "cancel") ::DialogScreen.onCancelPressed();
+		else this.announceItem();
+	},
+	// Escape from any row dismisses the whole dialog, the same as choosing No. A
+	// monologue has no cancel path, so Escape confirms it — its only way out.
+	function cancel()
+	{
+		if (this.m.IsMonologue) ::DialogScreen.onOkPressed();
+		else ::DialogScreen.onCancelPressed();
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor);
+	}
+};
+
 // Key-repeat gate for our tactical hotkeys. During active combat the engine
 // swallows the RELEASE event (state 0) of any key that still carries a native
 // binding — camera pan (Q/W/E/A/S/D), overlay toggles (T/B), brother switch
@@ -1615,6 +1741,38 @@
 	}
 });
 
+// Confirmation dialog (dialog_screen, the shared Yes/No modal). show() is where the
+// title/body arrive, so DialogNav is primed there; onScreenShown is the deterministic
+// point the modal is fully up, so the list is built and announced there (same pattern
+// as the event and combat-result screens); onScreenHidden clears it. Gated to battle
+// only (::Tactical.isActive()): the same class serves the world map, whose dialogs
+// stay on vanilla behavior for now (roadmap). Keys are driven from tactical_state.
+::UnseenBanner.Mod.hook("scripts/ui/screens/dialog_screen", function(q) {
+	q.show = @(__original) function( _title, _text, _doneCallback, _okCallback = null, _cancelCallback = null, _isMonologue = false )
+	{
+		__original(_title, _text, _doneCallback, _okCallback, _cancelCallback, _isMonologue);
+		if (::Tactical.isActive())
+		{
+			::UnseenBanner.DialogNav.prime(_title, _text, _isMonologue);
+		}
+	}
+
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+		if (::Tactical.isActive())
+		{
+			::UnseenBanner.DialogNav.open();
+		}
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.DialogNav.close();
+	}
+});
+
 // The event screen has no state of its own; it is shown inside world_state, so
 // its keyboard cursor is driven from world_state.onKeyInput. Up/Down/Enter are
 // stolen only while the event is up; every other key (including the native 1-6
@@ -1740,6 +1898,7 @@
 		::UnseenBanner.TileCursor.reset();
 		::UnseenBanner.SheetNav.reset();
 		::UnseenBanner.CombatResult.reset();
+		::UnseenBanner.DialogNav.reset();
 		::UnseenBanner.KeyGate.reset();
 	}
 
@@ -1747,6 +1906,7 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.CombatResult.reset();
+		::UnseenBanner.DialogNav.reset();
 		__original();
 	}
 
@@ -1765,6 +1925,21 @@
 			if (_key.getState() == 0)
 			{
 				::UnseenBanner.CombatResult.onKey(code, this);
+			}
+			return true;
+		}
+
+		// Confirmation dialog (the End Round popup R opens, and quit-battle prompts).
+		// While it is up the state parks a MenuStack backstep and native onKeyInput
+		// returns false for every key, so this must run before the tile cursor and
+		// readouts to keep the popup reachable. Act on release (state 0), which is
+		// delivered here even mid-battle — it is the very event R itself arrives on —
+		// and consume it so nothing leaks through. Up/Down/Enter/Escape drive the list.
+		if (::UnseenBanner.DialogNav.isActive() && ::UnseenBanner.DialogNav.handles(code))
+		{
+			if (_key.getState() == 0)
+			{
+				::UnseenBanner.DialogNav.onKey(code);
 			}
 			return true;
 		}
