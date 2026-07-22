@@ -2,6 +2,10 @@
 
 **An accessibility mod for blind players of *Battle Brothers*.**
 
+*Battle Brothers* is a turn-based tactical RPG where you lead a medieval
+mercenary company: hire and equip fighters, take contracts across an open world
+map, and fight hex-grid battles where death is permanent.
+
 Battle Brothers does not draw its interface as text a screen reader can read:
 the whole game renders to a texture inside an embedded Chromium, with no
 accessibility tree. The Unseen Banner adds a layer that reads the game's real
@@ -80,6 +84,11 @@ string. Missing keys fall back to English, so a partial translation is safe.
 ---
 
 ## Keys
+
+Vanilla *Battle Brothers* is played mostly with the mouse (click to move and
+attack, drag to deploy, real-time-with-pause on the world map). Those controls
+are of no use without sight, so the mod replaces them with the keyboard scheme
+below — you do not need to learn the native mouse controls.
 
 The engine does not deliver the keyboard to the game's DOM, so the mod captures
 keys and narrates the action. Where a mod key overlaps a native shortcut, the mod
