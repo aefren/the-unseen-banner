@@ -132,6 +132,8 @@ namespace TheUnseenBanner.Companion
                     "combat.result.stat" => ComposeResultStat(texto, valor, detalle),
                     "menu.campaign" => ComposeCampaignEntry(texto, valor, detalle),
                     "menu.campaign.screen" => ComposeCampaignScreen(texto, valor),
+                    "world.survey.screen" => ComposeSurveyScreen(detalle),
+                    "world.survey.item" => ComposeSurveyItem(texto, valor, detalle),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
@@ -318,6 +320,64 @@ namespace TheUnseenBanner.Companion
                 : (n == 1 ? L10n.T("menu.campaign.screen.one")
                           : L10n.F("menu.campaign.screen.count", n));
             return L10n.F("menu.campaign.screen", title, count);
+        }
+
+        /// <summary>Compose the world-map survey header (phase 4.3, the B key). detalle
+        /// packs the three counts as "parties|settlements|locations"; the header names
+        /// how many of each are in view, or "Nothing in view" when all are zero. The
+        /// per-category phrasing is singular/zero aware so it never reads "1 parties".
+        /// </summary>
+        private static string ComposeSurveyScreen(string detail)
+        {
+            string[] p = detail.Split('|');
+            int At(int i) => i < p.Length && int.TryParse(p[i], out int n) ? n : 0;
+            int parties = At(0), settlements = At(1), locations = At(2);
+
+            if (parties == 0 && settlements == 0 && locations == 0)
+                return L10n.T("world.survey.empty");
+
+            var groups = new System.Collections.Generic.List<string>();
+            if (parties > 0)
+                groups.Add(parties == 1 ? L10n.T("world.survey.count.parties.one")
+                                        : L10n.F("world.survey.count.parties", parties));
+            if (settlements > 0)
+                groups.Add(settlements == 1 ? L10n.T("world.survey.count.settlements.one")
+                                            : L10n.F("world.survey.count.settlements", settlements));
+            if (locations > 0)
+                groups.Add(locations == 1 ? L10n.T("world.survey.count.locations.one")
+                                          : L10n.F("world.survey.count.locations", locations));
+
+            return L10n.F("world.survey.screen", string.Join(", ", groups));
+        }
+
+        /// <summary>Compose one survey entry (phase 4.3). texto is the entity's already-
+        /// localized game name; valor is the kind (ally/enemy/neutral party, settlement,
+        /// location); detalle is the "dist|dir" pair shared with the tactical tile
+        /// readout, so <see cref="ComposePosition"/> is reused for "3 tiles, 2 o'clock".
+        /// </summary>
+        private static string ComposeSurveyItem(string name, string kind, string detail)
+        {
+            string[] p = detail.Split('|');
+            string dist = p.Length > 0 ? p[0] : "0";
+            string dir = p.Length > 1 ? p[1] : "-1";
+
+            string head = kind switch
+            {
+                "enemy" => L10n.F("world.survey.item.enemy", name),
+                "ally" => L10n.F("world.survey.item.ally", name),
+                "neutral" => L10n.F("world.survey.item.neutral", name),
+                "settlement" => L10n.F("world.survey.item.settlement", name),
+                _ => L10n.F("world.survey.item.location", name),
+            };
+
+            // A location on the player's own tile (a Battle Site where he stands, say)
+            // has distance 0, for which ComposePosition is empty; call that out as
+            // "at your position" instead of dropping the clause and reading no location.
+            string position = ComposePosition(dist, dir);
+            if (position.Length == 0 && dist == "0")
+                position = L10n.T("world.survey.here");
+
+            return position.Length > 0 ? head + ". " + position + "." : head + ".";
         }
 
         /// <summary>Compose the turn-order readout (phase 3.4): the Tab key. The

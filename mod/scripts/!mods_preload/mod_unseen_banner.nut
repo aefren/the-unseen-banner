@@ -247,7 +247,9 @@
 	ToggleKey = 17, // g
 	MoveKeys = {
 		[49] = "up",
-		[51] = "down"
+		[51] = "down",
+		[45] = "home",
+		[44] = "end"
 	},
 	function isActive()
 	{
@@ -319,8 +321,187 @@
 		}
 
 		if (!this.m.Active || !(_code in this.MoveKeys)) return;
-		if (this.MoveKeys[_code] == "up") this.m.ItemIndex -= 1;
-		else this.m.ItemIndex += 1;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
+	}
+};
+
+// World-map perception readout (phase 4.3, "what's in view"). The text precursor to
+// the sonar (4.1): a navigable list of everything the player can perceive on the map
+// — visible parties (threats, caravans, allies), known settlements and known
+// locations (camps, ruins, sites) — each with its kind, distance in hex tiles and a
+// clock bearing from the party. Pull, not push: B opens/closes the list and Up/Down
+// read one entry at a time, exactly like WorldStatus (a navigable list, never a single
+// Tolk dump). Fog of war is honoured (roadmap 4.2): parties must be currently in sight
+// (the same isHiddenToPlayer / visibility test the mouse click uses), settlements and
+// locations must have their tile discovered. Producing this typed classification here
+// is precisely what the sonar will later reuse to pick a sound per category, which is
+// why the world is done by text first.
+//
+// Key: b (code 12), free on the world map in vanilla (the map claims c/f/i/o/p/r/t and
+// G is our company status). Mutually exclusive with WorldStatus so Up/Down never has
+// two owners: opening one closes the other (done in the world_state hook).
+::UnseenBanner.WorldSurvey <- {
+	m = {
+		Items = null,
+		ItemIndex = 0,
+		Active = false
+	},
+	ToggleKey = 12, // b
+	MoveKeys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end"
+	},
+	// Radius of the party scan, in world units. 400 is the wide sweep the event and
+	// ambition managers use to find nearby parties (event_manager.nut), comfortably
+	// past the player's own vision radius; the isHiddenToPlayer filter below is what
+	// actually enforces sight, so this only needs to be generous.
+	ScanRadius = 400.0,
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function handles(_code)
+	{
+		return _code == this.ToggleKey || (this.m.Active && _code in this.MoveKeys);
+	},
+	function reset()
+	{
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Active = false;
+	},
+	function item(_cat, _texto = "", _valor = "", _detalle = "")
+	{
+		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle };
+	},
+	// Distance in hex tiles and the clock bearing (hex direction 0-5) from the player
+	// to a target tile, packed as "dist|dir" for the companion — the same encoding the
+	// tactical tile readout uses, so the companion's ComposePosition is reused verbatim.
+	function posDetail(_playerTile, _tile)
+	{
+		local dist = _playerTile.getDistanceTo(_tile);
+		local dir = dist > 0 ? _playerTile.getDirectionTo(_tile) : -1;
+		return dist + "|" + dir;
+	},
+	// Sort a list of { e, d } records nearest-first (ascending hex distance).
+	function sortByDistance(_scored)
+	{
+		_scored.sort(function ( _a, _b )
+		{
+			if (_a.d > _b.d) return 1;
+			if (_a.d < _b.d) return -1;
+			return 0;
+		});
+	},
+	function open()
+	{
+		local player = ::World.State.getPlayer();
+		local playerTile = player.getTile();
+		local playerID = player.getID();
+		local playerPos = player.getPos();
+
+		// Visible parties: everything the mouse click would let you interact with —
+		// in sight (not hidden by fog), with non-zero visibility. Kind splits into
+		// ally / enemy (attackable and not allied) / neutral (a caravan, say).
+		local parties = [];
+		foreach( e in ::World.getAllEntitiesAtPos(playerPos, this.ScanRadius) )
+		{
+			if (e == null || !e.isParty() || e.getID() == playerID) continue;
+			if (e.isHiddenToPlayer() || e.getVisibilityMult() <= 0.0) continue;
+			if (e.getTile() == null) continue;
+			parties.push({ e = e, d = playerTile.getDistanceTo(e.getTile()) });
+		}
+		this.sortByDistance(parties);
+
+		// Known settlements: static, so "discovered" (the game's own per-entity fog
+		// flag, isDiscovered — the one it gates onEnter and discovery events on) is the
+		// useful set for navigation. NB: the tile's IsDiscovered flag is a different
+		// thing (per-tile fog reveal) and is set map-wide for settlement/location tiles
+		// from the start, so filtering on it listed the whole map (145 entries on day 1).
+		local settlements = [];
+		foreach( s in ::World.EntityManager.getSettlements() )
+		{
+			if (s == null || !s.isAlive() || s.getTile() == null) continue;
+			if (!s.isDiscovered()) continue;
+			settlements.push({ e = s, d = playerTile.getDistanceTo(s.getTile()) });
+		}
+		this.sortByDistance(settlements);
+
+		// Known, active locations (camps, ruins, legendary sites); undiscovered or
+		// inactive ones are left out for the same fog-of-war parity (roadmap 4.2).
+		local locations = [];
+		foreach( l in ::World.EntityManager.getLocations() )
+		{
+			if (l == null || !l.isAlive() || !l.isActive() || l.getTile() == null) continue;
+			if (!l.isDiscovered()) continue;
+			locations.push({ e = l, d = playerTile.getDistanceTo(l.getTile()) });
+		}
+		this.sortByDistance(locations);
+
+		local items = [];
+		// Header first: the three counts, so the player hears the shape of what is
+		// around before walking the list (parties|settlements|locations).
+		items.push(this.item("world.survey.screen", "", "",
+			parties.len() + "|" + settlements.len() + "|" + locations.len()));
+
+		// Parties first (threats matter most, mirroring the sonar hierarchy), then
+		// settlements, then locations; each group already nearest-first.
+		foreach( r in parties )
+		{
+			local e = r.e;
+			local kind = e.isAlliedWithPlayer() ? "ally" : (e.isAttackable() ? "enemy" : "neutral");
+			items.push(this.item("world.survey.item", e.getName(), kind, this.posDetail(playerTile, e.getTile())));
+		}
+		foreach( r in settlements )
+		{
+			items.push(this.item("world.survey.item", r.e.getName(), "settlement", this.posDetail(playerTile, r.e.getTile())));
+		}
+		foreach( r in locations )
+		{
+			items.push(this.item("world.survey.item", r.e.getName(), "location", this.posDetail(playerTile, r.e.getTile())));
+		}
+
+		this.m.Items = items;
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.announceItem();
+	},
+	function close(_announce = false)
+	{
+		this.reset();
+		if (_announce) ::UnseenBanner.sendMessage("interrupt", "", "world.survey.closed");
+	},
+	function onKey(_code)
+	{
+		if (_code == this.ToggleKey)
+		{
+			if (this.m.Active) this.close(true);
+			else this.open();
+			return;
+		}
+
+		if (!this.m.Active || !(_code in this.MoveKeys)) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
 
 		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
 		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
@@ -1833,6 +2014,7 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
+		::UnseenBanner.WorldSurvey.reset();
 		__original();
 	}
 
@@ -1840,6 +2022,7 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
+		::UnseenBanner.WorldSurvey.reset();
 		__original();
 	}
 
@@ -1847,16 +2030,33 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
+		::UnseenBanner.WorldSurvey.reset();
 		__original();
 	}
 
 	q.onKeyInput = @(__original) function( _key )
 	{
-		// Events and menu modules take priority over the map readout. They can open
-		// without a key handled here, so clear a stale list as soon as either is up.
+		// Ground truth for "a menu or popup is up" is the MenuStack's backsteps, not
+		// MenuNav's module flags. Saving from the in-game pause menu returns to this
+		// same world_state with no onInit and no loading screen (our other reset
+		// points), and the pause menu's onModuleHidden is not guaranteed to fire, so
+		// MenuNav.ActiveModule can stay set after the menu is gone — which then makes
+		// the map-readout guard below (isActive) keep swallowing B and G. When the
+		// stack has no backsteps the map is genuinely free, so clear any stale menu
+		// state here. During real pause-menu navigation hasBacksteps() is true, so
+		// MenuNav keeps working there untouched.
+		if (this.m.MenuStack != null && !this.m.MenuStack.hasBacksteps()
+			&& ::UnseenBanner.MenuNav.isActive())
+		{
+			::UnseenBanner.MenuNav.reset();
+		}
+
+		// Events and menu modules take priority over the map readouts. They can open
+		// without a key handled here, so clear stale lists as soon as either is up.
 		if (::UnseenBanner.EventNav.isActive() || ::UnseenBanner.MenuNav.isActive())
 		{
 			::UnseenBanner.WorldStatus.reset();
+			::UnseenBanner.WorldSurvey.reset();
 		}
 
 		if (_key.getState() == 0
@@ -1881,26 +2081,40 @@
 			return true;
 		}
 
-		// Company/campaign readout (phase 4.4), only on the plain map. G toggles the
-		// list and Up/Down move through it, all on release. Consume both key states so
-		// vanilla camera movement never competes with list navigation. Any unrelated
-		// map action closes the list before passing through, so arrows cannot remain
-		// captured after the player resumes normal play.
+		// Map readouts, only on the plain map: G toggles the company status list (4.4),
+		// B toggles the "what's in view" survey list (4.3); Up/Down move through the
+		// open one, all on release. Consume both key states so vanilla camera movement
+		// never competes with list navigation. The two lists are mutually exclusive —
+		// opening or acting on one closes the other — so Up/Down always has a single
+		// owner. Any unrelated map action closes both before passing through, so arrows
+		// cannot remain captured after the player resumes normal play.
 		local code = _key.getKey();
-		if (!::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive()
-			&& ::UnseenBanner.WorldStatus.handles(code))
+		local mapFree = !::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive();
+
+		if (mapFree && ::UnseenBanner.WorldStatus.handles(code))
 		{
 			if (_key.getState() == 0)
 			{
+				::UnseenBanner.WorldSurvey.reset();
 				::UnseenBanner.WorldStatus.onKey(code);
 			}
 
 			return true;
 		}
-		else if (::UnseenBanner.WorldStatus.isActive())
+
+		if (mapFree && ::UnseenBanner.WorldSurvey.handles(code))
 		{
-			::UnseenBanner.WorldStatus.reset();
+			if (_key.getState() == 0)
+			{
+				::UnseenBanner.WorldStatus.reset();
+				::UnseenBanner.WorldSurvey.onKey(code);
+			}
+
+			return true;
 		}
+
+		if (::UnseenBanner.WorldStatus.isActive()) ::UnseenBanner.WorldStatus.reset();
+		if (::UnseenBanner.WorldSurvey.isActive()) ::UnseenBanner.WorldSurvey.reset();
 
 		return __original(_key);
 	}

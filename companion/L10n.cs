@@ -275,6 +275,25 @@ namespace TheUnseenBanner.Companion
             ["world.status.food.none"] = "No food upkeep.",
             ["world.status.contract"] = "Contract: {0}.",
             ["world.status.contract.none"] = "No active contract.",
+            // World-map "what's in view" survey (phase 4.3, B then Up/Down). A
+            // navigable list of visible parties and known settlements/locations, each
+            // with its kind, distance and clock bearing. Distance/bearing reuse the
+            // tactical tile.position phrases.
+            ["world.survey.screen"] = "In view: {0}. Use Up and Down to review. Press B to close.",
+            ["world.survey.empty"] = "Nothing in view.",
+            ["world.survey.closed"] = "Survey closed.",
+            ["world.survey.count.parties"] = "{0} parties",
+            ["world.survey.count.parties.one"] = "1 party",
+            ["world.survey.count.settlements"] = "{0} settlements",
+            ["world.survey.count.settlements.one"] = "1 settlement",
+            ["world.survey.count.locations"] = "{0} locations",
+            ["world.survey.count.locations.one"] = "1 location",
+            ["world.survey.item.enemy"] = "Enemy party, {0}",
+            ["world.survey.item.ally"] = "Allied party, {0}",
+            ["world.survey.item.neutral"] = "Party, {0}",
+            ["world.survey.item.settlement"] = "Settlement, {0}",
+            ["world.survey.item.location"] = "Location, {0}",
+            ["world.survey.here"] = "At your position",
         };
     }
 }
