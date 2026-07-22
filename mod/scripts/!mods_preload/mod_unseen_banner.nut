@@ -358,9 +358,15 @@
 	m = {
 		Items = null,
 		ItemIndex = 0,
-		Active = false
+		Active = false,
+		// Detail mode: when non-null, V has drilled into the focused entity and Detail
+		// holds its flattened tooltip as its own navigable sub-list. The survey list and
+		// its index are kept underneath so V again restores exactly where the player was.
+		Detail = null,
+		DetailIndex = 0
 	},
 	ToggleKey = 12, // b
+	InspectKey = 32, // v -> inspect the focused entity (toggles the detail sub-list)
 	MoveKeys = {
 		[49] = "up",
 		[51] = "down",
@@ -378,17 +384,24 @@
 	},
 	function handles(_code)
 	{
-		return _code == this.ToggleKey || (this.m.Active && _code in this.MoveKeys);
+		return _code == this.ToggleKey
+			|| (this.m.Active && (_code == this.InspectKey || _code in this.MoveKeys));
 	},
 	function reset()
 	{
 		this.m.Items = null;
 		this.m.ItemIndex = 0;
 		this.m.Active = false;
+		this.m.Detail = null;
+		this.m.DetailIndex = 0;
 	},
-	function item(_cat, _texto = "", _valor = "", _detalle = "")
+	function inDetail()
 	{
-		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle };
+		return this.m.Detail != null;
+	},
+	function item(_cat, _texto = "", _valor = "", _detalle = "", _entity = null)
+	{
+		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle, entity = _entity };
 	},
 	// Distance in hex tiles and the clock bearing (hex direction 0-5) from the player
 	// to a target tile, packed as "dist|dir" for the companion — the same encoding the
@@ -461,20 +474,21 @@
 			parties.len() + "|" + settlements.len() + "|" + locations.len()));
 
 		// Parties first (threats matter most, mirroring the sonar hierarchy), then
-		// settlements, then locations; each group already nearest-first.
+		// settlements, then locations; each group already nearest-first. Each row keeps a
+		// reference to its entity so V can pull the live tooltip on demand.
 		foreach( r in parties )
 		{
 			local e = r.e;
 			local kind = e.isAlliedWithPlayer() ? "ally" : (e.isAttackable() ? "enemy" : "neutral");
-			items.push(this.item("world.survey.item", e.getName(), kind, this.posDetail(playerTile, e.getTile())));
+			items.push(this.item("world.survey.item", e.getName(), kind, this.posDetail(playerTile, e.getTile()), e));
 		}
 		foreach( r in settlements )
 		{
-			items.push(this.item("world.survey.item", r.e.getName(), "settlement", this.posDetail(playerTile, r.e.getTile())));
+			items.push(this.item("world.survey.item", r.e.getName(), "settlement", this.posDetail(playerTile, r.e.getTile()), r.e));
 		}
 		foreach( r in locations )
 		{
-			items.push(this.item("world.survey.item", r.e.getName(), "location", this.posDetail(playerTile, r.e.getTile())));
+			items.push(this.item("world.survey.item", r.e.getName(), "location", this.posDetail(playerTile, r.e.getTile()), r.e));
 		}
 
 		this.m.Items = items;
@@ -496,21 +510,94 @@
 			return;
 		}
 
-		if (!this.m.Active || !(_code in this.MoveKeys)) return;
-		local dir = this.MoveKeys[_code];
-		if (dir == "up") this.m.ItemIndex -= 1;
-		else if (dir == "down") this.m.ItemIndex += 1;
-		else if (dir == "home") this.m.ItemIndex = 0;
-		else this.m.ItemIndex = this.m.Items.len() - 1;
+		if (!this.m.Active) return;
 
-		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
-		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		// V drills into the focused entity, or backs out of the detail sub-list.
+		if (_code == this.InspectKey)
+		{
+			if (this.inDetail()) this.exitDetail();
+			else this.inspect();
+			return;
+		}
+
+		if (!(_code in this.MoveKeys)) return;
+
+		// Move within whichever list is active: the entity detail while inspecting, else
+		// the survey list.
+		local items = this.inDetail() ? this.m.Detail : this.m.Items;
+		if (items == null || items.len() == 0) return;
+		local idx = this.inDetail() ? this.m.DetailIndex : this.m.ItemIndex;
+
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") idx -= 1;
+		else if (dir == "down") idx += 1;
+		else if (dir == "home") idx = 0;
+		else idx = items.len() - 1;
+
+		if (idx < 0) idx = 0;
+		if (idx >= items.len()) idx = items.len() - 1;
+
+		if (this.inDetail()) this.m.DetailIndex = idx;
+		else this.m.ItemIndex = idx;
 		this.announceItem();
+	},
+	// Drill into the focused survey entity: pull its live tooltip and present it as a
+	// navigable sub-list (V again backs out). The header row has no entity; a party that
+	// died or dropped out of sight since the list was built is reported gone rather than
+	// throwing.
+	function inspect()
+	{
+		local it = this.m.Items[this.m.ItemIndex];
+		if (it.entity == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.inspect.none");
+			return;
+		}
+		if (!it.entity.isAlive())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.inspect.gone");
+			return;
+		}
+
+		local lines = this.buildDetail(it.entity);
+		local detail = [];
+		// Header first (a nav hint), then one line per non-empty tooltip entry.
+		detail.push(this.item("world.inspect.screen", "", "" + lines.len()));
+		foreach( t in lines ) detail.push(this.item("world.inspect.item", t));
+
+		this.m.Detail = detail;
+		this.m.DetailIndex = 0;
+		this.announceItem();
+	},
+	function exitDetail()
+	{
+		this.m.Detail = null;
+		this.m.DetailIndex = 0;
+		this.announceItem(); // re-announce the survey row we drilled from
+	},
+	// Flatten an entity's tooltip (the same funnel the mouse hover uses) into plain text
+	// lines, dropping empties. Title, description, troop composition, faction hints — all
+	// already localized game text; the companion's clean() strips their BBCode and icons.
+	function buildDetail(_entity)
+	{
+		local lines = [];
+		local tt = _entity.getTooltip();
+		if (tt == null) return lines;
+		foreach( e in tt )
+		{
+			if (e == null || !("text" in e)) continue;
+			local t = e.text;
+			if (t == null || t == "") continue;
+			lines.push(t);
+		}
+		return lines;
 	},
 	function announceItem()
 	{
-		if (this.m.Items == null || this.m.Items.len() == 0) return;
-		local it = this.m.Items[this.m.ItemIndex];
+		local items = this.inDetail() ? this.m.Detail : this.m.Items;
+		if (items == null || items.len() == 0) return;
+		local idx = this.inDetail() ? this.m.DetailIndex : this.m.ItemIndex;
+		local it = items[idx];
 		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
 	}
 };

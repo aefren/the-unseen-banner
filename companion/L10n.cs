@@ -294,6 +294,13 @@ namespace TheUnseenBanner.Companion
             ["world.survey.item.settlement"] = "Settlement, {0}",
             ["world.survey.item.location"] = "Location, {0}",
             ["world.survey.here"] = "At your position",
+            // Detail inspection of the focused survey entity (V), a navigable sub-list of
+            // the entity's tooltip lines. The lines are already-localized game text, spoken
+            // as-is (cleaned centrally); only the header and the empty cases live here.
+            ["world.inspect.screen"] = "Details. Use Up and Down to review, V to go back.",
+            ["world.inspect.item"] = "{0}",
+            ["world.inspect.none"] = "Nothing to inspect here.",
+            ["world.inspect.gone"] = "No longer there.",
             // World-map directional movement (phase 4.0, Q/W/E/A/S/D). Terrain of a
             // tile is spoken when it changes as the party walks; "Stopped" is the
             // distinct cue that the movement order finished.
