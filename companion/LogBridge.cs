@@ -120,6 +120,7 @@ namespace TheUnseenBanner.Companion
                     "combat.status" => ComposeStatus(texto, valor, detalle),
                     "combat.turnorder" => ComposeTurnOrder(texto),
                     "combat.enemies" => ComposeEnemies(texto, valor),
+                    "combat.engaged" => ComposeEngaged(texto, valor),
                     "combat.skills" => ComposeSkills(texto, valor),
                     "combat.inspect" => ComposeInspect(texto, valor, detalle),
                     "combat.sheet.mood" => L10n.F("combat.sheet.mood", L10n.T("combat.mood." + valor)),
@@ -363,6 +364,26 @@ namespace TheUnseenBanner.Companion
             return countText == "1"
                 ? L10n.F("combat.enemies.one", list)
                 : L10n.F("combat.enemies", countText, list);
+        }
+
+        /// <summary>Compose the "enemies around this tile" readout (Shift+B). The
+        /// Squirrel side counts the hostiles hex-adjacent to the cursor tile, so the
+        /// player can tell before moving there whether the tile is ringed by foes
+        /// (adjacency means a free hit when he later steps off). text is newline-
+        /// separated enemy names; valor is the count.</summary>
+        private static string ComposeEngaged(string text, string countText)
+        {
+            var names = new System.Collections.Generic.List<string>();
+            foreach (string line in text.Split('\n'))
+            {
+                if (line.Length == 0) continue;
+                names.Add(line);
+            }
+
+            string list = string.Join(", ", names);
+            return countText == "1"
+                ? L10n.F("combat.engaged.one", list)
+                : L10n.F("combat.engaged", countText, list);
         }
 
         /// <summary>Compose the active man's skills readout (the k key): the numbered

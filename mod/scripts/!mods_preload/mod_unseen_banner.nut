@@ -833,26 +833,32 @@
 // contain newlines), each line tagged so the companion can localize the framing.
 ::UnseenBanner.Readout = {
 	// t = active man's status, tab = turn order, b = visible enemies, k = active
-	// man's usable skills. t and b are bound in vanilla to purely visual overlay
-	// toggles (skill trees / blocked tiles); our hook consumes them during the
-	// player's turn, which a sighted tester loses but a blind player never needs.
-	// tab is unbound in vanilla; k is free.
+	// man's usable skills. Shift+b is a second, closely related readout: the
+	// enemies hex-adjacent to the cursor tile ("who is around here"), so it lives
+	// on the same key as b (nearby enemies) with the modifier. t and b are bound
+	// in vanilla to purely visual overlay toggles (skill trees / blocked tiles);
+	// our hook consumes them during the player's turn, which a sighted tester
+	// loses but a blind player never needs. tab is unbound in vanilla; k is free.
 	Keys = {
 		[30] = "status",   // t
 		[38] = "turnorder", // tab
-		[12] = "enemies",  // b
+		[12] = "enemies",  // b (Shift+b -> engaged)
 		[21] = "skills"    // k
 	},
 	function handles(_code)
 	{
 		return _code in this.Keys;
 	},
-	function onKey(_code, _active, _entities)
+	function onKey(_code, _active, _entities, _shift = false)
 	{
 		local what = this.Keys[_code];
 		if (what == "status") this.status(_active);
 		else if (what == "turnorder") this.turnOrder(_active);
-		else if (what == "enemies") this.enemies(_active, _entities);
+		else if (what == "enemies")
+		{
+			if (_shift) this.engaged(_active, _entities);
+			else this.enemies(_active, _entities);
+		}
 		else if (what == "skills") this.skills(_active);
 	},
 	function status(_active)
@@ -930,6 +936,42 @@
 		}
 
 		::UnseenBanner.sendMessage("interrupt", text, "combat.enemies", "" + scored.len());
+	},
+	function engaged(_active, _entities)
+	{
+		// Enemies hex-adjacent to the CURSOR tile, not the active man: the player
+		// walks the hex cursor (Q/W/E/A/S/D) to a tile he is thinking of moving to
+		// and asks "how many enemies are around here". This matters because in
+		// Battle Brothers a brother adjacent to an enemy takes a free hit when he
+		// later steps off, so a tile ringed by foes is a trap. With the cursor left
+		// on the active man (its default / X-recentre position) it answers the same
+		// question for where he stands right now. Reuses the b readout's hostile
+		// set (getAllHostilesAsArray, honouring fog of war) filtered to hex distance
+		// 1 from the cursor tile; the message carries just the names, newline-
+		// separated, and the count.
+		local tile = ::UnseenBanner.TileCursor.getTile(_active);
+		local names = [];
+		foreach( e in _entities.getAllHostilesAsArray() )
+		{
+			if (e == null || !e.isAlive() || e.isHiddenToPlayer() || e.getTile() == null) continue;
+			if (tile.getDistanceTo(e.getTile()) != 1) continue;
+			names.push(e.getName());
+		}
+
+		if (names.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.engaged.none");
+			return;
+		}
+
+		local text = "";
+		for (local i = 0; i < names.len(); i += 1)
+		{
+			if (i > 0) text += "\n";
+			text += names[i];
+		}
+
+		::UnseenBanner.sendMessage("interrupt", text, "combat.engaged", "" + names.len());
 	},
 	// The active man's usable skills — the numbered action bar read aloud (the k
 	// key). queryActives() is the exact list, in the exact order, that the number
@@ -2025,7 +2067,7 @@
 						else if (isActKey)
 							::UnseenBanner.Combat.onKey(code, active, this, ::UnseenBanner.TileCursor.getTile(active));
 						else
-							::UnseenBanner.Readout.onKey(code, active, this.Tactical.Entities);
+							::UnseenBanner.Readout.onKey(code, active, this.Tactical.Entities, (_key.getModifier() & 1) != 0);
 					}
 				}
 				else if (_key.getState() == 0)

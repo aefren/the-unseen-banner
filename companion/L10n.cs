@@ -172,6 +172,9 @@ namespace TheUnseenBanner.Companion
             ["combat.enemies.entry"] = "{0} at {1} tiles",
             ["combat.enemies.entry.one"] = "{0} at 1 tile",
             ["combat.enemies.empty"] = "No enemies in sight.",
+            ["combat.engaged"] = "{0} enemies around. ({1})",
+            ["combat.engaged.one"] = "1 enemy around. ({0})",
+            ["combat.engaged.none"] = "No enemies around.",
             // Active man's usable skills, the numbered action bar (the k key).
             ["combat.skills"] = "{0} skills. {1}.",
             ["combat.skills.one"] = "1 skill. {0}.",
