@@ -294,6 +294,36 @@ namespace TheUnseenBanner.Companion
             ["world.survey.item.settlement"] = "Settlement, {0}",
             ["world.survey.item.location"] = "Location, {0}",
             ["world.survey.here"] = "At your position",
+            // World-map directional movement (phase 4.0, Q/W/E/A/S/D). Terrain of a
+            // tile is spoken when it changes as the party walks; "Stopped" is the
+            // distinct cue that the movement order finished.
+            ["world.move.edge"] = "Edge of the map.",
+            ["world.move.blocked"] = "Blocked that way.",
+            ["world.move.step"] = "{0}.",
+            ["world.move.stopped"] = "Stopped. {0}.",
+            // Pause state, announced from the setPause funnel (Space, pause button...).
+            ["world.pause.on"] = "Paused.",
+            ["world.pause.off"] = "Unpaused.",
+            // World-map terrain names, keyed by Const.World.TerrainType (config/world.nut).
+            ["world.terrain.0"] = "Impassable",
+            ["world.terrain.1"] = "Ocean",
+            ["world.terrain.2"] = "Plains",
+            ["world.terrain.3"] = "Swamp",
+            ["world.terrain.4"] = "Hills",
+            ["world.terrain.5"] = "Forest",
+            ["world.terrain.6"] = "Snowy forest",
+            ["world.terrain.7"] = "Forest",
+            ["world.terrain.8"] = "Autumn forest",
+            ["world.terrain.9"] = "Mountains",
+            ["world.terrain.10"] = "Urban",
+            ["world.terrain.11"] = "Farmland",
+            ["world.terrain.12"] = "Snow",
+            ["world.terrain.13"] = "Badlands",
+            ["world.terrain.14"] = "Tundra",
+            ["world.terrain.15"] = "Steppe",
+            ["world.terrain.16"] = "Shore",
+            ["world.terrain.17"] = "Desert",
+            ["world.terrain.18"] = "Oasis",
         };
     }
 }

@@ -515,6 +515,237 @@
 	}
 };
 
+// World-map directional movement (phase 4.0). The overworld is hexagonal like the
+// battlefield (6 neighbours), so the party is walked with the same Q/W/E/A/S/D
+// cluster the tactical tile cursor uses (W=N, E=NE, D=SE, S=S, A=SW, Q=NW). Each
+// step is issued through the engine's own navigator exactly as a mouse click would
+// (findPath + setPath, world_state.onMouseInput), never a teleport — so terrain
+// cost, roads and passability are the game's, not ours. That also gives a clean
+// completion signal: the party clears its path when it arrives (party.onUpdate), so
+// !hasPath() means the step is done.
+//
+// Semantics (decided jul 2026): a short tap = one tile; holding the key keeps
+// walking; Shift+dir latches a continuous march; Space (the vanilla pause key)
+// brakes and pauses. Movement is announced — the terrain of a tile is spoken when it
+// changes as the party walks, and a distinct "Stopped" cue is spoken when the order
+// completes (a single step, a release, a brake or an obstacle), so a blind player
+// always knows the order finished. The same arrival machinery will serve the future
+// auto-walk-to-a-place order (roadmap 4.3 beacon).
+//
+// The engine advances party movement on VIRTUAL time, which is frozen while paused,
+// so issuing a step unpauses the game (Space pauses it back). Q/W/A/S/D double as the
+// vanilla camera pan (fired on key press); we consume both key states so panning
+// never competes, exactly like the tactical cursor. Driven from world_state:
+// onKeyInput starts/stops steps, onUpdate polls for arrival.
+::UnseenBanner.WorldMove <- {
+	m = {
+		Heading = -1,      // hex dir 0-5 currently being walked, -1 = idle
+		HeadingKey = -1,   // engine code that set Heading, to match its own release
+		Continuous = false, // Shift-latched march: ignore the key release, walk on
+		Pending = false,   // a step path is in flight (we set it, not yet arrived)
+		Blocked = false,   // the current heading hit a wall; hold intent but stop trying
+		LastTerrain = -1,  // last terrain type announced, so only changes are spoken
+		SelfUnpause = false // set while WE unpause to move, so the pause hook stays quiet
+	},
+	// Engine key code -> hex direction (Const.Direction: N=0, NE=1, SE=2, S=3, SW=4,
+	// NW=5), the same mapping as the tactical tile cursor for shared muscle memory.
+	DirKeys = {
+		[33] = 0,   // w  -> N
+		[15] = 1,   // e  -> NE
+		[14] = 2,   // d  -> SE
+		[29] = 3,   // s  -> S
+		[11] = 4,   // a  -> SW
+		[27] = 5    // q  -> NW
+	},
+	// The vanilla pause toggles (space and its aliases); we brake our march on these
+	// and let the native pause toggle run.
+	BrakeKeys = {
+		[42] = true,
+		[40] = true,
+		[10] = true
+	},
+	function handlesDir(_code)
+	{
+		return _code in this.DirKeys;
+	},
+	function handlesBrake(_code)
+	{
+		return _code in this.BrakeKeys;
+	},
+	function isMoving()
+	{
+		return this.m.Heading != -1 || this.m.Pending;
+	},
+	// Clears only our own bookkeeping; does NOT touch the party (which may not exist
+	// yet at state init). Used on entering/leaving the world state.
+	function reset()
+	{
+		this.m.Heading = -1;
+		this.m.HeadingKey = -1;
+		this.m.Continuous = false;
+		this.m.Pending = false;
+		this.m.Blocked = false;
+		this.m.LastTerrain = -1;
+		this.m.SelfUnpause = false;
+	},
+	function clearHeading()
+	{
+		this.m.Heading = -1;
+		this.m.HeadingKey = -1;
+		this.m.Continuous = false;
+		this.m.Blocked = false;
+	},
+	// Start one hex step in _dir via the navigator, mirroring the mouse click's own
+	// settings. Returns true if a step is now in flight; false (with an announcement)
+	// when the neighbour is off the map or the navigator finds no way onto it (ocean,
+	// impassable) — the same passability the mouse obeys.
+	function issueStep(_dir)
+	{
+		local player = ::World.State.getPlayer();
+		if (player == null) return false;
+
+		local from = player.getTile();
+		if (!from.hasNextTile(_dir))
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.move.edge");
+			return false;
+		}
+
+		local to = from.getNextTile(_dir);
+		local nav = ::World.getNavigator();
+		local settings = nav.createSettings();
+		settings.ActionPointCosts = ::Const.World.TerrainTypeNavCost;
+		settings.RoadMult = 1.0 / ::Const.World.MovementSettings.RoadMult;
+		local path = nav.findPath(from, to, settings, 0);
+
+		if (path.isEmpty())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.move.blocked");
+			return false;
+		}
+
+		player.setPath(path);
+		this.m.Pending = true;
+
+		// Movement runs on virtual time, frozen while paused; unpause so the party
+		// actually walks. Space pauses it back and brakes (onBrake). Flag it as our own
+		// unpause so the setPause hook does not announce "Unpaused" on every step.
+		if (::World.State.isPaused())
+		{
+			this.m.SelfUnpause = true;
+			::World.State.setPause(false);
+		}
+		return true;
+	},
+	// A direction key was pressed. Set the heading (Shift latches a march) and, if no
+	// step is already in flight, start one now. The key auto-repeats while held (that
+	// is how the vanilla camera pans): a repeat of the same key must not start a second
+	// step nor re-announce a wall, so it is a no-op while a step is pending or the way
+	// is already known blocked. LastTerrain being -1 marks "idle", so the origin tile
+	// is captured once at the start of a fresh move and only later terrain changes are
+	// spoken.
+	function onDirKey(_code, _shift)
+	{
+		local isRepeat = (_code == this.m.HeadingKey);
+		this.m.Heading = this.DirKeys[_code];
+		this.m.HeadingKey = _code;
+		this.m.Continuous = _shift;
+
+		if (this.m.Pending) return;
+		if (isRepeat && this.m.Blocked) return;
+
+		if (this.m.LastTerrain == -1)
+		{
+			local player = ::World.State.getPlayer();
+			if (player != null) this.m.LastTerrain = player.getTile().Type;
+		}
+		this.m.Blocked = !this.issueStep(this.m.Heading);
+	},
+	// A direction key was released. A plain hold stops chaining once the current step
+	// lands; a Shift-latched march ignores the release and walks on until braked. Only
+	// the key that owns the current heading clears it, so releasing an older key does
+	// not cancel a newer heading. If nothing is in flight (idle, or stuck at a wall
+	// already announced), just go quiet — the completion cue only fires for a step that
+	// was actually travelling (handled in onArrived).
+	function onRelease(_code)
+	{
+		if (_code == this.m.HeadingKey && !this.m.Continuous)
+		{
+			this.m.Heading = -1;
+			this.m.HeadingKey = -1;
+			this.m.Blocked = false;
+			if (!this.m.Pending) this.m.LastTerrain = -1;
+		}
+	},
+	// Space (and the other pause keys): stop the march at once. Silent on purpose — the
+	// same Space press pauses the game, and the setPause hook then announces "Paused",
+	// which would cut a "Stopped" cue on the interrupt channel anyway. Natural stops (a
+	// tap, a release, an obstacle) still get their "Stopped" from onArrived. Returns
+	// whether we were moving, so the caller can still let the native pause toggle run.
+	function onBrake()
+	{
+		if (!this.isMoving()) return false;
+
+		local player = ::World.State.getPlayer();
+		if (player != null)
+		{
+			player.setPath(null);
+			player.setDestination(null);
+		}
+		this.clearHeading();
+		this.m.Pending = false;
+		this.m.LastTerrain = -1;
+		return true;
+	},
+	// Polled from world_state.onUpdate every frame, but only while a step is in flight.
+	// The party clears its path on arrival, so !hasPath() is the "step landed" signal.
+	function tick()
+	{
+		if (!this.m.Pending) return;
+
+		local player = ::World.State.getPlayer();
+		if (player == null)
+		{
+			this.m.Pending = false;
+			return;
+		}
+		if (player.hasPath()) return; // still walking to the step tile
+
+		this.m.Pending = false;
+		this.onArrived(player);
+	},
+	function onArrived(_player)
+	{
+		if (this.m.Heading != -1)
+		{
+			// Still walking: announce the tile only when the terrain changes (so a long
+			// march does not read the same word every tile), then take the next step.
+			local t = _player.getTile().Type;
+			if (t != this.m.LastTerrain)
+			{
+				this.m.LastTerrain = t;
+				::UnseenBanner.sendMessage("interrupt", "", "world.move.step", "" + t);
+			}
+			// Hit a wall while still holding the heading: issueStep already said
+			// "blocked"; mark it so the held key does not retry every frame, and keep the
+			// intent so a change of direction (or release) resolves it. No "stopped" cue —
+			// the order did not complete, the party just cannot go this way.
+			if (!this.issueStep(this.m.Heading)) this.m.Blocked = true;
+		}
+		else
+		{
+			// Order complete (a single tap, or the key was released): the distinct cue
+			// that tells the player the order finished.
+			this.announceStopped(_player);
+			this.m.LastTerrain = -1;
+		}
+	},
+	function announceStopped(_player)
+	{
+		::UnseenBanner.sendMessage("interrupt", "", "world.move.stopped", "" + _player.getTile().Type);
+	}
+};
+
 // Tactical tile cursor (phase 3.2). A keyboard cursor over the hex grid so a
 // blind player can survey the battlefield: it starts on the active man and
 // walks the six hex neighbours, announcing each tile's terrain and what stands
@@ -2015,6 +2246,7 @@
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
 		::UnseenBanner.WorldSurvey.reset();
+		::UnseenBanner.WorldMove.reset();
 		__original();
 	}
 
@@ -2023,6 +2255,7 @@
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
 		::UnseenBanner.WorldSurvey.reset();
+		::UnseenBanner.WorldMove.reset();
 		__original();
 	}
 
@@ -2031,7 +2264,42 @@
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
 		::UnseenBanner.WorldSurvey.reset();
+		::UnseenBanner.WorldMove.reset();
 		__original();
+	}
+
+	// Arrival polling for directional movement (phase 4.0). onUpdate runs every frame;
+	// WorldMove.tick short-circuits immediately unless a step is in flight, so the
+	// common idle case costs one boolean check.
+	q.onUpdate = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldMove.tick();
+	}
+
+	// Announce pause/unpause (phase 4.0 companion request). setPause is the one funnel
+	// every manual pause change flows through — the Space key, the topbar pause button,
+	// auto-pause-after-city — so hooking it here catches them all in one place. Its own
+	// guard means it only really flips on a genuine change (setAutoPause echoes the
+	// current value, so menus/events do not trip it). Two changes are kept silent: our
+	// own unpause when starting to move (SelfUnpause), which would otherwise speak on
+	// every step, and pause changes during a loading screen (save load, etc.).
+	q.setPause = @(__original) function( _f )
+	{
+		local was = this.m.IsGamePaused;
+		__original(_f);
+
+		if (this.m.IsGamePaused == was) return;
+
+		if (::UnseenBanner.WorldMove.m.SelfUnpause)
+		{
+			::UnseenBanner.WorldMove.m.SelfUnpause = false;
+			return;
+		}
+
+		if (this.isInLoadingScreen()) return;
+
+		::UnseenBanner.sendMessage("interrupt", "", this.m.IsGamePaused ? "world.pause.on" : "world.pause.off");
 	}
 
 	q.onKeyInput = @(__original) function( _key )
@@ -2113,6 +2381,33 @@
 			return true;
 		}
 
+		// Directional movement (phase 4.0). Q/W/E/A/S/D step the party one hex; act on
+		// press (Shift latches a march), clear the heading on release. Consume both key
+		// states so the vanilla camera pan on these keys never fires. Starting to move
+		// closes any open readout list — the player is driving the world now, not the list.
+		if (mapFree && ::UnseenBanner.WorldMove.handlesDir(code))
+		{
+			if (_key.getState() == 1)
+			{
+				::UnseenBanner.WorldStatus.reset();
+				::UnseenBanner.WorldSurvey.reset();
+				::UnseenBanner.WorldMove.onDirKey(code, (_key.getModifier() & 1) != 0);
+			}
+			else if (_key.getState() == 0)
+			{
+				::UnseenBanner.WorldMove.onRelease(code);
+			}
+			return true;
+		}
+
+		// Brake keys (Space and the other pause toggles): stop our march immediately on
+		// press, then fall through so the engine still toggles pause on its own (it acts
+		// on release). Not consumed — the native pause behavior is left intact.
+		if (mapFree && ::UnseenBanner.WorldMove.handlesBrake(code) && _key.getState() == 1)
+		{
+			::UnseenBanner.WorldMove.onBrake();
+		}
+
 		if (::UnseenBanner.WorldStatus.isActive()) ::UnseenBanner.WorldStatus.reset();
 		if (::UnseenBanner.WorldSurvey.isActive()) ::UnseenBanner.WorldSurvey.reset();
 
@@ -2156,6 +2451,10 @@
 		::UnseenBanner.CombatResult.reset();
 		::UnseenBanner.DialogNav.reset();
 		::UnseenBanner.KeyGate.reset();
+		// A battle starting clears the party's world path, so drop any in-flight world
+		// march here — otherwise Pending would be left stale and fire a spurious
+		// "Stopped" (or resume the march) on returning to the map.
+		::UnseenBanner.WorldMove.reset();
 	}
 
 	q.onFinish = @(__original) function()

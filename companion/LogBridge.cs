@@ -134,6 +134,8 @@ namespace TheUnseenBanner.Companion
                     "menu.campaign.screen" => ComposeCampaignScreen(texto, valor),
                     "world.survey.screen" => ComposeSurveyScreen(detalle),
                     "world.survey.item" => ComposeSurveyItem(texto, valor, detalle),
+                    "world.move.step" => L10n.F("world.move.step", L10n.T("world.terrain." + valor)),
+                    "world.move.stopped" => L10n.F("world.move.stopped", L10n.T("world.terrain." + valor)),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
