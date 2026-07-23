@@ -2519,18 +2519,19 @@
 	}
 };
 
-// The tactical character screen (C/I) as a keyboard-navigable list (roadmap 2.2 /
-// completing 3.4). Vanilla renders the shown brother's whole sheet to a texture no
-// screen reader can see, but every fact it is built from is a Squirrel actor API,
-// so we rebuild the sheet as an ordered list of one-fact-per-entry lines and let
-// the player walk it with Up/Down or jump with Home/End, reading one attribute at
-// a time. A/D (and the left/right/Tab the screen already binds) switch brother;
-// we drive the same vanilla switch so the visible sheet keeps up, and mirror the
-// move on our own copy of the roster to know which brother is now shown — the
-// selection lives in the screen's JS, unreadable from here, but the roster order
-// (getInstancesOfFaction, the exact source the screen queries) is reproducible, so
-// an identical +1/-1 wrap from the same start stays in lockstep. The item index is
-// preserved across brother switches so the same attribute can be compared quickly.
+// The shared tactical/world character screen (C/I) as a keyboard-navigable list
+// (roadmap 2.2 / completing 3.4). Vanilla renders the shown brother's whole sheet
+// to a texture no screen reader can see, but every fact it is built from is a
+// Squirrel actor API, so we rebuild the sheet as an ordered list of
+// one-fact-per-entry lines and let the player walk it with Up/Down or jump with
+// Home/End, reading one attribute at a time. A/D (and the left/right/Tab the
+// screen already binds) switch brother; we drive the same vanilla switch so the
+// visible sheet keeps up, and mirror the move on our own copy of the roster to
+// know which brother is now shown. Tactical uses getInstancesOfFaction; world
+// passes World.Assets.getFormation(), the exact sources queried by the native
+// screen in their respective modes. Filtering null formation slots preserves the
+// same order and next/previous wrap. The item index is preserved across brother
+// switches so the same attribute can be compared quickly.
 ::UnseenBanner.SheetNav <- {
 	m = {
 		Brothers = null,
@@ -2583,11 +2584,14 @@
 		this.m.ItemIndex = 0;
 	},
 	// Called when the screen becomes visible. _active is the man whose sheet the
-	// screen opens on (the active brother in battle, or null in battle preparation,
-	// where it defaults to the first of the roster — the same one the screen shows).
-	function open(_active)
+	// screen opens on in battle. _roster is supplied by world mode; null keeps the
+	// verified tactical source. With no selected actor, both native modes default
+	// to the first non-null entry in their source roster.
+	function open(_active, _roster = null)
 	{
-		local raw = ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player);
+		local raw = _roster != null
+			? _roster
+			: ::Tactical.Entities.getInstancesOfFaction(::Const.Faction.Player);
 		local list = [];
 		if (raw != null)
 		{
@@ -3503,6 +3507,7 @@
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
+		::UnseenBanner.SheetNav.reset();
 		__original();
 	}
 
@@ -3517,6 +3522,7 @@
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
+		::UnseenBanner.SheetNav.reset();
 		__original();
 	}
 
@@ -3531,6 +3537,7 @@
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
+		::UnseenBanner.SheetNav.reset();
 		__original();
 	}
 
@@ -3616,6 +3623,40 @@
 		}
 
 		local code = _key.getKey();
+
+		// World character screen (phase 2.2). This is the same CharacterScreen
+		// class and SheetNav used in tactical mode, but its brother order comes
+		// from World.Assets.getFormation(). Navigate on keydown with controlled
+		// repeat and consume keyup as well, so A/D never pan the hidden map.
+		// C, I and Escape are absent from SheetNav and therefore retain the
+		// world's native close path.
+		if (this.isInCharacterScreen()
+			&& ::UnseenBanner.SheetNav.isActive()
+			&& ::UnseenBanner.SheetNav.handles(code))
+		{
+			if (_key.getState() == 1)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					if (::UnseenBanner.SheetNav.isMove(code))
+					{
+						::UnseenBanner.SheetNav.move(code);
+					}
+					else
+					{
+						local next = ::UnseenBanner.SheetNav.isNext(code);
+						if (next) this.m.CharacterScreen.switchToNextBrother();
+						else this.m.CharacterScreen.switchToPreviousBrother();
+						::UnseenBanner.SheetNav.switchBrother(next);
+					}
+				}
+			}
+			else if (_key.getState() == 0)
+			{
+				::UnseenBanner.KeyGate.release(code);
+			}
+			return true;
+		}
 
 		// Retinue confirmation (cart upgrade or follower hire). The campfire screen
 		// is temporarily hidden while dialog_screen is visible, so this must run
@@ -3729,9 +3770,10 @@
 		// opening or acting on one closes the other — so Up/Down always has a single
 		// owner. Any unrelated map action closes both before passing through, so arrows
 		// cannot remain captured after the player resumes normal play. "Map free" also
-		// requires town and Retinue screens to be down, so map keys never fire inside
-		// either modal surface.
+		// requires the character, town and Retinue screens to be down, so map keys
+		// never fire inside any of those modal surfaces.
 		local mapFree = !::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive()
+			&& !this.isInCharacterScreen()
 			&& !this.m.WorldTownScreen.isVisible()
 			&& (this.m.CampfireScreen == null || !this.m.CampfireScreen.isVisible());
 
@@ -4059,14 +4101,14 @@
 
 });
 
-// Character sheet (the C/I screen). The screen's Visible flag flips only in
-// onScreenShown — the asynchronous callback Coherent fires once the show
-// animation is done — so hooking the state's showCharacterScreen and checking
+// Character sheet (the shared C/I screen). The screen's Visible flag flips only
+// in onScreenShown — the asynchronous callback Coherent fires once the show
+// animation is done — so hooking a state's showCharacterScreen and checking
 // isVisible() right after show() never triggers (it is still false there; this
-// exact bug ate the sheet readout once). onScreenShown/onScreenHidden are the
-// deterministic points, the same pattern as the event and combat-result screens.
-// The class is shared with the world's own character screen, so the tactical
-// gate is ::Tactical.isActive(); the world sheet remains roadmap 2.2.
+// exact bug ate the tactical sheet readout once). onScreenShown/onScreenHidden
+// are the deterministic points, the same pattern as the event and combat-result
+// screens. Tactical and world reuse the same navigation; only their native roster
+// sources differ.
 ::UnseenBanner.Mod.hook("scripts/ui/screens/character/character_screen", function(q) {
 	q.onScreenShown = @(__original) function()
 	{
@@ -4078,6 +4120,13 @@
 			// preparation there is none and SheetNav falls back to the first of
 			// the roster — the same man the screen shows.
 			::UnseenBanner.SheetNav.open(::Tactical.TurnSequenceBar.getActiveEntity());
+		}
+		else
+		{
+			// strategic_onQueryBrothersList feeds this same 27-slot formation to
+			// the native JS. SheetNav filters its null slots but retains formation
+			// order, so every next/previous operation remains in lockstep.
+			::UnseenBanner.SheetNav.open(null, ::World.Assets.getFormation());
 		}
 	}
 

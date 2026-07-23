@@ -36,9 +36,10 @@ before starting a serious campaign:
   status, town entry, town contracts, obituary, factions/relations and the
   Retinue are playable by ear. **Missing** the positional sonar, destination
   beacon and the mouse-only building sub-dialogs.
-- ⚠️ **Company management**: the Retinue is accessible, including follower
-  hiring/replacement and cart upgrades. Inventory, market, world-map character
-  sheet, brother recruitment and ambitions are not accessible yet.
+- ⚠️ **Company management**: the Retinue and the world-map character sheet are
+  accessible, including follower hiring/replacement, cart upgrades and complete
+  brother readouts. Inventory, market, brother recruitment and ambitions are not
+  accessible yet.
 - ❌ **Pre-battle deployment** (arranging your formation before a fight): still
   mouse-only.
 
@@ -114,6 +115,7 @@ acts on it and consumes the press during your turn.
 | Enter | Enter a settlement or location when standing on it |
 | B | Open perceived nearby parties, settlements and locations; Up/Down review, Home/End jump, V opens details, B closes |
 | G | Company status: day, brothers, money, wages, food, active contract and current objectives |
+| C / I | Open the character sheet; Up/Down review, Home/End jump, A selects the previous brother, D or Tab selects the next, C/I/Escape closes |
 | O | Open the obituary; Up/Down review the fallen, Home/End jump to the start/end, O or Escape closes |
 | R | Open factions and relations; Up/Down review, Home/End jump to the start/end, R or Escape closes |
 | P | Open the Retinue; Up/Down review, Home/End jump, Enter hires/replaces followers or upgrades the cart, P or Escape goes back |
@@ -174,6 +176,9 @@ in the real game.
   - Event screen (title, body, navigable options).
   - Main menu, Options submenu and starting a new campaign.
   - Load / save campaign (main menu and world-map pause menu).
+- **Phase 2 — Tooltips and company management (partial).**
+  - Navigable world-map brother sheet with statistics, injuries, traits, perks
+    and equipment, plus quick brother comparison.
 - **Phase 3 — Tactical combat (complete).**
   - Spoken combat log (hits, misses, morale, wounds, deaths, rounds).
   - Keyboard tile cursor with terrain, occupant, distance and direction, plus
@@ -200,9 +205,8 @@ in the real game.
 - **Phase 1.**
   - A keyboard-navigation review for mouse-only event focus, if any event turns
     up that the generic event screen does not cover.
-- **Phase 2 — Tooltips and company management (not started).**
+- **Phase 2 — Tooltips and company management (partial).**
   - Generic tooltip hook (perks, items, status effects, terrain).
-  - Brother sheet on the world map.
   - Inventory and market (item, price, comparison).
   - Keyboard navigation of the management grids.
 - **Phase 3 — Tactical combat.**
