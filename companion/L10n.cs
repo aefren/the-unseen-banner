@@ -311,6 +311,13 @@ namespace TheUnseenBanner.Companion
             // Pause state, announced from the setPause funnel (Space, pause button...).
             ["world.pause.on"] = "Paused.",
             ["world.pause.off"] = "Unpaused.",
+            // Town screen (phase 4.5), a navigable list of buildings and contracts.
+            ["world.town.screen"] = "{0}. Use Up and Down to review, Enter to choose, Escape to leave.",
+            ["world.town.building"] = "{0}, building.",
+            ["world.town.building.locked"] = "{0}. Not accessible yet.",
+            ["world.town.contract"] = "Contract: {0}.",
+            ["world.town.contract.active"] = "Active contract: {0}.",
+            ["world.town.leave"] = "Leave town, button.",
             // World-map terrain names, keyed by Const.World.TerrainType (config/world.nut).
             ["world.terrain.0"] = "Impassable",
             ["world.terrain.1"] = "Ocean",

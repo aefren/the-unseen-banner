@@ -34,6 +34,11 @@
 // companion tails and parses looking for this marker.
 ::UnseenBanner.jsonEscape <- function(_s)
 {
+	// Coerce anything non-string to its string form first: some game IDs (e.g. a
+	// contract's getID()) are integers, and calling .len()/.slice() on an int throws
+	// ("the index 'len' does not exist"), which aborts the whole announcement. Every
+	// field of the message protocol is a JSON string, so this is always the right thing.
+	if (typeof _s != "string") _s = "" + _s;
 	local out = "";
 	local n = _s.len();
 	for (local i = 0; i < n; i += 1)
@@ -830,6 +835,192 @@
 	function announceStopped(_player)
 	{
 		::UnseenBanner.sendMessage("interrupt", "", "world.move.stopped", "" + _player.getTile().Type);
+	}
+};
+
+// Entering a settlement/location (phase 4.5). In vanilla, entering is armed by a
+// mouse CLICK on an enterable entity (world_state.onMouseInput): if the party is on
+// its tile it enters at once, else the click arms AutoEnterLocation and onUpdate
+// enters on arrival. Our WorldMove walks by setPath and never passes through
+// onMouseInput, so it never arms that — a blind player would arrive on a town but
+// stay outside. This gives Enter that job: on the plain map it enters the enterable
+// entity the party is standing on (settlement or enterable location), mirroring the
+// mouse's own getAllEntitiesAndOneLocationAtPos + isEnterable test; with nothing to
+// enter it returns false so the key falls through to its native zoom-reset.
+::UnseenBanner.WorldEnter <- {
+	EnterKey = 39, // enter
+	function tryEnter(_state)
+	{
+		local player = _state.m.Player;
+		if (player == null) return false;
+		local playerTile = player.getTile();
+
+		foreach( e in ::World.getAllEntitiesAndOneLocationAtPos(player.getPos(), 1.0) )
+		{
+			if (e == null || e.getID() == player.getID()) continue;
+			// The call also returns mobile parties, which have no isEnterable(); the
+			// mouse handler skips them the same way before testing enterability.
+			if (e.isParty()) continue;
+			if (!e.isEnterable()) continue;
+			if (e.getTile() == null || !e.getTile().isSameTileAs(playerTile)) continue;
+			_state.enterLocation(e);
+			return true;
+		}
+		return false;
+	}
+};
+
+// Town screen (phase 4.5). The settlement screen is a mouse-only grid of building
+// slots plus a list of contracts; vanilla renders it to a texture no screen reader
+// can see. Flatten it into one navigable list: the town name, each building by name,
+// each open contract by title, and a Leave action. Up/Down/Home/End walk it, Enter
+// activates. A contract opens through the game's own onContractClicked, which shows
+// it as the very event screen EventNav already narrates (phase 1.1), so taking and
+// turning in contracts works end to end. The building sub-dialogs (shop, hire,
+// tavern...) are still mouse-only, so Enter on a building says so rather than opening
+// a trap — those are their own later increment (they overlap the phase 2 market work).
+// Escape leaves the town on its own (the native menu-stack pop), so it is left alone.
+::UnseenBanner.WorldTown <- {
+	m = {
+		Items = null,
+		ItemIndex = 0,
+		Active = false
+	},
+	Keys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end",
+		[39] = "activate" // enter
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function handles(_code)
+	{
+		return _code in this.Keys;
+	},
+	function reset()
+	{
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Active = false;
+	},
+	function item(_cat, _texto = "", _valor = "", _action = null)
+	{
+		return { cat = _cat, texto = _texto, valor = _valor, action = _action };
+	},
+	function open(_town)
+	{
+		this.reset();
+		if (_town == null) return;
+
+		// enterLocation stores the town as a WeakTableRef (LastEnteredTown). Its _get
+		// proxies METHOD calls (getName/getContracts work), but raw member access like
+		// `.m.Buildings` does not resolve through it, so the building loop silently found
+		// nothing. Unwrap to the underlying weakref, which transparently dereferences
+		// both methods and members, so `.m.Buildings` reads the real settlement's slots.
+		local town = (_town instanceof ::WeakTableRef) ? _town.get() : _town;
+		if (town == null) return;
+
+		local items = [];
+		items.push(this.item("world.town.screen", town.getName()));
+
+		// Buildings: name every non-empty, non-hidden slot (informational this version).
+		// No `in` guard here on purpose: the game's inherit()/new() builds an instance's
+		// m table DELEGATING to the parent class's m, and Squirrel's `in` operator does
+		// not follow delegates — so `"Buildings" in town.m` was false even though
+		// town.m.Buildings resolves fine through the delegate chain. This screen only
+		// ever opens for settlements, which always define Buildings.
+		foreach( b in town.m.Buildings )
+		{
+			if (b == null || b.isHidden()) continue;
+			items.push(this.item("world.town.building", b.getName(), "", "building"));
+		}
+
+		// Contracts: name + id. The active one is kept (tagged apart) rather than
+		// skipped, so a blind player can re-open it to hand it in and get paid — the
+		// turn-in that the screenshot objective ("return to X to get paid") needs. Enter
+		// opens the contract's own event screen (EventNav narrates it), the mouse's path.
+		//
+		// NB: use getName(), not getTitle(). getTitle() runs buildText(), which for an
+		// open (not-yet-started) contract dereferences m.Home — null at this point —
+		// and throws ("the index 'getNameOnly' does not exist"), aborting the whole list
+		// build so nothing became navigable. The game itself never titles contracts in
+		// this list (it shows banner icons); the title is only resolved once the contract
+		// is opened. getName() is the raw m.Name, always a clean plain title ("Escort
+		// Caravan", "Return Item"...) with no placeholders, so it is safe and readable.
+		local contracts = town.getContracts();
+		if (contracts != null)
+		{
+			foreach( c in contracts )
+			{
+				if (c == null) continue;
+				local cat = c.isActive() ? "world.town.contract.active" : "world.town.contract";
+				items.push(this.item(cat, c.getName(), c.getID(), "contract"));
+			}
+		}
+
+		items.push(this.item("world.town.leave", "", "", "leave"));
+
+		this.m.Items = items;
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.announceItem();
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function onKey(_code, _state)
+	{
+		if (!this.m.Active) return;
+		local what = this.Keys[_code];
+		if (what == "activate")
+		{
+			this.activate(_state);
+			return;
+		}
+
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		if (what == "up") this.m.ItemIndex -= 1;
+		else if (what == "down") this.m.ItemIndex += 1;
+		else if (what == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function activate(_state)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		if (it.action == "contract")
+		{
+			// Opens the contract's event screen; EventNav takes over from there.
+			_state.m.WorldTownScreen.onContractClicked(it.valor);
+		}
+		else if (it.action == "leave")
+		{
+			// The same funnel the Leave button uses (pops the town off the menu stack).
+			_state.town_screen_main_dialog_module_onLeaveButtonClicked();
+		}
+		else if (it.action == "building")
+		{
+			::UnseenBanner.sendMessage("interrupt", it.texto, "world.town.building.locked");
+		}
+		else
+		{
+			this.announceItem(); // header row: re-read
+		}
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor);
 	}
 };
 
@@ -2263,6 +2454,24 @@
 	}
 });
 
+// Town screen (phase 4.5). onScreenShown is the deterministic point at which the
+// settlement screen's DOM is up (same pattern as the event screen), so the flattened
+// building/contract list is built and announced there; onScreenHidden clears it.
+// Keys are driven from world_state.onKeyInput, where the town screen lives.
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/world_town_screen", function(q) {
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldTown.open(this.getTown());
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldTown.close();
+	}
+});
+
 // Post-combat result screen (phase 3.6). onScreenShown is the deterministic point
 // at which the screen is fully up (same pattern as the event screen), so its
 // flattened result list is built there. onScreenHidden clears the cursor. Keys are
@@ -2334,6 +2543,7 @@
 		::UnseenBanner.WorldStatus.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldMove.reset();
+		::UnseenBanner.WorldTown.reset();
 		__original();
 	}
 
@@ -2343,6 +2553,7 @@
 		::UnseenBanner.WorldStatus.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldMove.reset();
+		::UnseenBanner.WorldTown.reset();
 		__original();
 	}
 
@@ -2352,6 +2563,7 @@
 		::UnseenBanner.WorldStatus.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldMove.reset();
+		::UnseenBanner.WorldTown.reset();
 		__original();
 	}
 
@@ -2436,15 +2648,34 @@
 			return true;
 		}
 
+		local code = _key.getKey();
+
+		// Town screen (phase 4.5): while the settlement screen is up (and no event is
+		// layered over it), our list drives it — Up/Down/Home/End walk buildings and
+		// contracts, Enter activates. Act on release, consume the key. Escape is left
+		// alone so the native menu-stack pop still leaves the town.
+		if (this.m.WorldTownScreen.isVisible()
+			&& !::UnseenBanner.EventNav.isActive()
+			&& ::UnseenBanner.WorldTown.isActive()
+			&& ::UnseenBanner.WorldTown.handles(code))
+		{
+			if (_key.getState() == 0)
+			{
+				::UnseenBanner.WorldTown.onKey(code, this);
+			}
+			return true;
+		}
+
 		// Map readouts, only on the plain map: G toggles the company status list (4.4),
 		// B toggles the "what's in view" survey list (4.3); Up/Down move through the
 		// open one, all on release. Consume both key states so vanilla camera movement
 		// never competes with list navigation. The two lists are mutually exclusive —
 		// opening or acting on one closes the other — so Up/Down always has a single
 		// owner. Any unrelated map action closes both before passing through, so arrows
-		// cannot remain captured after the player resumes normal play.
-		local code = _key.getKey();
-		local mapFree = !::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive();
+		// cannot remain captured after the player resumes normal play. "Map free" also
+		// requires the town screen to be down, so map keys never fire inside a town.
+		local mapFree = !::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive()
+			&& !this.m.WorldTownScreen.isVisible();
 
 		if (mapFree && ::UnseenBanner.WorldStatus.handles(code))
 		{
@@ -2493,6 +2724,15 @@
 		if (mapFree && ::UnseenBanner.WorldMove.handlesBrake(code) && _key.getState() == 1)
 		{
 			::UnseenBanner.WorldMove.onBrake();
+		}
+
+		// Enter (phase 4.5): enter the settlement/location the party is standing on. Only
+		// consumed when there is actually something to enter, so with nothing there the
+		// key falls through to its native zoom-reset. Acts on release (the map delivers
+		// it, and native Enter uses press).
+		if (mapFree && code == ::UnseenBanner.WorldEnter.EnterKey && _key.getState() == 0)
+		{
+			if (::UnseenBanner.WorldEnter.tryEnter(this)) return true;
 		}
 
 		if (::UnseenBanner.WorldStatus.isActive()) ::UnseenBanner.WorldStatus.reset();
