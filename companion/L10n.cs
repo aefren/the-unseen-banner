@@ -117,6 +117,9 @@ namespace TheUnseenBanner.Companion
             ["menu.options.applied"] = "Options applied.",
             ["event.screen"] = "{0}. {1}",
             ["event.option"] = "Option {1} of {2}: {0}",
+            // Narrative body as a re-readable list entry above the options
+            // (phase 4.5): read verbatim when the player navigates onto it.
+            ["event.body"] = "{0}",
             // Tactical tile readout (phase 3.2). Terrain names keyed by the
             // engine's TerrainType enum (see config/tactical.nut).
             ["tile.terrain.0"] = "Impassable",
