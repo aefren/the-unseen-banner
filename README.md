@@ -109,6 +109,7 @@ acts on it and consumes the press during your turn.
 | Key | Action |
 |---|---|
 | G | Company status: day, brothers, money, wages, food, active contract and current objectives |
+| O | Open the obituary; Up/Down review the fallen, Home/End jump to the start/end, O or Escape closes |
 
 On an **event screen**: the arrows move through the options and Enter picks one
 (the native number keys 1-6 still work). A first Enter with nothing focused

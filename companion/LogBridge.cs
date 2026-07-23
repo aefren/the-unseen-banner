@@ -134,6 +134,7 @@ namespace TheUnseenBanner.Companion
                     "menu.campaign.screen" => ComposeCampaignScreen(texto, valor),
                     "world.survey.screen" => ComposeSurveyScreen(detalle),
                     "world.survey.item" => ComposeSurveyItem(texto, valor, detalle),
+                    "world.obituary.entry" => ComposeObituaryEntry(texto, detalle),
                     "world.move.step" => L10n.F("world.move.step", L10n.T("world.terrain." + valor)),
                     "world.move.stopped" => L10n.F("world.move.stopped", L10n.T("world.terrain." + valor)),
                     _ => categoria.Length > 0
@@ -380,6 +381,34 @@ namespace TheUnseenBanner.Companion
                 position = L10n.T("world.survey.here");
 
             return position.Length > 0 ? head + ". " + position + "." : head + ".";
+        }
+
+        /// <summary>Compose one row of the world-map obituary (phase 5.2).
+        /// <paramref name="detail"/> packs "days|battles|kills|demise"; the name
+        /// and demise are game-owned rendered text, while all labels and singular
+        /// handling remain in <see cref="L10n"/>.</summary>
+        private static string ComposeObituaryEntry(string name, string detail)
+        {
+            string[] p = detail.Split('|');
+            int At(int i) => i < p.Length && int.TryParse(p[i], out int n) ? n : 0;
+            int days = At(0), battles = At(1), kills = At(2);
+            string demise = p.Length > 3
+                ? string.Join("|", p, 3, p.Length - 3)
+                : "";
+
+            string daysText = days == 1
+                ? L10n.T("world.obituary.days.one")
+                : L10n.F("world.obituary.days", days);
+            string battlesText = battles == 1
+                ? L10n.T("world.obituary.battles.one")
+                : L10n.F("world.obituary.battles", battles);
+            string killsText = kills == 1
+                ? L10n.T("world.obituary.kills.one")
+                : L10n.F("world.obituary.kills", kills);
+            string demiseText = L10n.F("world.obituary.demise", demise);
+
+            return L10n.F("world.obituary.entry",
+                name, daysText, battlesText, killsText, demiseText);
         }
 
         /// <summary>Compose the turn-order readout (phase 3.4): the Tab key. The

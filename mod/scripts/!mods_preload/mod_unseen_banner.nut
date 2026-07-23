@@ -1109,6 +1109,113 @@
 	}
 };
 
+// Obituary screen (phase 5.2). Vanilla renders a read-only table with one row per
+// fallen brother: name, days with the company, battles, kills and demise. The
+// backend already exposes that exact table through World.Statistics.getFallen(),
+// so keep this in Squirrel and flatten each visual row into one spoken list item.
+//
+// Up/Down/Home/End act on key press, not release, for immediate navigation. A
+// short repeat gate still permits deliberate hold-to-repeat without flooding the
+// interrupt channel. O and Escape are deliberately absent from Keys: vanilla owns
+// both closing paths and keeps the visible screen/menu stack in sync.
+::UnseenBanner.WorldObituary <- {
+	m = {
+		Items = null,
+		ItemIndex = 0,
+		Active = false
+	},
+	Keys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function handles(_code)
+	{
+		return _code in this.Keys;
+	},
+	function reset()
+	{
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Active = false;
+	},
+	function releaseKeys()
+	{
+		foreach( code, action in this.Keys )
+		{
+			::UnseenBanner.KeyGate.release(code);
+		}
+	},
+	function item(_cat, _texto = "", _valor = "", _detalle = "")
+	{
+		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle };
+	},
+	function open(_screen)
+	{
+		this.reset();
+		this.releaseKeys();
+		if (_screen == null) return;
+
+		// This is the same data object vanilla passes to its JS show() call, so the
+		// auditory list and the visible obituary always contain the same people in
+		// the same newest-first order (statistics_manager inserts deaths at index 0).
+		local data = _screen.convertFallenToUIData();
+		local fallen = data != null ? data.Fallen : null;
+		local count = fallen != null ? fallen.len() : 0;
+		local items = [];
+		local header = count == 0
+			? "world.obituary.screen.empty"
+			: (count == 1 ? "world.obituary.screen.one" : "world.obituary.screen");
+		items.push(this.item(header, "", "" + count));
+
+		if (fallen != null)
+		{
+			foreach( f in fallen )
+			{
+				if (f == null) continue;
+				// Pack the numeric columns and already-rendered demise text; the
+				// companion supplies every framing word and handles singulars.
+				local detail = "" + f.TimeWithCompany + "|" + f.Battles + "|" + f.Kills + "|" + f.KilledBy;
+				items.push(this.item("world.obituary.entry", f.Name, "", detail));
+			}
+		}
+
+		this.m.Items = items;
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.announceItem();
+	},
+	function close()
+	{
+		this.releaseKeys();
+		this.reset();
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active || this.m.Items == null || this.m.Items.len() == 0) return;
+		local what = this.Keys[_code];
+		if (what == "up") this.m.ItemIndex -= 1;
+		else if (what == "down") this.m.ItemIndex += 1;
+		else if (what == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
+	}
+};
+
 // Tactical tile cursor (phase 3.2). A keyboard cursor over the hex grid so a
 // blind player can survey the battlefield: it starts on the active man and
 // walks the six hex neighbours, announcing each tile's terrain and what stands
@@ -2612,6 +2719,23 @@
 	}
 });
 
+// Obituary (phase 5.2). onScreenShown is the first deterministic point at which
+// the native O screen is fully visible; build and announce the semantic list
+// there. The same hook also covers opening it from the topbar button.
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/world_obituary_screen", function(q) {
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldObituary.open(this);
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldObituary.close();
+	}
+});
+
 // Town screen (phase 4.5). onScreenShown is the deterministic point at which the
 // settlement screen's DOM is up (same pattern as the event screen), so the flattened
 // building/contract list is built and announced there; onScreenHidden clears it.
@@ -2703,6 +2827,7 @@
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
+		::UnseenBanner.WorldObituary.close();
 		__original();
 	}
 
@@ -2714,6 +2839,7 @@
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
+		::UnseenBanner.WorldObituary.close();
 		__original();
 	}
 
@@ -2725,6 +2851,7 @@
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
+		::UnseenBanner.WorldObituary.close();
 		__original();
 	}
 
@@ -2810,6 +2937,30 @@
 		}
 
 		local code = _key.getKey();
+
+		// Obituary (phase 5.2): navigate the read-only list on keydown so every tap
+		// responds immediately. Consume keyup too, using it only to clear KeyGate;
+		// this prevents vanilla camera/list input from seeing half of the keystroke.
+		// Held keys repeat at KeyGate's controlled cadence. O and Escape fall through
+		// untouched, so vanilla closes the screen and pops its menu-stack entry.
+		if (this.m.ObituaryScreen != null
+			&& this.m.ObituaryScreen.isVisible()
+			&& ::UnseenBanner.WorldObituary.isActive()
+			&& ::UnseenBanner.WorldObituary.handles(code))
+		{
+			if (_key.getState() == 1)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldObituary.onKey(code);
+				}
+			}
+			else if (_key.getState() == 0)
+			{
+				::UnseenBanner.KeyGate.release(code);
+			}
+			return true;
+		}
 
 		// Town screen (phase 4.5): while the settlement screen is up (and no event is
 		// layered over it), our list drives it — Up/Down/Home/End walk buildings and

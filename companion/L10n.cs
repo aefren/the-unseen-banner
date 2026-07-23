@@ -321,6 +321,19 @@ namespace TheUnseenBanner.Companion
             // Pause state, announced from the setPause funnel (Space, pause button...).
             ["world.pause.on"] = "Paused.",
             ["world.pause.off"] = "Unpaused.",
+            // Obituary (phase 5.2, O). The visual table becomes a navigable list:
+            // one header plus one complete spoken row per fallen brother.
+            ["world.obituary.screen.empty"] = "Obituary. No one has fallen since you took command. Press O or Escape to close.",
+            ["world.obituary.screen.one"] = "Obituary. One man has fallen since you took command. Use Up and Down to review; Home and End jump to the beginning and end. Press O or Escape to close.",
+            ["world.obituary.screen"] = "Obituary. {1} men have fallen since you took command. Use Up and Down to review; Home and End jump to the beginning and end. Press O or Escape to close.",
+            ["world.obituary.entry"] = "{0}. {1}. {2}. {3}. {4}.",
+            ["world.obituary.days.one"] = "1 day with the company",
+            ["world.obituary.days"] = "{0} days with the company",
+            ["world.obituary.battles.one"] = "1 battle",
+            ["world.obituary.battles"] = "{0} battles",
+            ["world.obituary.kills.one"] = "1 kill",
+            ["world.obituary.kills"] = "{0} kills",
+            ["world.obituary.demise"] = "Demise: {0}",
             // Town screen (phase 4.5), a navigable list of buildings and contracts.
             ["world.town.screen"] = "{0}. Use Up and Down to review, Enter to choose, Escape to leave.",
             ["world.town.building"] = "{0}, building.",
