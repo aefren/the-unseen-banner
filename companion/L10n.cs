@@ -334,6 +334,17 @@ namespace TheUnseenBanner.Companion
             ["world.obituary.kills.one"] = "1 kill",
             ["world.obituary.kills"] = "{0} kills",
             ["world.obituary.demise"] = "Demise: {0}",
+            // Factions & Relations (phase 5.2, R). The left faction list and right
+            // details pane are flattened into a single keyboard-navigable list.
+            ["world.relations.screen.empty"] = "Factions and relations. No known factions. Use Up and Down to review renown and reputation; Home and End jump to the beginning and end. Press R or Escape to close.",
+            ["world.relations.screen.one"] = "Factions and relations. 1 known faction. Use Up and Down to review; Home and End jump to the beginning and end. Press R or Escape to close.",
+            ["world.relations.screen"] = "Factions and relations. {1} known factions. Use Up and Down to review; Home and End jump to the beginning and end. Press R or Escape to close.",
+            ["world.relations.renown"] = "Renown: {0}.",
+            ["world.relations.reputation"] = "Reputation: {0}.",
+            ["world.relations.faction"] = "{0}. Relations: {1}, {2} out of 100.",
+            ["world.relations.motto"] = "{1} motto: {0}.",
+            ["world.relations.description"] = "{1}: {0}",
+            ["world.relations.member"] = "Member of {1}: {0}.",
             // Town screen (phase 4.5), a navigable list of buildings and contracts.
             ["world.town.screen"] = "{0}. Use Up and Down to review, Enter to choose, Escape to leave.",
             ["world.town.building"] = "{0}, building.",

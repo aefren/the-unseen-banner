@@ -1216,6 +1216,129 @@
 	}
 };
 
+// Factions & Relations screen (phase 5.2). Vanilla lays this out as a faction
+// list on the left and a selected-faction details panel on the right. Flatten
+// that two-pane mouse UI into a single semantic list: screen header, company
+// renown/reputation, then each faction's relation, motto, description and the
+// named characters whose portraits vanilla exposes through hover tooltips.
+//
+// As with the verified obituary, Up/Down/Home/End act on keydown for immediate
+// response and controlled hold-to-repeat; R and Escape remain native close keys.
+::UnseenBanner.WorldRelations <- {
+	m = {
+		Items = null,
+		ItemIndex = 0,
+		Active = false
+	},
+	Keys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function handles(_code)
+	{
+		return _code in this.Keys;
+	},
+	function reset()
+	{
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Active = false;
+	},
+	function releaseKeys()
+	{
+		foreach( code, action in this.Keys )
+		{
+			::UnseenBanner.KeyGate.release(code);
+		}
+	},
+	function item(_cat, _texto = "", _valor = "", _detalle = "")
+	{
+		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle };
+	},
+	function open(_screen)
+	{
+		this.reset();
+		this.releaseKeys();
+		if (_screen == null) return;
+
+		// convertFactionsToUIData is the screen's own show() payload: it already
+		// filters hidden/undiscovered factions, sorts them exactly as vanilla and
+		// resolves every game-owned label through the active localization.
+		local data = _screen.convertFactionsToUIData();
+		if (data == null) return;
+		local factions = data.Factions;
+		local count = factions != null ? factions.len() : 0;
+		local items = [];
+		local header = count == 0
+			? "world.relations.screen.empty"
+			: (count == 1 ? "world.relations.screen.one" : "world.relations.screen");
+		items.push(this.item(header, "", "" + count));
+		items.push(this.item("world.relations.renown", data.BusinessReputation));
+		items.push(this.item("world.relations.reputation", data.MoralReputation));
+
+		if (factions != null)
+		{
+			foreach( f in factions )
+			{
+				if (f == null) continue;
+				items.push(this.item("world.relations.faction", f.Name, f.Relation, "" + f.RelationNum));
+
+				if (f.Motto != null && f.Motto != "")
+					items.push(this.item("world.relations.motto", f.Motto, f.Name));
+				if (f.Description != null && f.Description != "")
+					items.push(this.item("world.relations.description", f.Description, f.Name));
+
+				// The detail pane shows one portrait per member of this same faction
+				// roster; their names are otherwise available only by mouse hover.
+				local source = ::World.FactionManager.getFaction(f.ID);
+				if (source == null) continue;
+				local members = source.getRoster().getAll();
+				if (members == null) continue;
+				foreach( member in members )
+				{
+					if (member == null) continue;
+					items.push(this.item("world.relations.member", member.getName(), f.Name));
+				}
+			}
+		}
+
+		this.m.Items = items;
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.announceItem();
+	},
+	function close()
+	{
+		this.releaseKeys();
+		this.reset();
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active || this.m.Items == null || this.m.Items.len() == 0) return;
+		local what = this.Keys[_code];
+		if (what == "up") this.m.ItemIndex -= 1;
+		else if (what == "down") this.m.ItemIndex += 1;
+		else if (what == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
+	}
+};
+
 // Tactical tile cursor (phase 3.2). A keyboard cursor over the hex grid so a
 // blind player can survey the battlefield: it starts on the active man and
 // walks the six hex neighbours, announcing each tile's terrain and what stands
@@ -2736,6 +2859,22 @@
 	}
 });
 
+// Factions & Relations (phase 5.2). The same screen class handles both the R
+// shortcut and the topbar button; build only once its native slide-in completes.
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/world_relations_screen", function(q) {
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldRelations.open(this);
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldRelations.close();
+	}
+});
+
 // Town screen (phase 4.5). onScreenShown is the deterministic point at which the
 // settlement screen's DOM is up (same pattern as the event screen), so the flattened
 // building/contract list is built and announced there; onScreenHidden clears it.
@@ -2828,6 +2967,7 @@
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
+		::UnseenBanner.WorldRelations.close();
 		__original();
 	}
 
@@ -2840,6 +2980,7 @@
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
+		::UnseenBanner.WorldRelations.close();
 		__original();
 	}
 
@@ -2852,6 +2993,7 @@
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
+		::UnseenBanner.WorldRelations.close();
 		__original();
 	}
 
@@ -2953,6 +3095,27 @@
 				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
 				{
 					::UnseenBanner.WorldObituary.onKey(code);
+				}
+			}
+			else if (_key.getState() == 0)
+			{
+				::UnseenBanner.KeyGate.release(code);
+			}
+			return true;
+		}
+
+		// Factions & Relations (phase 5.2): identical keydown semantics to the
+		// obituary. R and Escape are not captured, so the native state owns closing.
+		if (this.m.RelationsScreen != null
+			&& this.m.RelationsScreen.isVisible()
+			&& ::UnseenBanner.WorldRelations.isActive()
+			&& ::UnseenBanner.WorldRelations.handles(code))
+		{
+			if (_key.getState() == 1)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldRelations.onKey(code);
 				}
 			}
 			else if (_key.getState() == 0)
