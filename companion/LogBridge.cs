@@ -168,7 +168,26 @@ namespace TheUnseenBanner.Companion
                     string key when key.StartsWith("world.recruit.result.", StringComparison.Ordinal)
                         => L10n.F(key, texto, valor, detalle),
                     "world.character.perk" => ComposeWorldPerk(texto, valor, detalle),
+                    "world.character.formation.summary" => ComposeFormationSummary(valor, detalle),
                     "world.character.formation.slot" => ComposeFormationSlot(texto, valor, detalle),
+                    "world.character.formation.target" => ComposeFormationTarget(texto, valor, detalle),
+                    "world.character.formation.move.started"
+                        => ComposeFormationMoveStarted(texto, valor, detalle),
+                    "world.character.formation.move.cancelled" => L10n.F(categoria, texto),
+                    "world.character.formation.result.move"
+                        => ComposeFormationMoveResult(texto, valor, detalle),
+                    "world.character.formation.result.swap"
+                        => ComposeFormationSwapResult(texto, valor, detalle),
+                    "world.character.formation.error.same" => L10n.F(categoria, texto),
+                    "world.character.formation.error.maximum" => L10n.F(categoria, valor),
+                    "world.character.formation.error.empty_source"
+                        or "world.character.formation.error.invalid_target"
+                        or "world.character.formation.error.minimum"
+                        or "world.character.formation.error.stale"
+                        or "world.character.formation.error.unavailable" => L10n.T(categoria),
+                    "world.combat.dialog.screen" => ComposeWorldCombatDialogScreen(valor, detalle),
+                    "world.combat.dialog.enemy" => ComposeWorldCombatDialogEnemy(
+                        texto, valor, detalle),
                     "tooltip.detail" => ComposeTooltipDetail(texto, valor, detalle),
                     "combat.result.stat" => ComposeResultStat(texto, valor, detalle),
                     "menu.campaign" => ComposeCampaignEntry(texto, valor, detalle),
@@ -481,9 +500,97 @@ namespace TheUnseenBanner.Companion
             string occupant = name.Length > 0 ? name : L10n.T("world.character.item.empty");
             string result = L10n.F("world.character.formation.slot",
                 L10n.T("world.character.formation.line." + line), position, occupant);
-            return selected
-                ? result + " " + L10n.T("world.character.formation.selected")
+            if (selected)
+            {
+                result += " " + L10n.T("world.character.formation.selected");
+            }
+            return name.Length > 0
+                ? result + " " + L10n.T("world.character.formation.move.hint")
                 : result;
+        }
+
+        private static string ComposeFormationSummary(string active, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string maximum = parts.Length > 0 ? parts[0] : "";
+            string reserves = parts.Length > 1 ? parts[1] : "";
+            return L10n.F("world.character.formation.summary", active, maximum, reserves);
+        }
+
+        private static string ComposeFormationMoveStarted(
+            string name,
+            string line,
+            string position)
+        {
+            return L10n.F("world.character.formation.move.started",
+                name, L10n.T("world.character.formation.line." + line), position);
+        }
+
+        private static string ComposeFormationTarget(string name, string line, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string position = parts.Length > 0 ? parts[0] : "";
+            string source = parts.Length > 1 ? parts[1] : "";
+            bool sameSlot = parts.Length > 2 && parts[2] == "1";
+            string occupant = name.Length > 0 ? name : L10n.T("world.character.item.empty");
+            string slot = L10n.F("world.character.formation.slot",
+                L10n.T("world.character.formation.line." + line), position, occupant);
+            return sameSlot
+                ? L10n.F("world.character.formation.target.source", slot, source)
+                : L10n.F("world.character.formation.target", slot, source);
+        }
+
+        private static string ComposeFormationMoveResult(
+            string name,
+            string line,
+            string position)
+        {
+            return L10n.F("world.character.formation.result.move",
+                name, L10n.T("world.character.formation.line." + line), position);
+        }
+
+        private static string ComposeFormationSwapResult(
+            string source,
+            string target,
+            string detail)
+        {
+            string[] parts = detail.Split('|');
+            string line = parts.Length > 0 ? parts[0] : "";
+            string position = parts.Length > 1 ? parts[1] : "";
+            return L10n.F("world.character.formation.result.swap",
+                source, target, L10n.T("world.character.formation.line." + line), position);
+        }
+
+        private static string ComposeWorldCombatDialogScreen(string kind, string detail)
+        {
+            string[] fields = detail.Split('|');
+            int count = fields.Length > 0 &&
+                int.TryParse(fields[0], out int parsedCount) ? parsedCount : 0;
+            bool formation = fields.Length > 1 && fields[1] == "1";
+            bool canDisengage = fields.Length > 2 && fields[2] == "1";
+            var parts = new List<string>
+            {
+                L10n.T("world.combat.dialog.title." + kind),
+                count == 0
+                    ? L10n.T("world.combat.dialog.report.unknown")
+                    : count == 1
+                        ? L10n.T("world.combat.dialog.report.one")
+                        : L10n.F("world.combat.dialog.report.many", count)
+            };
+            if (formation)
+                parts.Add(L10n.T("world.combat.dialog.formation.available"));
+            parts.Add(L10n.T(canDisengage
+                ? "world.combat.dialog.controls.retreat"
+                : "world.combat.dialog.controls.forced"));
+            return string.Join(" ", parts);
+        }
+
+        private static string ComposeWorldCombatDialogEnemy(
+            string name,
+            string index,
+            string total)
+        {
+            return L10n.F("world.combat.dialog.enemy", index, total, name);
         }
 
         /// <summary>Compose an entry in a multi-tooltip sub-list. Squirrel packs
@@ -715,7 +822,14 @@ namespace TheUnseenBanner.Companion
             if (position.Length == 0 && dist == "0")
                 position = L10n.T("world.survey.here");
 
-            return position.Length > 0 ? head + ". " + position + "." : head + ".";
+            string action = kind switch
+            {
+                "enemy" => L10n.T("world.survey.action.enemy"),
+                "settlement" or "location" => L10n.T("world.survey.action.place"),
+                _ => string.Empty,
+            };
+            string spoken = position.Length > 0 ? head + ". " + position + "." : head + ".";
+            return action.Length > 0 ? spoken + " " + action : spoken;
         }
 
         /// <summary>Compose one row of the world-map obituary (phase 5.2).

@@ -462,11 +462,26 @@ namespace TheUnseenBanner.Companion
             ["world.character.perk.state.no_points"] = "unlocked tier, no perk points available",
             ["world.character.perk.state.locked"] = "locked",
             ["world.character.perks.details"] = "Perk details",
+            ["world.character.formation.summary"] = "Deployed: {0} of {1}. Reserves: {2}. Use Up and Down to review the 27 formation slots. On an occupied slot, press Enter to move that brother.",
             ["world.character.formation.slot"] = "{0}, position {1}: {2}.",
             ["world.character.formation.line.front"] = "Front line",
             ["world.character.formation.line.back"] = "Back line",
             ["world.character.formation.line.reserve"] = "Reserve",
             ["world.character.formation.selected"] = "Selected brother.",
+            ["world.character.formation.move.hint"] = "Press Enter to move this brother.",
+            ["world.character.formation.move.started"] = "Moving {0} from {1}, position {2}. Use Up and Down to choose a destination, then press Enter. Press V or Escape to cancel.",
+            ["world.character.formation.target"] = "{0} Destination for {1}.",
+            ["world.character.formation.target.source"] = "{0} This is {1}'s current slot.",
+            ["world.character.formation.move.cancelled"] = "Move of {0} cancelled.",
+            ["world.character.formation.result.move"] = "{0} moved to {1}, position {2}.",
+            ["world.character.formation.result.swap"] = "{0} swapped with {1}. {0} is now at {2}, position {3}.",
+            ["world.character.formation.error.empty_source"] = "That formation slot is empty. Choose an occupied slot before pressing Enter.",
+            ["world.character.formation.error.invalid_target"] = "Choose one of the 27 formation slots as the destination.",
+            ["world.character.formation.error.same"] = "{0} is already in that slot. Choose a different destination or cancel.",
+            ["world.character.formation.error.maximum"] = "At most {0} brothers can be deployed. Swap with a deployed brother or choose a reserve slot.",
+            ["world.character.formation.error.minimum"] = "At least one brother must remain deployed.",
+            ["world.character.formation.error.stale"] = "The formation changed. The pending move was cancelled; review the updated slots.",
+            ["world.character.formation.error.unavailable"] = "The formation move could not be completed. Review the updated slots and try again.",
             ["world.character.formation.details"] = "Brother details",
             // Mood states (config/character.nut Const.MoodStateName).
             ["combat.mood.0"] = "Angry",
@@ -494,6 +509,24 @@ namespace TheUnseenBanner.Companion
             ["combat.result.button.lootall"] = "Loot all items, button.",
             ["combat.result.button.lootall.disabled"] = "Loot all items, button, unavailable.",
             ["combat.result.button.continue"] = "Continue, button.",
+            // World encounter dialog. Enemy labels and retreat wording are the
+            // game's live values; framing, controls and the formation action live here.
+            ["world.combat.dialog.title.prepare"] = "Prepare for combat.",
+            ["world.combat.dialog.title.attacked"] = "You are being attacked.",
+            ["world.combat.dialog.report.unknown"] = "Enemy composition is unknown.",
+            ["world.combat.dialog.report.one"] = "The scout reports 1 enemy entry.",
+            ["world.combat.dialog.report.many"] = "The scout reports {0} enemy entries.",
+            ["world.combat.dialog.formation.available"] = "Formation review is available.",
+            ["world.combat.dialog.controls.retreat"] = "Use Up and Down to review; Home and End jump to the beginning and end; Enter chooses; Escape retreats.",
+            ["world.combat.dialog.controls.forced"] = "Use Up and Down to review; Home and End jump to the beginning and end; Enter chooses. Retreat is not available.",
+            ["world.combat.dialog.enemy"] = "Enemy entry {0} of {1}: {2}.",
+            ["world.combat.dialog.unknown"] = "Scout report: {0}",
+            ["world.combat.dialog.action.formation"] = "Review formation and equipment, button. Press Enter to open.",
+            ["world.combat.dialog.action.engage"] = "Engage, button. Press Enter to begin combat.",
+            ["world.combat.dialog.action.defend"] = "To arms, button. Press Enter to defend.",
+            ["world.combat.dialog.action.disengage"] = "{0} Button. Press Enter to retreat.",
+            ["world.combat.dialog.formation.returned"] = "Returned to combat preparation. Formation changes saved.",
+            ["world.combat.dialog.error.cannot_disengage"] = "Retreat is not available in this encounter.",
             // Battle confirmation dialog (the End Round popup and quit-battle prompts)
             // as a navigable list. The message row carries the game's own title (valor)
             // and body (texto); the button labels mirror the visible Yes/No/Ok.
@@ -526,7 +559,7 @@ namespace TheUnseenBanner.Companion
             // navigable list of visible parties and known settlements/locations, each
             // with its kind, distance and clock bearing. Distance/bearing reuse the
             // tactical tile.position phrases.
-            ["world.survey.screen"] = "In view: {0}. Use Up and Down to review. Press B to close.",
+            ["world.survey.screen"] = "In view: {0}. Use Up and Down to review, V for details, and Enter to interact. Press B to close.",
             ["world.survey.empty"] = "Nothing in view.",
             ["world.survey.closed"] = "Survey closed.",
             ["world.survey.count.parties"] = "{0} parties",
@@ -541,6 +574,20 @@ namespace TheUnseenBanner.Companion
             ["world.survey.item.settlement"] = "Settlement, {0}",
             ["world.survey.item.location"] = "Location, {0}",
             ["world.survey.here"] = "At your position",
+            ["world.survey.action.enemy"] = "Press Enter to engage or pursue.",
+            ["world.survey.action.place"] = "Press Enter to approach or enter.",
+            // Contextual Enter on the focused B-survey entity. The actual order uses
+            // world_state's AutoAttack/AutoEnterLocation funnels; these are only the
+            // immediate confirmations and failure cues for a screen-reader user.
+            ["world.interact.engaging"] = "Engaging {0}.",
+            ["world.interact.pursuing"] = "Pursuing {0}.",
+            ["world.interact.entering"] = "Entering {0}.",
+            ["world.interact.approaching"] = "Approaching {0}.",
+            ["world.interact.none"] = "Select an enemy party, settlement, or location first.",
+            ["world.interact.gone"] = "That target is no longer available.",
+            ["world.interact.unavailable"] = "That target cannot be interacted with.",
+            ["world.interact.escorting"] = "You cannot do that while escorting another party.",
+            ["world.interact.no_route"] = "No route to {0}.",
             // Detail inspection of the focused survey entity (V), a navigable sub-list of
             // the entity's tooltip lines. The lines are already-localized game text, spoken
             // as-is (cleaned centrally); only the header and the empty cases live here.

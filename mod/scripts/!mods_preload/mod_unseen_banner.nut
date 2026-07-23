@@ -16,6 +16,7 @@
 	Readout = null,
 	CombatResult = null,
 	SheetNav = null,
+	WorldCombatDialogNav = null,
 	DialogNav = null,
 	TooltipNav = null
 };
@@ -29,6 +30,7 @@
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/retinue_nav.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/tooltip_nav.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/character_edit_nav.js");
+::Hooks.registerJS("ui/mods/mod_unseen_banner/world_combat_dialog_nav.js");
 ::Hooks.registerCSS("ui/mods/mod_unseen_banner/menu_nav.css");
 
 // Single choke point for every message sent to the companion app, so the
@@ -600,7 +602,9 @@
 //
 // Key: b (code 12), free on the world map in vanilla (the map claims c/f/i/o/p/r/t and
 // G is our company status). Mutually exclusive with WorldStatus so Up/Down never has
-// two owners: opening one closes the other (done in the world_state hook).
+// two owners: opening one closes the other (done in the world_state hook). Enter acts
+// on the focused row: it pursues an enemy party, or approaches/enters a settlement or
+// location through the same AutoAttack/AutoEnterLocation funnels as a mouse click.
 ::UnseenBanner.WorldSurvey <- {
 	m = {
 		Items = null,
@@ -614,6 +618,7 @@
 	},
 	ToggleKey = 12, // b
 	InspectKey = 32, // v -> inspect the focused entity (toggles the detail sub-list)
+	InteractKey = 39, // enter -> pursue/enter the focused world entity
 	MoveKeys = {
 		[49] = "up",
 		[51] = "down",
@@ -632,7 +637,8 @@
 	function handles(_code)
 	{
 		return _code == this.ToggleKey
-			|| (this.m.Active && (_code == this.InspectKey || _code in this.MoveKeys));
+			|| (this.m.Active && (_code == this.InspectKey
+				|| _code == this.InteractKey || _code in this.MoveKeys));
 	},
 	function reset()
 	{
@@ -748,7 +754,7 @@
 		this.reset();
 		if (_announce) ::UnseenBanner.sendMessage("interrupt", "", "world.survey.closed");
 	},
-	function onKey(_code)
+	function onKey(_code, _state = null)
 	{
 		if (_code == this.ToggleKey)
 		{
@@ -764,6 +770,30 @@
 		{
 			if (this.inDetail()) this.exitDetail();
 			else this.inspect();
+			return;
+		}
+
+		// Enter acts on the entity row underneath the optional detail sub-list. Keeping
+		// that target stable means the player may inspect a camp or party with V and
+		// engage it directly without first backing out. A successful order closes B so
+		// map input is immediately available again; a stale/non-interactable row stays
+		// open after its explanatory cue.
+		if (_code == this.InteractKey)
+		{
+			local it = this.m.Items[this.m.ItemIndex];
+			if (it.entity == null)
+			{
+				::UnseenBanner.sendMessage("interrupt", "", "world.interact.none");
+				return;
+			}
+			// Use the actual world_state object supplied by its input hook. World.State
+			// is a WeakTableRef proxy; calling native methods such as enterLocation
+			// through that proxy changes their `this` and hides engine helpers.
+			local state = _state != null ? _state : ::World.State;
+			if (::UnseenBanner.WorldEnter.tryInteract(state, it.entity))
+			{
+				this.reset();
+			}
 			return;
 		}
 
@@ -1080,33 +1110,216 @@
 	}
 };
 
-// Entering a settlement/location (phase 4.5). In vanilla, entering is armed by a
-// mouse CLICK on an enterable entity (world_state.onMouseInput): if the party is on
-// its tile it enters at once, else the click arms AutoEnterLocation and onUpdate
-// enters on arrival. Our WorldMove walks by setPath and never passes through
-// onMouseInput, so it never arms that — a blind player would arrive on a town but
-// stay outside. This gives Enter that job: on the plain map it enters the enterable
-// entity the party is standing on (settlement or enterable location), mirroring the
-// mouse's own getAllEntitiesAndOneLocationAtPos + isEnterable test; with nothing to
-// enter it returns false so the key falls through to its native zoom-reset.
+// Interacting with a world entity (phase 4.5). In vanilla this is armed by a mouse
+// CLICK (world_state.onMouseInput): enemy parties use AutoAttack so the chase follows
+// a moving target; static settlements/locations use AutoEnterLocation plus a path,
+// then enterLocation on arrival. Our keyboard movement never passes through that
+// mouse funnel, so both orders are reproduced here with the native state fields and
+// navigator. Plain-map Enter still enters an enterable entity on the party's current
+// tile; Enter inside the B survey acts on its focused entity at any distance.
 ::UnseenBanner.WorldEnter <- {
 	EnterKey = 39, // enter
+	function isEscorting(_state)
+	{
+		return _state.m.EscortedEntity != null && !_state.m.EscortedEntity.isNull();
+	},
+	function announceUnavailable(_cat = "world.interact.unavailable", _name = "")
+	{
+		::UnseenBanner.sendMessage("interrupt", _name, _cat);
+	},
+	function stopCurrentOrder(_state)
+	{
+		::UnseenBanner.WorldMove.reset();
+		_state.m.AutoEnterLocation = null;
+		_state.m.AutoAttack = null;
+		_state.m.LastAutoAttackPath = 0.0;
+	},
+	function ensureTravelRunning(_state)
+	{
+		// Keyboard travel is an executable order, like WorldMove's directional step:
+		// unpause it so "Approaching/Pursuing" never leaves the party silently parked.
+		if (_state.isPaused())
+		{
+			::UnseenBanner.WorldMove.m.SelfUnpause = true;
+			_state.setPause(false);
+		}
+	},
+	function routeTo(_state, _entity)
+	{
+		local player = _state.m.Player;
+		local targetTile = _entity.getTile();
+		if (player == null || targetTile == null) return false;
+
+		// getVecDistance belongs to the native script environment and is not exposed
+		// as a member on the hooked world-state instance. Compare squared coordinates
+		// locally to preserve its direct-movement threshold without taking a square root.
+		local targetPos = _entity.getPos();
+		local playerPos = player.getPos();
+		local dx = targetPos.X - playerPos.X;
+		local dy = targetPos.Y - playerPos.Y;
+		local directRadius = ::Const.World.MovementSettings.PlayerDirectMoveRadius;
+		if (dx * dx + dy * dy <= directRadius * directRadius)
+		{
+			player.setPath(null);
+			player.setDestination(targetPos);
+			return true;
+		}
+
+		local nav = ::World.getNavigator();
+		local settings = nav.createSettings();
+		settings.ActionPointCosts = ::Const.World.TerrainTypeNavCost;
+		settings.RoadMult = 1.0 / ::Const.World.MovementSettings.RoadMult;
+		local path = nav.findPath(player.getTile(), targetTile, settings, 0);
+		if (path.isEmpty())
+		{
+			player.setPath(null);
+			player.setDestination(null);
+			return false;
+		}
+
+		player.setDestination(null);
+		player.setPath(path);
+		return true;
+	},
+	function tryInteract(_state, _entity)
+	{
+		if (_state == null || _entity == null || !_entity.isAlive()
+			|| _entity.getTile() == null)
+		{
+			this.announceUnavailable("world.interact.gone");
+			return false;
+		}
+
+		if (_entity.isParty()) return this.tryAttackParty(_state, _entity);
+		return this.tryEnterLocation(_state, _entity);
+	},
+	function tryAttackParty(_state, _party)
+	{
+		local player = _state.m.Player;
+		if (player == null || _party.isHiddenToPlayer()
+			|| _party.getVisibilityMult() == 0.0)
+		{
+			this.announceUnavailable("world.interact.gone");
+			return false;
+		}
+		if (this.isEscorting(_state))
+		{
+			this.announceUnavailable("world.interact.escorting");
+			return false;
+		}
+		if (!_party.isAttackable() || _party.isAlliedWith(player))
+		{
+			this.announceUnavailable();
+			return false;
+		}
+
+		local inRange = player.getDistanceTo(_party)
+			<= ::Const.World.CombatSettings.CombatPlayerDistance;
+		this.stopCurrentOrder(_state);
+		// Always arm AutoAttack, even at contact range. world_state.onUpdate is the
+		// native combat-entry funnel: it rechecks the live target, calls
+		// onEnteringCombatWithPlayer and opens the Prepare for Combat dialog.
+		// WeakTableRef is a native global class, not a callable member on the hooked
+		// state object (compiled world_state methods resolve it through their own
+		// environment). Construct the exact wrapper AutoAttack expects explicitly.
+		_state.m.AutoAttack = ::WeakTableRef(_party);
+		this.ensureTravelRunning(_state);
+		::UnseenBanner.sendMessage("interrupt", _party.getName(),
+			inRange ? "world.interact.engaging" : "world.interact.pursuing");
+		return true;
+	},
+	function tryEnterLocation(_state, _location)
+	{
+		local player = _state.m.Player;
+		if (player == null || !_location.isDiscovered())
+		{
+			this.announceUnavailable("world.interact.gone");
+			return false;
+		}
+
+		// Exact eligibility used by world_state.onMouseInput. This includes towns,
+		// hostile camps, unvisited ruins and locations with a bespoke on-enter event.
+		if (!_location.isEnterable() && !_location.isAttackable()
+			&& _location.isVisited() && _location.getOnEnterCallback() == null)
+		{
+			this.announceUnavailable();
+			return false;
+		}
+
+		local sameTile = _location.getTile().isSameTileAs(player.getTile());
+		local inRange = player.getDistanceTo(_location)
+			<= ::Const.World.CombatSettings.CombatPlayerDistance;
+		local escorting = this.isEscorting(_state);
+		if (escorting && (!sameTile || !inRange || !_location.isAlliedWithPlayer()))
+		{
+			this.announceUnavailable("world.interact.escorting");
+			return false;
+		}
+
+		this.stopCurrentOrder(_state);
+		if (sameTile && inRange)
+		{
+			::UnseenBanner.sendMessage("interrupt", _location.getName(),
+				"world.interact.entering");
+			if (!_state.enterLocation(_location))
+			{
+				this.announceUnavailable();
+				return false;
+			}
+			return true;
+		}
+
+		if (!this.routeTo(_state, _location))
+		{
+			this.announceUnavailable("world.interact.no_route", _location.getName());
+			return false;
+		}
+
+		_state.m.AutoEnterLocation = ::WeakTableRef(_location);
+		if (_location.isEnterable() && _location.isAlliedWithPlayer())
+		{
+			_state.m.WorldTownScreen.getMainDialogModule().preload(_location);
+		}
+		this.ensureTravelRunning(_state);
+		::UnseenBanner.sendMessage("interrupt", _location.getName(),
+			"world.interact.approaching");
+		return true;
+	},
 	function tryEnter(_state)
 	{
 		local player = _state.m.Player;
 		if (player == null) return false;
 		local playerTile = player.getTile();
+		local entities = ::World.getAllEntitiesAndOneLocationAtPos(player.getPos(), 1.0);
 
-		foreach( e in ::World.getAllEntitiesAndOneLocationAtPos(player.getPos(), 1.0) )
+		// Contact enemies take priority. Previously plain Enter skipped every party,
+		// which left a hostile party announced "At your position" but impossible to
+		// engage without a mouse.
+		foreach( e in entities )
 		{
 			if (e == null || e.getID() == player.getID()) continue;
-			// The call also returns mobile parties, which have no isEnterable(); the
-			// mouse handler skips them the same way before testing enterability.
-			if (e.isParty()) continue;
-			if (!e.isEnterable()) continue;
+			if (!e.isParty() || !e.isAlive() || e.getTile() == null) continue;
+			if (!e.getTile().isSameTileAs(playerTile)
+				|| player.getDistanceTo(e)
+					> ::Const.World.CombatSettings.CombatPlayerDistance) continue;
+			if (!e.isAttackable() || e.isAlliedWith(player)
+				|| e.isHiddenToPlayer() || e.getVisibilityMult() == 0.0) continue;
+			return this.tryAttackParty(_state, e);
+		}
+
+		// Then mirror the mouse's complete location eligibility, not just
+		// isEnterable(): hostile camps and event/ruin locations deliberately return
+		// false from isEnterable but must still reach enterLocation to start their
+		// event or combat.
+		foreach( e in entities )
+		{
+			if (e == null || e.getID() == player.getID() || e.isParty()) continue;
 			if (e.getTile() == null || !e.getTile().isSameTileAs(playerTile)) continue;
-			_state.enterLocation(e);
-			return true;
+			if (player.getDistanceTo(e)
+				> ::Const.World.CombatSettings.CombatPlayerDistance) continue;
+			if (!e.isEnterable() && !e.isAttackable()
+				&& e.isVisited() && e.getOnEnterCallback() == null) continue;
+			return this.tryEnterLocation(_state, e);
 		}
 		return false;
 	}
@@ -3934,12 +4147,17 @@
 		ActionMode = false,
 		Actions = null,
 		ActionIndex = 0,
+		FormationMoveMode = false,
+		FormationSourceID = null,
+		FormationSourceSlot = -1,
+		FormationSourceName = "",
 		Screen = null,
 		WorldMode = false,
 		Active = false
 	},
 	InspectKey = 32, // v -> open/close the focused entry's native tooltip details
-	ActionKey = 39, // Enter -> rename identity or open/confirm an inventory action
+	ActionKey = 39, // Enter -> rename, open/confirm an action or place a brother
+	CancelKey = 41, // Escape -> cancel an armed formation move
 	// d / right / Tab -> next brother; a / left -> previous. Same keys the vanilla
 	// character screen already uses, so muscle memory carries over.
 	NextKeys = {
@@ -3972,7 +4190,8 @@
 		return (_code == this.InspectKey && this.m.WorldMode)
 			|| (_code == this.ActionKey && this.m.WorldMode
 				&& (this.m.ActionMode || this.isInventorySection()
-					|| this.isIdentityRow()))
+					|| this.isIdentityRow() || this.isFormationSection()))
+			|| (_code == this.CancelKey && this.m.FormationMoveMode)
 			|| (this.m.WorldMode && _code in this.SectionKeys)
 			|| (_code in this.NextKeys)
 			|| (_code in this.PrevKeys)
@@ -3982,15 +4201,24 @@
 	{
 		return _code in this.MoveKeys;
 	},
-	function isRenameKey(_code)
+	// Opening the native rename popup and both stages of a formation move happen
+	// on keyup. Otherwise the press which opens/arms the next state can immediately
+	// confirm it as well. Escape also waits for keyup while a move is armed, so its
+	// release cannot leak through and close the whole CharacterScreen.
+	function isReleaseHandledKey(_code)
 	{
-		return _code == this.ActionKey && this.isIdentityRow();
+		return (_code == this.ActionKey
+				&& (this.isIdentityRow() || this.isFormationSection()))
+			|| (_code == this.CancelKey && this.m.FormationMoveMode);
 	},
-	function openRenameOnRelease(_screen)
+	function onReleaseHandledKey(_code, _screen)
 	{
-		if (::UnseenBanner.CharacterEdit.consumeSuppressedEnterRelease()) return;
-		if (!::UnseenBanner.CharacterEdit.isActive() && this.isIdentityRow())
-			this.onKey(this.ActionKey, _screen);
+		if (_code == this.ActionKey && this.isIdentityRow())
+		{
+			if (::UnseenBanner.CharacterEdit.consumeSuppressedEnterRelease()) return;
+			if (::UnseenBanner.CharacterEdit.isActive()) return;
+		}
+		this.onKey(_code, _screen);
 	},
 	function isNext(_code)
 	{
@@ -4010,6 +4238,7 @@
 		this.m.ActionMode = false;
 		this.m.Actions = null;
 		this.m.ActionIndex = 0;
+		this.resetFormationMove();
 		this.m.Screen = null;
 		this.m.WorldMode = false;
 		::UnseenBanner.TooltipNav.hide();
@@ -4018,7 +4247,7 @@
 	// screen opens on in battle. _roster is supplied by world mode; null keeps the
 	// verified tactical source. With no selected actor, both native modes default
 	// to the first non-null entry in their source roster.
-	function open(_active, _roster = null, _screen = null)
+	function open(_active, _roster = null, _screen = null, _initialSection = null)
 	{
 		local raw = _roster != null
 			? _roster
@@ -4052,7 +4281,19 @@
 		if (this.m.WorldMode)
 		{
 			this.buildWorldSections();
-			this.activateSection(0, false, false);
+			local initialIndex = 0;
+			if (_initialSection != null)
+			{
+				for (local i = 0; i < this.m.Sections.len(); i += 1)
+				{
+					if (this.m.Sections[i].id == _initialSection)
+					{
+						initialIndex = i;
+						break;
+					}
+				}
+			}
+			this.activateSection(initialIndex, false, false);
 		}
 		else
 		{
@@ -4078,6 +4319,28 @@
 	// and this semantic cursor remain in lockstep.
 	function onKey(_code, _screen)
 	{
+		if (this.m.FormationMoveMode)
+		{
+			if (_code == this.InspectKey || _code == this.CancelKey)
+			{
+				this.cancelFormationMove(true);
+				return;
+			}
+			if (_code == this.ActionKey)
+			{
+				this.commitFormationMove(_screen);
+				return;
+			}
+
+			// Moving to another section or brother abandons the pending operation.
+			// The destination cursor itself uses Up/Down/Home/End and remains armed.
+			if ((_code in this.SectionKeys) || (_code in this.NextKeys)
+				|| (_code in this.PrevKeys))
+			{
+				this.cancelFormationMove(false);
+			}
+		}
+
 		if (this.m.ActionMode)
 		{
 			if (_code == this.InspectKey)
@@ -4114,6 +4377,11 @@
 				this.leaveDetails();
 				::UnseenBanner.TooltipNav.hide();
 				::UnseenBanner.CharacterEdit.open(this.current());
+				return;
+			}
+			if (this.isFormationSection())
+			{
+				this.beginFormationMove(_screen);
 				return;
 			}
 			this.openActions();
@@ -4205,6 +4473,11 @@
 		if (section == null) return false;
 		return section.id == "equipment" || section.id == "bag" || section.id == "stash";
 	},
+	function isFormationSection()
+	{
+		local section = this.currentSection();
+		return this.m.WorldMode && section != null && section.id == "formation";
+	},
 	function isIdentityRow()
 	{
 		if (!this.m.WorldMode || this.m.Items == null || this.m.Items.len() == 0)
@@ -4217,6 +4490,243 @@
 	{
 		if (_name == null || _name == "" || !this.isIdentityRow()) return;
 		this.m.Items[this.m.ItemIndex].texto = _name;
+	},
+	function resetFormationMove()
+	{
+		this.m.FormationMoveMode = false;
+		this.m.FormationSourceID = null;
+		this.m.FormationSourceSlot = -1;
+		this.m.FormationSourceName = "";
+	},
+	function cancelFormationMove(_announce)
+	{
+		if (!this.m.FormationMoveMode) return;
+		local name = this.m.FormationSourceName;
+		this.resetFormationMove();
+		if (_announce)
+		{
+			::UnseenBanner.sendMessage("interrupt", name,
+				"world.character.formation.move.cancelled");
+		}
+	},
+	function formationLine(_slot)
+	{
+		return _slot < 9 ? "front" : (_slot < 18 ? "back" : "reserve");
+	},
+	function formationPosition(_slot)
+	{
+		return (_slot % 9) + 1;
+	},
+	function findInFormation(_formation, _id)
+	{
+		if (_formation == null || _id == null) return null;
+		for (local i = 0; i < _formation.len(); i += 1)
+		{
+			local bro = _formation[i];
+			if (bro != null && bro.getID() == _id)
+				return { actor = bro, slot = i };
+		}
+		return null;
+	},
+	function selectBrotherByID(_id, _screen)
+	{
+		if (_id == null || this.m.Brothers == null) return false;
+		for (local i = 0; i < this.m.Brothers.len(); i += 1)
+		{
+			if (this.m.Brothers[i].getID() == _id)
+			{
+				this.m.BroIndex = i;
+				if (_screen != null && _screen.m.JSDataSourceHandle != null)
+					_screen.m.JSDataSourceHandle.asyncCall("selectedBrotherById", _id);
+				return true;
+			}
+		}
+		return false;
+	},
+	function rebuildBrothersFromFormation(_formation, _selectedID)
+	{
+		local list = [];
+		if (_formation != null)
+		{
+			foreach( bro in _formation )
+			{
+				if (bro != null) list.push(bro);
+			}
+		}
+		this.m.Brothers = list;
+		this.m.BroIndex = 0;
+		if (_selectedID == null) return;
+		for (local i = 0; i < list.len(); i += 1)
+		{
+			if (list[i].getID() == _selectedID)
+			{
+				this.m.BroIndex = i;
+				break;
+			}
+		}
+	},
+	// Refresh both sides from live state after a native roster-position mutation.
+	// Stable formation keys preserve the destination cursor and the entity ID
+	// preserves the selected brother even though vanilla reload defaults to first.
+	function refreshFormation(_selectedID, _screen, _saved)
+	{
+		local formation = ::World.Assets.getFormation();
+		this.rebuildBrothersFromFormation(formation, _selectedID);
+		this.buildWorldSections(_saved);
+		local formationIndex = 0;
+		for (local i = 0; i < this.m.Sections.len(); i += 1)
+		{
+			if (this.m.Sections[i].id == "formation")
+			{
+				formationIndex = i;
+				break;
+			}
+		}
+		this.activateSection(formationIndex, false, false);
+
+		if (_screen != null)
+		{
+			_screen.loadBrothersList();
+			if (_selectedID != null && _screen.m.JSDataSourceHandle != null)
+				_screen.m.JSDataSourceHandle.asyncCall("selectedBrotherById", _selectedID);
+		}
+		return formation;
+	},
+	// Accessible equivalent of beginning a native drag: Enter on an occupied slot
+	// arms that brother as the source, then Up/Down chooses a destination.
+	function beginFormationMove(_screen)
+	{
+		if (!this.isFormationSection() || this.m.Items == null
+			|| this.m.Items.len() == 0) return;
+		local row = this.m.Items[this.m.ItemIndex];
+		local payload = row.payload;
+		if (payload == null || payload.source != "formation"
+			|| payload.entityID == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "",
+				"world.character.formation.error.empty_source");
+			return;
+		}
+
+		local formation = ::World.Assets.getFormation();
+		local live = this.findInFormation(formation, payload.entityID);
+		if (live == null)
+		{
+			local selected = this.current();
+			local selectedID = selected != null ? selected.getID() : null;
+			local saved = this.captureSectionPositions();
+			this.resetFormationMove();
+			this.refreshFormation(selectedID, _screen, saved);
+			::UnseenBanner.sendMessage("interrupt", "",
+				"world.character.formation.error.stale");
+			return;
+		}
+
+		this.leaveDetails();
+		::UnseenBanner.TooltipNav.hide();
+		local saved = this.captureSectionPositions();
+		this.selectBrotherByID(live.actor.getID(), _screen);
+		this.buildWorldSections(saved);
+		this.activateSection(this.m.SectionIndex, false, false);
+		this.m.FormationMoveMode = true;
+		this.m.FormationSourceID = live.actor.getID();
+		this.m.FormationSourceSlot = live.slot;
+		this.m.FormationSourceName = live.actor.getName();
+		::UnseenBanner.sendMessage("interrupt", this.m.FormationSourceName,
+			"world.character.formation.move.started",
+			this.formationLine(live.slot), "" + this.formationPosition(live.slot));
+	},
+	// Confirm the armed drag through CharacterScreen's native backend endpoint.
+	// The two guards intentionally mirror the vanilla JS drop handler exactly.
+	function commitFormationMove(_screen)
+	{
+		if (!this.m.FormationMoveMode || !this.isFormationSection()
+			|| this.m.Items == null || this.m.Items.len() == 0) return;
+		local row = this.m.Items[this.m.ItemIndex];
+		local payload = row.payload;
+		if (payload == null || payload.source != "formation")
+		{
+			::UnseenBanner.sendMessage("interrupt", "",
+				"world.character.formation.error.invalid_target");
+			return;
+		}
+
+		local formation = ::World.Assets.getFormation();
+		local live = this.findInFormation(formation, this.m.FormationSourceID);
+		if (live == null || _screen == null)
+		{
+			local selectedID = this.m.FormationSourceID;
+			local saved = this.captureSectionPositions();
+			this.resetFormationMove();
+			this.refreshFormation(selectedID, _screen, saved);
+			::UnseenBanner.sendMessage("interrupt", "",
+				"world.character.formation.error.stale");
+			return;
+		}
+
+		local source = live.actor;
+		local sourceSlot = live.slot;
+		local targetSlot = payload.slot;
+		if (sourceSlot == targetSlot)
+		{
+			::UnseenBanner.sendMessage("interrupt", source.getName(),
+				"world.character.formation.error.same");
+			return;
+		}
+
+		local target = formation[targetSlot];
+		local active = 0;
+		for (local i = 0; i <= 17 && i < formation.len(); i += 1)
+		{
+			if (formation[i] != null) active += 1;
+		}
+		if (target == null && sourceSlot > 17 && targetSlot <= 17
+			&& active >= ::World.Assets.getBrothersMaxInCombat())
+		{
+			::UnseenBanner.sendMessage("interrupt", "",
+				"world.character.formation.error.maximum",
+				"" + ::World.Assets.getBrothersMaxInCombat());
+			return;
+		}
+		if (target == null && sourceSlot <= 17 && targetSlot > 17 && active == 1)
+		{
+			::UnseenBanner.sendMessage("interrupt", "",
+				"world.character.formation.error.minimum");
+			return;
+		}
+
+		local sourceID = source.getID();
+		local sourceName = source.getName();
+		local targetName = target != null ? target.getName() : "";
+		local saved = this.captureSectionPositions();
+		_screen.onUpdateRosterPosition([sourceID, targetSlot]);
+		if (target != null)
+			_screen.onUpdateRosterPosition([target.getID(), sourceSlot]);
+
+		this.resetFormationMove();
+		local updated = this.refreshFormation(sourceID, _screen, saved);
+		local moved = targetSlot < updated.len() && updated[targetSlot] != null
+			&& updated[targetSlot].getID() == sourceID;
+		if (!moved)
+		{
+			::UnseenBanner.sendMessage("interrupt", "",
+				"world.character.formation.error.unavailable");
+			return;
+		}
+
+		local line = this.formationLine(targetSlot);
+		local position = "" + this.formationPosition(targetSlot);
+		if (target == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", sourceName,
+				"world.character.formation.result.move", line, position);
+		}
+		else
+		{
+			::UnseenBanner.sendMessage("interrupt", sourceName,
+				"world.character.formation.result.swap", targetName,
+				line + "|" + position);
+		}
 	},
 	// Each section owns its last cursor position. Page navigation therefore returns
 	// to the element the player left, and rebuilding for another brother restores
@@ -4529,11 +5039,27 @@
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local it = this.m.Items[this.m.ItemIndex];
+		local category = it.cat;
+		local text = it.texto;
+		local value = it.valor;
+		local detail = it.detalle;
+		if (this.m.FormationMoveMode && this.isFormationSection()
+			&& it.payload != null && it.payload.source == "formation")
+		{
+			category = "world.character.formation.target";
+			value = it.payload.line;
+			detail = it.payload.position + "|" + this.m.FormationSourceName
+				+ "|" + (it.payload.slot == this.m.FormationSourceSlot ? "1" : "0");
+		}
 		// Identity already contains the brother's name, so do not say it twice when
 		// that is the retained item.
-		local bro = _includeBrother && it.cat != "combat.sheet.identity" ? this.current() : null;
+		local bro = _includeBrother && category != "combat.sheet.identity" ? this.current() : null;
 		local name = bro != null ? bro.getName() : null;
-		local detailCount = this.m.WorldMode ? it.details.len() : 0;
+		// While choosing a destination V cancels the move; do not advertise the
+		// ordinary V-for-details action on an occupied target.
+		local detailCount = this.m.WorldMode && !this.m.FormationMoveMode
+			? it.details.len()
+			: 0;
 		local actionCount = 0;
 		if (this.m.WorldMode && this.isInventorySection())
 			actionCount = this.buildActions(it).len();
@@ -4546,7 +5072,7 @@
 			context = section.id + "|" + (this.m.ItemIndex + 1) + "|" + this.m.Items.len()
 				+ "|" + (_includeSection ? "1" : "0");
 		}
-		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle,
+		::UnseenBanner.sendMessage("interrupt", text, category, value, detail,
 			name, "" + detailCount, context, "" + actionCount);
 	},
 	// V on a row with several native tooltips enters a nested list; V again backs
@@ -4690,8 +5216,9 @@
 		return result;
 	},
 	// Phase 2.4 world CharacterScreen sections, extended by phase 2.3 inventory
-	// actions. Tactical keeps its already-verified flat sheet. Formation and perks
-	// remain read-only; equipment, backpack and stash expose an explicit Enter menu.
+	// actions and the keyboard formation editor. Tactical keeps its already-verified
+	// flat sheet. Perks remain read-only; equipment, backpack and stash expose an
+	// explicit Enter menu.
 	function buildWorldSections(_saved = null)
 	{
 		this.buildItems();
@@ -4841,16 +5368,35 @@
 		local rows = [];
 		local formation = ::World.Assets.getFormation();
 		if (formation == null) return rows;
+		local active = 0;
+		local reserves = 0;
 		for (local i = 0; i < formation.len(); i += 1)
 		{
-			local line = i < 9 ? "front" : (i < 18 ? "back" : "reserve");
-			local position = (i % 9) + 1;
+			if (formation[i] == null) continue;
+			if (i <= 17) active += 1;
+			else reserves += 1;
+		}
+		rows.push(this.row("formation:summary", "world.character.formation.summary",
+			"", "" + active,
+			::World.Assets.getBrothersMaxInCombat() + "|" + reserves,
+			[], { source = "formation_summary" }));
+		for (local i = 0; i < formation.len(); i += 1)
+		{
+			local line = this.formationLine(i);
+			local position = this.formationPosition(i);
 			local bro = formation[i];
 			local isSelected = bro != null && selected != null && bro.getID() == selected.getID();
 			rows.push(this.row("formation:" + i, "world.character.formation.slot",
 				bro != null ? bro.getName() : "", line,
 				position + "|" + (isSelected ? "1" : "0"),
-				bro != null ? [this.rosterDetail(bro)] : []));
+				bro != null ? [this.rosterDetail(bro)] : [],
+				{
+					source = "formation",
+					slot = i,
+					line = line,
+					position = position,
+					entityID = bro != null ? bro.getID() : null
+				}));
 		}
 		return rows;
 	},
@@ -5243,6 +5789,244 @@
 	}
 };
 
+// World pre-combat dialog. Vanilla renders the scout report and its buttons to a
+// texture, and its AllowFormationPicking flag is not consumed by the JS at all.
+// Flatten the visible report into a keyboard list and turn that dormant flag into
+// an explicit "review formation" action. The character screen is layered over the
+// still-live dialog without adding a MenuStack entry (defensive encounters make
+// their existing entry non-cancellable); closing it therefore returns here instead
+// of accidentally dismissing the encounter. Engage/retreat still call the exact
+// backend methods used by the visible buttons.
+::UnseenBanner.WorldCombatDialogNav <- {
+	m = {
+		Screen = null,
+		Items = null,
+		ItemIndex = 0,
+		AllowDisengage = false,
+		AllowFormation = false,
+		InFormation = false,
+		ClosingFormation = false,
+		WorldState = null,
+		Active = false
+	},
+	Keys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end",
+		[39] = "activate",
+		[41] = "cancel"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function isEditingFormation()
+	{
+		return this.m.Active && this.m.InFormation;
+	},
+	function initialCharacterSection()
+	{
+		return this.isEditingFormation() ? "formation" : null;
+	},
+	function handles(_code)
+	{
+		return this.m.Active && _code in this.Keys;
+	},
+	function reset()
+	{
+		this.m.Screen = null;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.AllowDisengage = false;
+		this.m.AllowFormation = false;
+		this.m.InFormation = false;
+		this.m.ClosingFormation = false;
+		this.m.WorldState = null;
+		this.m.Active = false;
+	},
+	function item(_cat, _texto = "", _valor = "", _detalle = "", _action = null)
+	{
+		return {
+			cat = _cat,
+			texto = _texto,
+			valor = _valor,
+			detalle = _detalle,
+			action = _action
+		};
+	},
+	function prime(_screen, _entities, _allowDisengage, _allowFormation, _text,
+		_disengageText)
+	{
+		this.reset();
+		this.m.Screen = _screen;
+		this.m.AllowDisengage = _allowDisengage;
+		this.m.AllowFormation = _allowFormation;
+
+		local visibleCount = _entities != null
+			? (_entities.len() < 7 ? _entities.len() : 7)
+			: 0;
+		local kind = _allowDisengage ? "prepare" : "attacked";
+		local items = [
+			this.item("world.combat.dialog.screen", "", kind,
+				visibleCount + "|" + (_allowFormation ? "1" : "0")
+				+ "|" + (_allowDisengage ? "1" : "0"))
+		];
+
+		if (visibleCount == 0)
+		{
+			items.push(this.item("world.combat.dialog.unknown", _text));
+		}
+		else
+		{
+			for (local i = 0; i < visibleCount; i += 1)
+			{
+				items.push(this.item("world.combat.dialog.enemy",
+					_entities[i].Name, "" + (i + 1), "" + visibleCount));
+			}
+		}
+
+		if (_allowFormation)
+		{
+			items.push(this.item("world.combat.dialog.action.formation",
+				"", "", "", "formation"));
+		}
+		items.push(this.item(_allowDisengage
+				? "world.combat.dialog.action.engage"
+				: "world.combat.dialog.action.defend",
+			"", "", "", "engage"));
+		if (_allowDisengage)
+		{
+			items.push(this.item("world.combat.dialog.action.disengage",
+				_disengageText, "", "", "disengage"));
+		}
+		this.m.Items = items;
+	},
+	function open()
+	{
+		if (this.m.Screen == null || this.m.Items == null
+			|| this.m.Items.len() == 0) return;
+		::UnseenBanner.WorldStatus.reset();
+		::UnseenBanner.WorldSurvey.reset();
+		::UnseenBanner.WorldMove.reset();
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.announceItem();
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function move(_direction)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		if (_direction == "up") this.m.ItemIndex -= 1;
+		else if (_direction == "down") this.m.ItemIndex += 1;
+		else if (_direction == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local item = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", item.texto, item.cat,
+			item.valor, item.detalle);
+	},
+	function onKey(_code, _state)
+	{
+		if (!this.m.Active || !(_code in this.Keys)) return;
+		local action = this.Keys[_code];
+		if (action == "up" || action == "down"
+			|| action == "home" || action == "end")
+		{
+			this.move(action);
+			return;
+		}
+		if (action == "cancel")
+		{
+			if (!this.m.AllowDisengage)
+			{
+				::UnseenBanner.sendMessage("interrupt", "",
+					"world.combat.dialog.error.cannot_disengage");
+				return;
+			}
+			this.activate("disengage", _state);
+			return;
+		}
+
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local selected = this.m.Items[this.m.ItemIndex].action;
+		if (selected == null) this.announceItem();
+		else this.activate(selected, _state);
+	},
+	function activate(_action, _state)
+	{
+		if (_action == "formation")
+		{
+			this.openFormation(_state);
+			return;
+		}
+
+		local screen = this.m.Screen;
+		if (screen == null) return;
+		this.reset();
+		if (_action == "engage") screen.onEngageButtonPressed();
+		else if (_action == "disengage") screen.onCancelButtonPressed();
+	},
+	function openFormation(_state)
+	{
+		if (!this.m.Active || !this.m.AllowFormation || this.m.InFormation
+			|| _state == null || _state.m.CharacterScreen == null
+			|| _state.m.CharacterScreen.isVisible()
+			|| _state.m.CharacterScreen.isAnimating()) return;
+
+		this.m.InFormation = true;
+		this.m.ClosingFormation = false;
+		this.m.WorldState = _state;
+		::World.Assets.updateFormation();
+		if (this.m.Screen != null && this.m.Screen.m.JSHandle != null)
+		{
+			this.m.Screen.m.JSHandle.asyncCall(
+				"setAccessibilityFormationOverlay", true);
+		}
+		_state.m.CharacterScreen.show();
+	},
+	// CharacterScreen's native close listener and C/I/Escape all funnel through the
+	// hooked world_state.character_screen_onClosePressed below. Do not pop MenuStack:
+	// its top entry belongs to the encounter dialog, not this temporary overlay.
+	function closeFormation(_state)
+	{
+		if (!this.isEditingFormation() || this.m.ClosingFormation) return;
+		local state = _state != null ? _state : this.m.WorldState;
+		if (state == null || state.m.CharacterScreen == null) return;
+		this.m.ClosingFormation = true;
+		state.m.CharacterScreen.hide();
+		::World.Assets.refillAmmo();
+		state.updateTopbarAssets();
+	},
+	// Called only once Coherent reports the character screen fully hidden, so the
+	// return cue cannot be cut off by its final formation-row announcement.
+	function onFormationClosed()
+	{
+		if (!this.m.Active || !this.m.InFormation) return;
+		if (this.m.Screen != null && this.m.Screen.m.JSHandle != null)
+		{
+			this.m.Screen.m.JSHandle.asyncCall(
+				"setAccessibilityFormationOverlay", false);
+		}
+		this.m.InFormation = false;
+		this.m.ClosingFormation = false;
+		this.m.WorldState = null;
+		::UnseenBanner.sendMessage("interrupt", "",
+			"world.combat.dialog.formation.returned");
+	}
+};
+
 // Battle confirmation dialog (the generic Yes/No popup). Pressing R brings up the
 // "End Round" prompt, and quitting a battle brings up its own; vanilla draws them as
 // a modal texture whose Yes/No buttons only the mouse can reach. While the popup is
@@ -5533,6 +6317,34 @@
 	}
 });
 
+// The encounter dialog owns the final scout report and the native engage/retreat
+// callbacks. Prime from show(), where those live values arrive, but announce only
+// after its animation reports onScreenShown. Keeping the screen object lets the
+// semantic action rows invoke exactly the same endpoints as its mouse buttons.
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/world_combat_dialog", function(q) {
+	q.show = @(__original) function( _entities, _allyBanners, _enemyBanners,
+		_allowDisengage, _allowFormationPicking, _text, _image,
+		_disengageText = "Cancel" )
+	{
+		::UnseenBanner.WorldCombatDialogNav.prime(this, _entities,
+			_allowDisengage, _allowFormationPicking, _text, _disengageText);
+		__original(_entities, _allyBanners, _enemyBanners, _allowDisengage,
+			_allowFormationPicking, _text, _image, _disengageText);
+	}
+
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldCombatDialogNav.open();
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldCombatDialogNav.close();
+	}
+});
+
 // The active-contract panel is the single UI funnel for acceptance, state changes
 // (including post-combat "return to town" objectives) and save loading. Observe
 // only after vanilla has successfully rendered the same getUIBulletpoints data.
@@ -5769,6 +6581,7 @@
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
+		::UnseenBanner.WorldCombatDialogNav.reset();
 		::UnseenBanner.SheetNav.reset();
 		__original();
 	}
@@ -5784,6 +6597,7 @@
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
+		::UnseenBanner.WorldCombatDialogNav.reset();
 		::UnseenBanner.SheetNav.reset();
 		__original();
 	}
@@ -5799,7 +6613,22 @@
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
+		::UnseenBanner.WorldCombatDialogNav.reset();
 		::UnseenBanner.SheetNav.reset();
+		__original();
+	}
+
+	// A CharacterScreen opened from the encounter dialog is a temporary overlay,
+	// not a new MenuStack level. Its native close button and C/I/Escape all reach
+	// this same funnel, so return to the still-visible dialog without popping the
+	// encounter's own backstep.
+	q.character_screen_onClosePressed = @(__original) function()
+	{
+		if (::UnseenBanner.WorldCombatDialogNav.isEditingFormation())
+		{
+			::UnseenBanner.WorldCombatDialogNav.closeFormation(this);
+			return;
+		}
 		__original();
 	}
 
@@ -5890,17 +6719,18 @@
 		// class and SheetNav used in tactical mode, but its brother order comes
 		// from World.Assets.getFormation(). Navigate on keydown with controlled
 		// repeat and consume keyup as well, so A/D never pan the hidden map. The one
-		// exception is Enter on the identity row: open the native name editor on
-		// keyup, after the triggering press has ended, or that same press immediately
-		// confirms and closes the popup. C, I and Escape are absent from SheetNav and
-		// therefore retain the world's native close path.
+		// exception is Enter on identity and formation rows: open/arm on keyup, after
+		// the triggering press has ended, or that same press can confirm the new state.
+		// Escape is likewise consumed through keyup only while a formation move is
+		// armed, preventing its release from leaking through and closing the screen.
+		// C, I and ordinary Escape retain the world's native close path.
 		if (this.isInCharacterScreen()
 			&& ::UnseenBanner.SheetNav.isActive()
 			&& !this.m.CharacterScreen.isAnimating()
 			&& ::UnseenBanner.SheetNav.handles(code))
 		{
-			local renameOnRelease = ::UnseenBanner.SheetNav.isRenameKey(code);
-			if (_key.getState() == 1 && !renameOnRelease)
+			local handleOnRelease = ::UnseenBanner.SheetNav.isReleaseHandledKey(code);
+			if (_key.getState() == 1 && !handleOnRelease)
 			{
 				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
 				{
@@ -5910,10 +6740,27 @@
 			else if (_key.getState() == 0)
 			{
 				::UnseenBanner.KeyGate.release(code);
-				if (renameOnRelease)
+				if (handleOnRelease)
 				{
-					::UnseenBanner.SheetNav.openRenameOnRelease(this.m.CharacterScreen);
+					::UnseenBanner.SheetNav.onReleaseHandledKey(code,
+						this.m.CharacterScreen);
 				}
+			}
+			return true;
+		}
+
+		// World encounter report and actions. CharacterScreen takes priority while
+		// its formation overlay is up; after it closes, Up/Down/Home/End review the
+		// scout report, Enter invokes the selected native action and Escape uses the
+		// visible retreat button only when the encounter actually provides one.
+		if (!this.isInCharacterScreen()
+			&& this.m.CombatDialog != null
+			&& this.m.CombatDialog.isVisible()
+			&& ::UnseenBanner.WorldCombatDialogNav.handles(code))
+		{
+			if (_key.getState() == 0 && !this.m.CombatDialog.isAnimating())
+			{
+				::UnseenBanner.WorldCombatDialogNav.onKey(code, this);
 			}
 			return true;
 		}
@@ -6068,6 +6915,7 @@
 		// requires the character, town and Retinue screens to be down, so map keys
 		// never fire inside any of those modal surfaces.
 		local mapFree = !::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive()
+			&& !::UnseenBanner.WorldCombatDialogNav.isActive()
 			&& !this.isInCharacterScreen()
 			&& !this.m.WorldTownScreen.isVisible()
 			&& (this.m.CampfireScreen == null || !this.m.CampfireScreen.isVisible());
@@ -6088,7 +6936,7 @@
 			if (_key.getState() == 0)
 			{
 				::UnseenBanner.WorldStatus.reset();
-				::UnseenBanner.WorldSurvey.onKey(code);
+				::UnseenBanner.WorldSurvey.onKey(code, this);
 			}
 
 			return true;
@@ -6121,10 +6969,11 @@
 			::UnseenBanner.WorldMove.onBrake();
 		}
 
-		// Enter (phase 4.5): enter the settlement/location the party is standing on. Only
-		// consumed when there is actually something to enter, so with nothing there the
-		// key falls through to its native zoom-reset. Acts on release (the map delivers
-		// it, and native Enter uses press).
+		// Enter (phase 4.5): engage a hostile party at contact range, or enter/interact
+		// with the settlement or location under the party. This includes hostile camps
+		// and event locations, not only isEnterable towns. Only consumed when there is
+		// a valid target, so with nothing there the key falls through to its native
+		// zoom-reset. Acts on release (the map delivers it, and native Enter uses press).
 		if (mapFree && code == ::UnseenBanner.WorldEnter.EnterKey && _key.getState() == 0)
 		{
 			if (::UnseenBanner.WorldEnter.tryEnter(this)) return true;
@@ -6411,8 +7260,11 @@
 		{
 			// strategic_onQueryBrothersList feeds this same 27-slot formation to
 			// the native JS. SheetNav filters its null slots but retains formation
-			// order, so every next/previous operation remains in lockstep.
-			::UnseenBanner.SheetNav.open(null, ::World.Assets.getFormation(), this);
+			// order, so every next/previous operation remains in lockstep. A
+			// pre-combat review opens directly on Formation instead of briefly
+			// announcing the ordinary character-sheet first.
+			::UnseenBanner.SheetNav.open(null, ::World.Assets.getFormation(), this,
+				::UnseenBanner.WorldCombatDialogNav.initialCharacterSection());
 		}
 	}
 
@@ -6420,5 +7272,6 @@
 	{
 		__original();
 		::UnseenBanner.SheetNav.close();
+		::UnseenBanner.WorldCombatDialogNav.onFormationClosed();
 	}
 });
