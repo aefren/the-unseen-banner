@@ -122,6 +122,7 @@ accident.
 | Q W E / A S D | Move the cursor to the 6 neighbouring tiles (Q=NW, W=N, E=NE, A=SW, S=S, D=SE) |
 | X | Recenter the cursor on the active brother |
 | Z / Shift+Z | Cycle living, visible enemies by distance (Z farther, Shift+Z nearer) |
+| H / Shift+H | Cycle living allies by distance, excluding the active brother (H farther, Shift+H nearer) |
 | V | Inspect the unit under the cursor (health, armor, fatigue, morale, effects, when it acts) |
 | G | Confirm on the cursor tile: move there, or use the armed skill |
 | T | Active brother's status (health, action points, fatigue, morale) |
@@ -167,7 +168,8 @@ in the real game.
   - Load / save campaign (main menu and world-map pause menu).
 - **Phase 3 — Tactical combat (complete).**
   - Spoken combat log (hits, misses, morale, wounds, deaths, rounds).
-  - Keyboard tile cursor with terrain, occupant, distance and direction.
+  - Keyboard tile cursor with terrain, occupant, distance and direction, plus
+    enemy and ally cycling (Z / Shift+Z and H / Shift+H).
   - Skills with valid targets and hit chance before confirming.
   - On-demand readouts: status, turn order, enemies, skills, inspection.
   - Enemies adjacent to a tile (Shift+B).
