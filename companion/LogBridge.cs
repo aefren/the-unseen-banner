@@ -135,6 +135,8 @@ namespace TheUnseenBanner.Companion
                     "world.survey.screen" => ComposeSurveyScreen(detalle),
                     "world.survey.item" => ComposeSurveyItem(texto, valor, detalle),
                     "world.obituary.entry" => ComposeObituaryEntry(texto, detalle),
+                    "world.retinue.slot.follower" => ComposeRetinueSlot(texto, valor, detalle),
+                    "world.retinue.hire.follower" => ComposeRetinueFollower(texto, valor, detalle),
                     "world.move.step" => L10n.F("world.move.step", L10n.T("world.terrain." + valor)),
                     "world.move.stopped" => L10n.F("world.move.stopped", L10n.T("world.terrain." + valor)),
                     _ => categoria.Length > 0
@@ -409,6 +411,68 @@ namespace TheUnseenBanner.Companion
 
             return L10n.F("world.obituary.entry",
                 name, daysText, battlesText, killsText, demiseText);
+        }
+
+        /// <summary>Compose one occupied seat on the P/Retinue main screen.
+        /// <paramref name="detail"/> packs "description TAB newline-separated
+        /// effects". Names and prose belong to the game; seat/action framing
+        /// and labels remain localizable here.</summary>
+        private static string ComposeRetinueSlot(string name, string seat, string detail)
+        {
+            string[] p = detail.Split('\t');
+            string description = p.Length > 0 ? p[0] : "";
+            string effects = p.Length > 1 ? JoinNames(p[1]) : "";
+
+            var parts = new List<string>
+            {
+                L10n.F("world.retinue.slot.follower.base", name, seat)
+            };
+            if (description.Length > 0)
+                parts.Add(L10n.F("world.retinue.slot.description", description));
+            if (effects.Length > 0)
+                parts.Add(L10n.F("world.retinue.slot.effects", effects));
+            return string.Join(" ", parts);
+        }
+
+        /// <summary>Compose one candidate from the P/Retinue hire list. Detail
+        /// packs "status TAB description TAB effects TAB requirements"; effects
+        /// are newline-separated game strings and each requirement starts with
+        /// 1 (met) or 0 (unmet). The compact wire format keeps every added label
+        /// in <see cref="L10n"/>.</summary>
+        private static string ComposeRetinueFollower(string name, string cost, string detail)
+        {
+            string[] p = detail.Split('\t');
+            string status = p.Length > 0 ? p[0] : "locked";
+            string description = p.Length > 1 ? p[1] : "";
+            string effects = p.Length > 2 ? JoinNames(p[2]) : "";
+            string requirements = p.Length > 3 ? p[3] : "";
+
+            string statusKey = status switch
+            {
+                "available" => "world.retinue.hire.follower.available",
+                "unaffordable" => "world.retinue.hire.follower.unaffordable",
+                _ => "world.retinue.hire.follower.locked",
+            };
+            var parts = new List<string> { L10n.F(statusKey, name, cost) };
+            if (description.Length > 0)
+                parts.Add(L10n.F("world.retinue.hire.description", description));
+            if (effects.Length > 0)
+                parts.Add(L10n.F("world.retinue.hire.effects", effects));
+
+            var requirementParts = new List<string>();
+            foreach (string line in requirements.Split('\n'))
+            {
+                if (line.Length < 2) continue;
+                string key = line[0] == '1'
+                    ? "world.retinue.hire.requirement.met"
+                    : "world.retinue.hire.requirement.unmet";
+                requirementParts.Add(L10n.F(key, line.Substring(1)));
+            }
+            if (requirementParts.Count > 0)
+                parts.Add(L10n.F("world.retinue.hire.requirements",
+                    string.Join(", ", requirementParts)));
+
+            return string.Join(" ", parts);
         }
 
         /// <summary>Compose the turn-order readout (phase 3.4): the Tab key. The

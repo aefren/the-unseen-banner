@@ -32,18 +32,20 @@ before starting a serious campaign:
 - ✅ **Tactical combat**: the most complete part. Tile cursor, skills with valid
   targets and hit chance, combat log, brother status, turn order, character
   sheet, result screen and loot.
-- ⚠️ **World map**: only a company-status readout (the G key). **Missing** the
-  positional sonar (settlements, contracts, enemy parties, locations), the nearby
-  list and the town screens. Moving around the map is not comfortable blind yet.
-- ❌ **Company management** (inventory, market, world-map character sheet,
-  recruitment, ambitions): **not accessible yet**.
+- ⚠️ **World map**: directional movement, nearby-entity inspection, company
+  status, town entry, town contracts, obituary, factions/relations and the
+  Retinue are playable by ear. **Missing** the positional sonar, destination
+  beacon and the mouse-only building sub-dialogs.
+- ⚠️ **Company management**: the Retinue is accessible, including follower
+  hiring/replacement and cart upgrades. Inventory, market, world-map character
+  sheet, brother recruitment and ambitions are not accessible yet.
 - ❌ **Pre-battle deployment** (arranging your formation before a fight): still
   mouse-only.
 
-In short: **tactical combat is well covered**, but the world map and
-between-battle management still have significant gaps. It is not that the game is
-"only playable up to the tutorial" — it is that some surfaces are done and others
-are not (see the [Roadmap](#roadmap)).
+In short: **tactical combat is well covered** and the basic world-map loop is
+usable, but between-battle management still has significant gaps. It is not that
+the game is "only playable up to the tutorial" — it is that some surfaces are
+done and others are not (see the [Roadmap](#roadmap)).
 
 ---
 
@@ -108,9 +110,13 @@ acts on it and consumes the press during your turn.
 
 | Key | Action |
 |---|---|
+| Q W E / A S D | Move the company one neighbouring world tile; hold Shift to keep marching; Space stops and pauses |
+| Enter | Enter a settlement or location when standing on it |
+| B | Open perceived nearby parties, settlements and locations; Up/Down review, Home/End jump, V opens details, B closes |
 | G | Company status: day, brothers, money, wages, food, active contract and current objectives |
 | O | Open the obituary; Up/Down review the fallen, Home/End jump to the start/end, O or Escape closes |
 | R | Open factions and relations; Up/Down review, Home/End jump to the start/end, R or Escape closes |
+| P | Open the Retinue; Up/Down review, Home/End jump, Enter hires/replaces followers or upgrades the cart, P or Escape goes back |
 
 On an **event screen**: the arrows move through the options and Enter picks one
 (the native number keys 1-6 still work). A first Enter with nothing focused
@@ -180,7 +186,14 @@ in the real game.
   - Result screen and loot as a navigable list.
   - Confirmation dialog (end round / quit battle) made accessible.
 - **Phase 4 — World map (partial).**
-  - Company-status readout on the pause (the G key).
+  - Directional company movement and pause-state announcements.
+  - Perception-safe nearby list (B) with entity details (V).
+  - Company-status and active-objective list (G).
+  - Keyboard entry into settlements and a navigable town frame for contracts.
+- **Phase 5 — Special screens (partial).**
+  - Obituary (O) and factions/relations (R) as navigable lists.
+  - Retinue (P): seats, follower details, requirements, hiring/replacement and
+    cart upgrades with accessible confirmations.
 
 ### Pending
 
@@ -198,12 +211,12 @@ in the real game.
   - Verify by ear the flow of loading a save *during* a battle.
 - **Phase 4 — World map (real-time, pausable).**
   - Positional sonar (settlements, contracts, enemy parties, locations).
-  - Perception parity: ping only what has been sighted (fog of war).
-  - Navigable nearby list + persistent beacon when a destination is set.
-  - Town screen (buildings, recruits, contracts).
-- **Phase 5 — Polish and distribution (not started).**
+  - Persistent beacon and travel-to-selection from the nearby list.
+  - Accessible building sub-dialogs (market, recruits, tavern and others).
+- **Phase 5 — Polish and distribution (partial).**
   - Configurable verbosity and every parameter in config.
-  - Special screens (company creation, ambitions, end screen, DLC origins).
+  - Remaining special screens (company creation, ambitions, end screen,
+    DLC origins).
   - Package for Nexus (standard mod format + companion app).
   - Publish on audiogames.net, find blind testers and iterate.
 

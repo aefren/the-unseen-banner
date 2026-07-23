@@ -25,6 +25,7 @@
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/smoke_test.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/menu_nav.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/event_nav.js");
+::Hooks.registerJS("ui/mods/mod_unseen_banner/retinue_nav.js");
 ::Hooks.registerCSS("ui/mods/mod_unseen_banner/menu_nav.css");
 
 // Single choke point for every message sent to the companion app, so the
@@ -1339,6 +1340,458 @@
 	}
 };
 
+// Retinue screen (phase 5.2, P). Vanilla presents a scenic camp with a clickable
+// cart and five follower portraits, then a mouse-only two-pane hire dialog. Turn
+// both surfaces into semantic lists while keeping their visible native screens
+// and backend actions as the source of truth:
+//
+//   main: header, seats/assets, cart, five follower seats
+//   hire: header, money, one complete row per available follower
+//
+// Up/Down/Home/End and Enter act on keydown for immediate navigation. P and
+// Escape remain native on the main/hire screens (hire -> main -> map). Buying a
+// cart already opens vanilla's shared confirmation dialog; hiring gains the same
+// safe confirmation step before crowns are spent. retinue_nav.js mirrors the
+// Squirrel cursor into the visual selection without owning any game action.
+::UnseenBanner.WorldRetinue <- {
+	m = {
+		Screen = null,
+		Items = null,
+		ItemIndex = 0,
+		Mode = "",
+		Active = false,
+		DialogPending = false,
+		DialogItem = null,
+		PendingResult = null,
+		PendingFocusKind = "",
+		PendingFocusValue = null
+	},
+	Keys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end",
+		[39] = "activate"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function handles(_code)
+	{
+		return _code in this.Keys;
+	},
+	function isDialogPending()
+	{
+		return this.m.DialogPending;
+	},
+	function getDialogItem()
+	{
+		return this.m.DialogItem;
+	},
+	function item(_cat, _texto = "", _valor = "", _detalle = "", _action = null, _payload = null, _visual = "", _rosterIndex = -1)
+	{
+		return {
+			cat = _cat,
+			texto = _texto,
+			valor = _valor,
+			detalle = _detalle,
+			action = _action,
+			payload = _payload,
+			visual = _visual,
+			rosterIndex = _rosterIndex
+		};
+	},
+	function releaseKeys()
+	{
+		foreach( code, action in this.Keys )
+		{
+			::UnseenBanner.KeyGate.release(code);
+		}
+	},
+	function clearNavigation()
+	{
+		this.releaseKeys();
+		this.m.Screen = null;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Mode = "";
+		this.m.Active = false;
+	},
+	function reset()
+	{
+		this.clearNavigation();
+		this.m.DialogPending = false;
+		this.m.DialogItem = null;
+		this.m.PendingResult = null;
+		this.m.PendingFocusKind = "";
+		this.m.PendingFocusValue = null;
+	},
+	function onScreenHidden()
+	{
+		// A native confirmation temporarily hides the campfire screen. Preserve
+		// its pending result/focus so the rebuilt main screen can report the
+		// purchase; a real P/Escape close clears everything.
+		if (this.m.DialogPending) this.clearNavigation();
+		else this.reset();
+	},
+	function onDialogClosed()
+	{
+		this.m.DialogPending = false;
+		this.m.DialogItem = null;
+	},
+	function joinStrings(_values)
+	{
+		local result = "";
+		if (_values == null) return result;
+		foreach( value in _values )
+		{
+			if (value == null || value == "") continue;
+			if (result != "") result += "\n";
+			result += value;
+		}
+		return result;
+	},
+	function joinRequirements(_values)
+	{
+		local result = "";
+		if (_values == null) return result;
+		foreach( value in _values )
+		{
+			if (value == null || value.Text == null || value.Text == "") continue;
+			if (result != "") result += "\n";
+			result += (value.IsSatisfied ? "1" : "0") + value.Text;
+		}
+		return result;
+	},
+	function openMain(_screen)
+	{
+		this.clearNavigation();
+		if (_screen == null) return;
+		this.m.Screen = _screen;
+		this.m.Mode = "main";
+
+		local retinue = ::World.Retinue;
+		local slots = retinue.getCurrentFollowersForUI();
+		local items = [];
+		local hired = retinue.getNumberOfCurrentFollowers();
+		local unlocked = retinue.getNumberOfUnlockedSlots();
+		items.push(this.item("world.retinue.screen"));
+		items.push(this.item("world.retinue.seats", "" + hired, "" + unlocked, "" + slots.len()));
+		items.push(this.item("world.retinue.money", "" + ::World.Assets.getMoney()));
+		items.push(this.item("world.retinue.renown", ::World.Assets.getBusinessReputationAsText(), "" + ::World.Assets.getBusinessReputation()));
+
+		local upgrades = retinue.getInventoryUpgrades();
+		local cartName = ::Const.Strings.InventoryHeader[upgrades];
+		if (upgrades < ::Const.World.InventoryUpgradeCosts.len())
+		{
+			items.push(this.item(
+				"world.retinue.cart.upgrade",
+				cartName,
+				::Const.Strings.InventoryUpgradeHeader[upgrades],
+				"" + ::Const.World.InventoryUpgradeCosts[upgrades],
+				"cart",
+				upgrades,
+				"cart"
+			));
+		}
+		else
+		{
+			items.push(this.item("world.retinue.cart.max", cartName, "", "", null, null, "cart"));
+		}
+
+		foreach( i, slot in slots )
+		{
+			local seat = "" + (i + 1);
+			if (slot.ID == "locked")
+			{
+				local reputationIndex = ::Const.FollowerSlotRequirements[i];
+				items.push(this.item(
+					"world.retinue.slot.locked",
+					seat,
+					::Const.Strings.BusinessReputation[reputationIndex],
+					"" + ::Const.BusinessReputation[reputationIndex],
+					null,
+					i,
+					"slot"
+				));
+			}
+			else if (slot.ID == "free")
+			{
+				items.push(this.item("world.retinue.slot.free", seat, "", "", "slot", i, "slot"));
+			}
+			else
+			{
+				local follower = retinue.getFollower(slot.ID);
+				if (follower == null) continue;
+				local detail = follower.getDescription() + "\t" + this.joinStrings(follower.getEffects());
+				items.push(this.item(
+					"world.retinue.slot.follower",
+					follower.getName(),
+					seat,
+					detail,
+					"slot",
+					i,
+					"slot"
+				));
+			}
+		}
+
+		this.m.Items = items;
+		this.m.ItemIndex = 0;
+		this.restorePendingFocus();
+		this.m.Active = true;
+		this.syncVisualFocus();
+
+		if (this.m.PendingResult != null)
+		{
+			local result = this.m.PendingResult;
+			this.m.PendingResult = null;
+			this.m.PendingFocusKind = "";
+			this.m.PendingFocusValue = null;
+			::UnseenBanner.sendMessage("interrupt", result.texto, result.cat, result.valor, result.detalle);
+		}
+		else
+		{
+			this.announceItem();
+		}
+	},
+	function openHire(_screen, _module)
+	{
+		this.clearNavigation();
+		if (_screen == null || _module == null) return;
+		this.m.Screen = _screen;
+		this.m.Mode = "hire";
+
+		local data = _module.queryHireInformation();
+		local roster = data != null ? data.Roster : null;
+		local count = roster != null ? roster.len() : 0;
+		local slot = _module.m.CurrentSlot;
+		local current = ::World.Retinue.getCurrentFollowersForUI()[slot];
+		local items = [];
+		if (current.ID == "free")
+		{
+			items.push(this.item("world.retinue.hire.screen.free", "" + (slot + 1), "" + count));
+		}
+		else
+		{
+			local oldFollower = ::World.Retinue.getFollower(current.ID);
+			local oldName = oldFollower != null ? oldFollower.getName() : "";
+			items.push(this.item("world.retinue.hire.screen.replace", "" + (slot + 1), "" + count, oldName));
+		}
+		items.push(this.item("world.retinue.money", "" + ::World.Assets.getMoney()));
+
+		if (roster != null)
+		{
+			foreach( i, follower in roster )
+			{
+				if (follower == null) continue;
+				local status = !follower.IsUnlocked
+					? "locked"
+					: (::World.Assets.getMoney() < follower.Cost ? "unaffordable" : "available");
+				local detail = status
+					+ "\t" + follower.Description
+					+ "\t" + this.joinStrings(follower.Effects)
+					+ "\t" + this.joinRequirements(follower.Requirements);
+				items.push(this.item(
+					"world.retinue.hire.follower",
+					follower.Name,
+					"" + follower.Cost,
+					detail,
+					status == "available" ? "hire" : null,
+					follower.ID,
+					"follower",
+					i
+				));
+			}
+		}
+
+		if (count == 0)
+		{
+			items.push(this.item("world.retinue.hire.none"));
+		}
+
+		this.m.Items = items;
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.syncVisualFocus();
+		this.announceItem();
+	},
+	function restorePendingFocus()
+	{
+		if (this.m.Items == null || this.m.PendingFocusKind == "") return;
+		foreach( i, it in this.m.Items )
+		{
+			if (it.visual != this.m.PendingFocusKind) continue;
+			if (this.m.PendingFocusKind == "cart" || it.payload == this.m.PendingFocusValue)
+			{
+				this.m.ItemIndex = i;
+				return;
+			}
+		}
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active || this.m.Items == null || this.m.Items.len() == 0) return;
+		local what = this.Keys[_code];
+		if (what == "activate")
+		{
+			this.activate();
+			return;
+		}
+		if (what == "up") this.m.ItemIndex -= 1;
+		else if (what == "down") this.m.ItemIndex += 1;
+		else if (what == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		this.syncVisualFocus();
+		this.announceItem();
+	},
+	function activate()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0 || this.m.Screen == null) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		if (this.m.Mode == "main" && it.action == "slot")
+		{
+			this.m.Screen.onSlotClicked(it.payload);
+		}
+		else if (this.m.Mode == "main" && it.action == "cart")
+		{
+			this.beginCartUpgrade();
+		}
+		else if (this.m.Mode == "hire" && it.action == "hire")
+		{
+			this.beginHire(it.payload);
+		}
+		else
+		{
+			this.announceItem();
+		}
+	},
+	function beginCartUpgrade()
+	{
+		local upgrades = ::World.Retinue.getInventoryUpgrades();
+		if (upgrades >= ::Const.World.InventoryUpgradeCosts.len())
+		{
+			this.announceItem();
+			return;
+		}
+		this.m.DialogPending = true;
+		this.m.DialogItem = null;
+		this.m.Screen.getMainDialogModule().onCartClicked();
+	},
+	function beginHire(_id)
+	{
+		local follower = ::World.Retinue.getFollower(_id);
+		if (follower == null)
+		{
+			this.announceItem();
+			return;
+		}
+		follower.evaluate();
+		if (!follower.isUnlocked() || ::World.Assets.getMoney() < follower.getCost())
+		{
+			this.announceItem();
+			return;
+		}
+
+		local hireModule = this.m.Screen.getHireDialogModule();
+		local slot = hireModule.m.CurrentSlot;
+		local current = ::World.Retinue.getCurrentFollowersForUI()[slot];
+		if (current.ID == "free")
+		{
+			this.m.DialogItem = this.item(
+				"world.retinue.hire.confirm.free",
+				follower.getName(),
+				"" + follower.getCost(),
+				"" + (slot + 1)
+			);
+		}
+		else
+		{
+			local oldFollower = ::World.Retinue.getFollower(current.ID);
+			local oldName = oldFollower != null ? oldFollower.getName() : "";
+			this.m.DialogItem = this.item(
+				"world.retinue.hire.confirm.replace",
+				follower.getName(),
+				"" + follower.getCost(),
+				oldName
+			);
+		}
+
+		this.m.DialogPending = true;
+		local followerID = follower.getID();
+		local followerName = follower.getName();
+		this.m.Screen.getMainDialogModule().showDialogPopup(
+			followerName,
+			follower.getDescription(),
+			function()
+			{
+				::UnseenBanner.WorldRetinue.finishHire(hireModule, followerID, followerName, slot);
+			},
+			null
+		);
+	},
+	function finishHire(_module, _id, _name, _slot)
+	{
+		local result = _module.onHireFollower(_id);
+		if (result != null && result.Result == 0)
+		{
+			this.m.PendingResult = this.item(
+				"world.retinue.hire.done",
+				_name,
+				"" + ::World.Assets.getMoney(),
+				"" + (_slot + 1)
+			);
+			this.m.PendingFocusKind = "slot";
+			this.m.PendingFocusValue = _slot;
+		}
+		else
+		{
+			this.m.PendingResult = this.item("world.retinue.hire.failed", _name);
+		}
+	},
+	function onCartUpgraded()
+	{
+		local upgrades = ::World.Retinue.getInventoryUpgrades();
+		this.m.PendingResult = this.item(
+			"world.retinue.cart.done",
+			::Const.Strings.InventoryHeader[upgrades],
+			"" + ::World.Assets.getMoney()
+		);
+		this.m.PendingFocusKind = "cart";
+		this.m.PendingFocusValue = null;
+	},
+	function syncVisualFocus()
+	{
+		if (this.m.Screen == null || this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		if (this.m.Mode == "main")
+		{
+			local module = this.m.Screen.getMainDialogModule();
+			if (module == null || module.m.JSHandle == null) return;
+			module.m.JSHandle.asyncCall("setAccessibilityFocus", {
+				Type = it.visual,
+				Index = it.payload
+			});
+		}
+		else if (this.m.Mode == "hire")
+		{
+			local module = this.m.Screen.getHireDialogModule();
+			if (module == null || module.m.JSHandle == null) return;
+			module.m.JSHandle.asyncCall("setAccessibilityFocus", it.rosterIndex);
+		}
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
+	}
+};
+
 // Tactical tile cursor (phase 3.2). A keyboard cursor over the hex grid so a
 // blind player can survey the battlefield: it starts on the active man and
 // walks the six hex neighbours, announcing each tile's terrain and what stands
@@ -2582,13 +3035,16 @@
 		Active = false,
 		Title = "",
 		Text = "",
-		IsMonologue = false
+		IsMonologue = false,
+		Context = ""
 	},
 	// enter activates the focused button; escape cancels (native does nothing with it
 	// while the dialog is up). Up/Down walk the list. Codes are MSU KeyMapSQ, not ASCII.
 	Keys = {
 		[49] = "up",
 		[51] = "down",
+		[45] = "home",
+		[44] = "end",
 		[39] = "activate",
 		[41] = "cancel"
 	},
@@ -2598,7 +3054,12 @@
 	},
 	function handles(_code)
 	{
-		return _code in this.Keys;
+		// P is an additional Back key only for the P/Retinue confirmation.
+		return _code in this.Keys || (this.m.Context == "world.retinue" && _code == 26);
+	},
+	function isContext(_context)
+	{
+		return this.m.Context == _context;
 	},
 	function reset()
 	{
@@ -2608,26 +3069,38 @@
 		this.m.Title = "";
 		this.m.Text = "";
 		this.m.IsMonologue = false;
+		this.m.Context = "";
 	},
-	function item(_cat, _texto = "", _valor = "", _action = null)
+	function item(_cat, _texto = "", _valor = "", _action = null, _detalle = "")
 	{
-		return { cat = _cat, texto = _texto, valor = _valor, action = _action };
+		return { cat = _cat, texto = _texto, valor = _valor, action = _action, detalle = _detalle };
 	},
 	// Captured from dialog_screen.show before the modal animates in; open() then builds
 	// the list once onScreenShown confirms the DOM is fully up (the deterministic point,
 	// same pattern as the event and combat-result screens).
-	function prime(_title, _text, _isMonologue)
+	function prime(_title, _text, _isMonologue, _context = "tactical")
 	{
 		this.m.Title = _title == null ? "" : _title;
 		this.m.Text = _text == null ? "" : _text;
 		this.m.IsMonologue = _isMonologue;
+		this.m.Context = _context;
 	},
 	function open()
 	{
 		local items = [];
 		// The message row carries the game's own title and body verbatim (cleaned on the
 		// companion side); the framing and the navigation hint stay in L10n.
-		items.push(this.item("combat.dialog.screen", this.m.Text, this.m.Title));
+		local retinueItem = this.m.Context == "world.retinue"
+			? ::UnseenBanner.WorldRetinue.getDialogItem()
+			: null;
+		if (retinueItem != null)
+		{
+			items.push(this.item(retinueItem.cat, retinueItem.texto, retinueItem.valor, null, retinueItem.detalle));
+		}
+		else
+		{
+			items.push(this.item("combat.dialog.screen", this.m.Text, this.m.Title));
+		}
 		if (this.m.IsMonologue)
 		{
 			// An info popup: a single "Ok", no cancel button or callback.
@@ -2649,8 +3122,13 @@
 	},
 	function onKey(_code)
 	{
+		if (_code == 26)
+		{
+			this.cancel();
+			return;
+		}
 		local what = this.Keys[_code];
-		if (what == "up" || what == "down") this.move(what);
+		if (what == "up" || what == "down" || what == "home" || what == "end") this.move(what);
 		else if (what == "activate") this.activate();
 		else if (what == "cancel") this.cancel();
 	},
@@ -2658,7 +3136,9 @@
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		if (_direction == "up") this.m.ItemIndex -= 1;
-		else this.m.ItemIndex += 1;
+		else if (_direction == "down") this.m.ItemIndex += 1;
+		else if (_direction == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
 
 		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
 		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
@@ -2685,7 +3165,7 @@
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local it = this.m.Items[this.m.ItemIndex];
-		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor);
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
 	}
 };
 
@@ -2875,6 +3355,51 @@
 	}
 });
 
+// Retinue (phase 5.2). The screen-level shown event covers the first P opening.
+// Returning from the hire submodule does not re-show the screen itself, so the
+// main/hire module lifecycle hooks below rebuild at those transitions too.
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/world_campfire_screen", function(q) {
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldRetinue.openMain(this);
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldRetinue.onScreenHidden();
+	}
+});
+
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/modules/world_campfire_screen/campfire_main_dialog_module", function(q) {
+	q.onModuleShown = @(__original) function()
+	{
+		__original();
+		if (this.m.Parent != null && this.m.Parent.isVisible())
+		{
+			::UnseenBanner.WorldRetinue.openMain(this.m.Parent);
+		}
+	}
+
+	q.onUpgradeInventorySpace = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldRetinue.onCartUpgraded();
+	}
+});
+
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/modules/world_campfire_screen/campfire_hire_dialog_module", function(q) {
+	q.onModuleShown = @(__original) function()
+	{
+		__original();
+		if (this.m.Parent != null && this.m.Parent.isVisible())
+		{
+			::UnseenBanner.WorldRetinue.openHire(this.m.Parent, this);
+		}
+	}
+});
+
 // Town screen (phase 4.5). onScreenShown is the deterministic point at which the
 // settlement screen's DOM is up (same pattern as the event screen), so the flattened
 // building/contract list is built and announced there; onScreenHidden clears it.
@@ -2915,9 +3440,9 @@
 // Confirmation dialog (dialog_screen, the shared Yes/No modal). show() is where the
 // title/body arrive, so DialogNav is primed there; onScreenShown is the deterministic
 // point the modal is fully up, so the list is built and announced there (same pattern
-// as the event and combat-result screens); onScreenHidden clears it. Gated to battle
-// only (::Tactical.isActive()): the same class serves the world map, whose dialogs
-// stay on vanilla behavior for now (roadmap). Keys are driven from tactical_state.
+// as the event and combat-result screens); onScreenHidden clears it. It serves
+// tactical dialogs and the Retinue's cart/hiring confirmations; other world-map
+// users remain untouched. Their keys are driven by their respective state hooks.
 ::UnseenBanner.Mod.hook("scripts/ui/screens/dialog_screen", function(q) {
 	q.show = @(__original) function( _title, _text, _doneCallback, _okCallback = null, _cancelCallback = null, _isMonologue = false )
 	{
@@ -2926,12 +3451,16 @@
 		{
 			::UnseenBanner.DialogNav.prime(_title, _text, _isMonologue);
 		}
+		else if (::UnseenBanner.WorldRetinue.isDialogPending())
+		{
+			::UnseenBanner.DialogNav.prime(_title, _text, _isMonologue, "world.retinue");
+		}
 	}
 
 	q.onScreenShown = @(__original) function()
 	{
 		__original();
-		if (::Tactical.isActive())
+		if (::Tactical.isActive() || ::UnseenBanner.DialogNav.isContext("world.retinue"))
 		{
 			::UnseenBanner.DialogNav.open();
 		}
@@ -2940,7 +3469,12 @@
 	q.onScreenHidden = @(__original) function()
 	{
 		__original();
+		local wasRetinue = ::UnseenBanner.DialogNav.isContext("world.retinue");
 		::UnseenBanner.DialogNav.close();
+		if (wasRetinue)
+		{
+			::UnseenBanner.WorldRetinue.onDialogClosed();
+		}
 	}
 });
 
@@ -2968,6 +3502,7 @@
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
+		::UnseenBanner.WorldRetinue.reset();
 		__original();
 	}
 
@@ -2981,6 +3516,7 @@
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
+		::UnseenBanner.WorldRetinue.reset();
 		__original();
 	}
 
@@ -2994,6 +3530,7 @@
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
+		::UnseenBanner.WorldRetinue.reset();
 		__original();
 	}
 
@@ -3080,6 +3617,50 @@
 
 		local code = _key.getKey();
 
+		// Retinue confirmation (cart upgrade or follower hire). The campfire screen
+		// is temporarily hidden while dialog_screen is visible, so this must run
+		// before checking the P screen itself or the plain-map guards. Use the same
+		// keydown cadence as the Retinue lists; P and Escape both cancel here.
+		if (::UnseenBanner.DialogNav.isActive()
+			&& ::UnseenBanner.DialogNav.isContext("world.retinue")
+			&& ::UnseenBanner.DialogNav.handles(code))
+		{
+			if (_key.getState() == 1)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.DialogNav.onKey(code);
+				}
+			}
+			else if (_key.getState() == 0)
+			{
+				::UnseenBanner.KeyGate.release(code);
+			}
+			return true;
+		}
+
+		// Retinue (phase 5.2): main and hire lists use immediate keydown navigation
+		// with controlled repeat. P and Escape are absent from WorldRetinue.Keys, so
+		// vanilla retains its native hire -> main -> map back path.
+		if (this.m.CampfireScreen != null
+			&& this.m.CampfireScreen.isVisible()
+			&& ::UnseenBanner.WorldRetinue.isActive()
+			&& ::UnseenBanner.WorldRetinue.handles(code))
+		{
+			if (_key.getState() == 1)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldRetinue.onKey(code);
+				}
+			}
+			else if (_key.getState() == 0)
+			{
+				::UnseenBanner.KeyGate.release(code);
+			}
+			return true;
+		}
+
 		// Obituary (phase 5.2): navigate the read-only list on keydown so every tap
 		// responds immediately. Consume keyup too, using it only to clear KeyGate;
 		// this prevents vanilla camera/list input from seeing half of the keystroke.
@@ -3148,9 +3729,11 @@
 		// opening or acting on one closes the other — so Up/Down always has a single
 		// owner. Any unrelated map action closes both before passing through, so arrows
 		// cannot remain captured after the player resumes normal play. "Map free" also
-		// requires the town screen to be down, so map keys never fire inside a town.
+		// requires town and Retinue screens to be down, so map keys never fire inside
+		// either modal surface.
 		local mapFree = !::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive()
-			&& !this.m.WorldTownScreen.isVisible();
+			&& !this.m.WorldTownScreen.isVisible()
+			&& (this.m.CampfireScreen == null || !this.m.CampfireScreen.isVisible());
 
 		if (mapFree && ::UnseenBanner.WorldStatus.handles(code))
 		{
