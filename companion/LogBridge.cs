@@ -160,6 +160,13 @@ namespace TheUnseenBanner.Companion
                     "world.market.error" => L10n.T("world.market.error." + valor),
                     string key when key.StartsWith("world.market.result.", StringComparison.Ordinal)
                         => L10n.F(key, texto, valor, detalle),
+                    "world.recruit.candidate" => ComposeRecruitCandidate(texto, valor, detalle),
+                    "world.recruit.empty" => ComposeRecruitEmpty(valor, detalle),
+                    "world.recruit.action" => ComposeRecruitAction(texto, valor, detalle),
+                    "world.recruit.actions.none" => L10n.F(categoria, texto),
+                    "world.recruit.error" => L10n.T("world.recruit.error." + valor),
+                    string key when key.StartsWith("world.recruit.result.", StringComparison.Ordinal)
+                        => L10n.F(key, texto, valor, detalle),
                     "world.character.perk" => ComposeWorldPerk(texto, valor, detalle),
                     "world.character.formation.slot" => ComposeFormationSlot(texto, valor, detalle),
                     "tooltip.detail" => ComposeTooltipDetail(texto, valor, detalle),
@@ -393,6 +400,71 @@ namespace TheUnseenBanner.Companion
                 + " " + L10n.T("world.market.confirm.choice." + choice) + ". "
                 + L10n.F("world.market.confirm.choice.position", index, total);
             return opened ? L10n.F("world.market.confirm.opened", result) : result;
+        }
+
+        /// <summary>Compose a recruit row from live game facts. Squirrel packs
+        /// "level|hire|daily|tryout|tried|trait-count|index|total|opened|money".
+        /// Hidden traits are never transmitted: before a native tryout we announce
+        /// only that they remain unknown, preserving vanilla information parity.</summary>
+        private static string ComposeRecruitCandidate(string name, string background, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string level = parts.Length > 0 ? parts[0] : "";
+            string hire = parts.Length > 1 ? parts[1] : "";
+            string daily = parts.Length > 2 ? parts[2] : "";
+            string tryout = parts.Length > 3 ? parts[3] : "";
+            bool tried = parts.Length > 4 && parts[4] == "1";
+            int traitCount = parts.Length > 5 &&
+                int.TryParse(parts[5], out int parsedTraits) ? parsedTraits : 0;
+            string index = parts.Length > 6 ? parts[6] : "1";
+            string total = parts.Length > 7 ? parts[7] : "1";
+            bool opened = parts.Length > 8 && parts[8] == "1";
+            string money = parts.Length > 9 ? parts[9] : "";
+
+            string result = L10n.F("world.recruit.candidate",
+                name, background, level, hire, daily);
+            if (!tried)
+            {
+                result += " " + L10n.F("world.recruit.tryout.unknown", tryout);
+            }
+            else if (traitCount == 0)
+            {
+                result += " " + L10n.T("world.recruit.tryout.none");
+            }
+            else if (traitCount == 1)
+            {
+                result += " " + L10n.T("world.recruit.tryout.one");
+            }
+            else
+            {
+                result += " " + L10n.F("world.recruit.tryout.count", traitCount);
+            }
+
+            result += " " + L10n.F("world.recruit.position", index, total);
+            return opened ? L10n.F("world.recruit.screen", money, result) : result;
+        }
+
+        private static string ComposeRecruitEmpty(string money, string detail)
+        {
+            string result = L10n.F("world.recruit.empty", money);
+            return detail == "1"
+                ? L10n.F("world.recruit.empty.opened", result)
+                : result;
+        }
+
+        private static string ComposeRecruitAction(string candidateName, string action, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string price = parts.Length > 0 ? parts[0] : "";
+            string index = parts.Length > 1 ? parts[1] : "1";
+            string total = parts.Length > 2 ? parts[2] : "1";
+            bool opened = parts.Length > 3 && parts[3] == "1";
+
+            string label = L10n.F("world.recruit.action." + action, price);
+            string result = L10n.F("world.recruit.action.for_candidate",
+                label, candidateName);
+            result += " " + L10n.F("world.recruit.action.position", index, total);
+            return opened ? L10n.F("world.recruit.action.opened", result) : result;
         }
 
         private static string ComposeWorldPerk(string name, string state, string tier)

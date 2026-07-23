@@ -28,6 +28,7 @@
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/event_nav.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/retinue_nav.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/tooltip_nav.js");
+::Hooks.registerJS("ui/mods/mod_unseen_banner/character_edit_nav.js");
 ::Hooks.registerCSS("ui/mods/mod_unseen_banner/menu_nav.css");
 
 // Single choke point for every message sent to the companion app, so the
@@ -158,6 +159,88 @@
 	function onTooltipUnavailable()
 	{
 		::UnseenBanner.sendMessage("interrupt", "", "tooltip.unavailable");
+	}
+};
+
+// Native name editor bridge. The CharacterScreen already owns a fully functional
+// Change Name & Title popup and routes focused text input through the engine. This
+// bridge only opens that popup from SheetNav, selects the current name for quick
+// replacement and reports save/cancel; the native datasource remains responsible
+// for validation, persistence and updating every visible roster label.
+::UnseenBanner.CharacterEdit <- {
+	m = {
+		JSHandle = null,
+		Active = false,
+		OriginalName = "",
+		SuppressNextEnterRelease = false
+	},
+	function connect()
+	{
+		this.m.JSHandle = ::UI.connect("UnseenBannerCharacterEdit", this);
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function onEditorConfirming()
+	{
+		// The native popup saves on Enter's press. Its later release returns to
+		// world_state after the popup has disappeared; suppress that release so it
+		// cannot be mistaken for a fresh request to open the editor again.
+		this.m.SuppressNextEnterRelease = true;
+	},
+	function consumeSuppressedEnterRelease()
+	{
+		if (!this.m.SuppressNextEnterRelease) return false;
+		this.m.SuppressNextEnterRelease = false;
+		return true;
+	},
+	function open(_bro)
+	{
+		if (this.m.Active) return;
+		if (this.m.JSHandle == null || _bro == null)
+		{
+			this.onEditorUnavailable();
+			return;
+		}
+		this.m.Active = true;
+		this.m.OriginalName = _bro.getName();
+		this.m.JSHandle.asyncCall("openNameEditor", {
+			entityId = _bro.getID()
+		});
+	},
+	function onEditorOpened()
+	{
+		if (!this.m.Active) return;
+		::UnseenBanner.sendMessage("interrupt", this.m.OriginalName,
+			"world.character.rename.opened");
+	},
+	function onEditorUnavailable()
+	{
+		this.m.Active = false;
+		this.m.OriginalName = "";
+		::UnseenBanner.sendMessage("interrupt", "",
+			"world.character.rename.unavailable");
+	},
+	function onEditorClosed(_data)
+	{
+		if (!this.m.Active) return;
+		local original = this.m.OriginalName;
+		this.m.Active = false;
+		this.m.OriginalName = "";
+
+		if (_data != null && "saved" in _data && _data.saved
+			&& "name" in _data && _data.name != "")
+		{
+			::UnseenBanner.SheetNav.onNameEdited(_data.name);
+			::UnseenBanner.sendMessage("interrupt", original,
+				"world.character.rename.saved", _data.name);
+		}
+		else
+		{
+			::UnseenBanner.sendMessage("interrupt", "",
+				"world.character.rename.cancelled");
+		}
 	}
 };
 
@@ -1035,9 +1118,10 @@
 // each open contract by title, and a Leave action. Up/Down/Home/End walk it, Enter
 // activates. A contract opens through the game's own onContractClicked, which shows
 // it as the very event screen EventNav already narrates (phase 1.1), so taking and
-// turning in contracts works end to end. Phase 2.3b opens shop buildings through
-// their native slot callback; other building sub-dialogs (hire, tavern...) remain
-// mouse-only and announce that limitation instead of opening a keyboard trap.
+// turning in contracts works end to end. Phase 2.3b opens shop buildings and phase
+// 4.5 opens recruitment through their native slot callbacks; other building
+// sub-dialogs (tavern...) remain mouse-only and announce that limitation instead of
+// opening a keyboard trap.
 // Escape leaves the town on its own (the native menu-stack pop), so it is left alone.
 ::UnseenBanner.WorldTown <- {
 	m = {
@@ -1187,6 +1271,13 @@
 			{
 				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
 			}
+			else if (building.getID() == "building.crowd")
+			{
+				// The crowd building owns the settlement's recruit roster. Enter
+				// through the exact same slot callback as a mouse click; the
+				// showHireDialog hook below installs the accessible cursor.
+				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
+			}
 			else
 			{
 				::UnseenBanner.sendMessage("interrupt", it.texto, "world.town.building.locked");
@@ -1202,6 +1293,434 @@
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local it = this.m.Items[this.m.ItemIndex];
 		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor);
+	}
+};
+
+// Recruitment navigation (phase 4.5). The native screen is a mouse-only list of
+// candidates with Hire and Try Out buttons. Keep the game authoritative: this
+// cursor only flattens the live settlement roster, exposes the same native
+// background/trait tooltips and calls town_hire_dialog_module's own endpoints.
+//
+// Up/Down/Home/End move through candidates; Enter opens an explicit action list;
+// V opens the rendered native background/trait details. Escape at candidate level
+// is left to the native MenuStack, while V/Escape cancel accessible sub-lists.
+::UnseenBanner.WorldHire <- {
+	m = {
+		Screen = null,
+		Module = null,
+		Items = null,
+		ItemIndex = 0,
+		DetailMode = false,
+		DetailIndex = 0,
+		ActionMode = false,
+		Actions = null,
+		ActionIndex = 0,
+		Active = false
+	},
+	InspectKey = 32, // v
+	ActionKey = 39, // enter
+	EscapeKey = 41,
+	MoveKeys = {
+		[44] = "end",
+		[45] = "home",
+		[49] = "up",
+		[51] = "down"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function isCurrent(_screen)
+	{
+		return this.m.Active && _screen != null && this.m.Screen == _screen
+			&& _screen.m.LastActiveModule == this.m.Module;
+	},
+	function handles(_code)
+	{
+		if (!this.m.Active) return false;
+		return _code == this.InspectKey
+			|| _code == this.ActionKey
+			|| (_code == this.EscapeKey && (this.m.ActionMode || this.m.DetailMode))
+			|| _code in this.MoveKeys;
+	},
+	function reset()
+	{
+		this.m.Screen = null;
+		this.m.Module = null;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
+		this.m.ActionMode = false;
+		this.m.Actions = null;
+		this.m.ActionIndex = 0;
+		this.m.Active = false;
+		::UnseenBanner.TooltipNav.hide();
+	},
+	function open(_screen, _module)
+	{
+		this.reset();
+		if (_screen == null || _module == null) return;
+
+		this.m.Screen = _screen;
+		this.m.Module = _module;
+		this.buildItems(null, 0);
+		this.m.Active = true;
+		this.announceItem(true);
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function currentRow()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return null;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		return this.m.Items[this.m.ItemIndex];
+	},
+	function backgroundDetail(_entity)
+	{
+		return {
+			contentType = "ui-element",
+			entityId = _entity.getID(),
+			elementId = "character-backgrounds.generic",
+			elementOwner = "hire-screen"
+		};
+	},
+	function unknownTraitsDetail()
+	{
+		return {
+			contentType = "ui-element",
+			elementId = "world-town-screen.hire-dialog-module.UnknownTraits"
+		};
+	},
+	function traitDetail(_entity, _traitID)
+	{
+		return {
+			contentType = "status-effect",
+			entityId = _entity.getID(),
+			statusEffectId = _traitID
+		};
+	},
+	function makeRow(_entity)
+	{
+		local traits = _entity.getHiringTraits();
+		local details = [this.backgroundDetail(_entity)];
+		if (_entity.isTryoutDone())
+		{
+			foreach( trait in traits )
+			{
+				details.push(this.traitDetail(_entity, trait.id));
+			}
+		}
+		else
+		{
+			details.push(this.unknownTraitsDetail());
+		}
+
+		return {
+			key = "" + _entity.getID(),
+			name = _entity.getName(),
+			background = _entity.getBackground().getNameOnly(),
+			level = "" + _entity.getLevel(),
+			hireCost = "" + ::Math.ceil(_entity.getHiringCost()
+				* ::World.Assets.m.HiringCostMult),
+			dailyCost = "" + _entity.getDailyCost(),
+			tryoutCost = "" + _entity.getTryoutCost(),
+			tried = _entity.isTryoutDone(),
+			traitCount = traits.len(),
+			details = details,
+			entity = _entity,
+			entityID = _entity.getID()
+		};
+	},
+	function buildItems(_preferredID = null, _fallbackIndex = 0)
+	{
+		local rows = [];
+		if (this.m.Module != null)
+		{
+			local roster = ::World.getRoster(this.m.Module.m.RosterID);
+			if (roster != null)
+			{
+				local entities = roster.getAll();
+				if (entities != null)
+				{
+					foreach( entity in entities )
+					{
+						if (entity != null) rows.push(this.makeRow(entity));
+					}
+				}
+			}
+		}
+
+		this.m.Items = rows;
+		this.m.ItemIndex = _fallbackIndex;
+		if (_preferredID != null)
+		{
+			for (local i = 0; i < rows.len(); i += 1)
+			{
+				if (rows[i].entityID == _preferredID)
+				{
+					this.m.ItemIndex = i;
+					break;
+				}
+			}
+		}
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (rows.len() > 0 && this.m.ItemIndex >= rows.len())
+			this.m.ItemIndex = rows.len() - 1;
+	},
+	function move(_code)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0)
+		{
+			this.announceItem();
+			return;
+		}
+
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		this.leaveDetails();
+		::UnseenBanner.TooltipNav.hide();
+		this.announceItem();
+	},
+	function leaveDetails()
+	{
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
+	},
+	function toggleDetails()
+	{
+		if (this.m.DetailMode)
+		{
+			this.leaveDetails();
+			::UnseenBanner.TooltipNav.hide();
+			this.announceItem();
+			return;
+		}
+
+		local row = this.currentRow();
+		if (row == null || row.details.len() == 0)
+		{
+			::UnseenBanner.TooltipNav.onTooltipUnavailable();
+			return;
+		}
+		this.m.DetailIndex = 0;
+		if (row.details.len() > 1) this.m.DetailMode = true;
+		this.showDetail();
+	},
+	function moveDetail(_code)
+	{
+		local row = this.currentRow();
+		if (row == null || row.details.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.DetailIndex -= 1;
+		else if (dir == "down") this.m.DetailIndex += 1;
+		else if (dir == "home") this.m.DetailIndex = 0;
+		else this.m.DetailIndex = row.details.len() - 1;
+		if (this.m.DetailIndex < 0) this.m.DetailIndex = 0;
+		if (this.m.DetailIndex >= row.details.len())
+			this.m.DetailIndex = row.details.len() - 1;
+		this.showDetail();
+	},
+	function showDetail()
+	{
+		local row = this.currentRow();
+		if (row == null || row.details.len() == 0) return;
+		::UnseenBanner.TooltipNav.show(row.details[this.m.DetailIndex],
+			this.m.DetailIndex + 1, row.details.len(), "world.recruit.details");
+	},
+	function action(_execute, _label, _name, _price, _entityID)
+	{
+		return {
+			execute = _execute,
+			label = _label,
+			name = _name,
+			price = _price,
+			entityID = _entityID
+		};
+	},
+	function buildActions(_row)
+	{
+		local actions = [];
+		if (_row == null) return actions;
+		actions.push(this.action("hire", "hire", _row.name, _row.hireCost,
+			_row.entityID));
+		if (!_row.tried)
+		{
+			actions.push(this.action("tryout", "tryout", _row.name,
+				_row.tryoutCost, _row.entityID));
+		}
+		return actions;
+	},
+	function openActions()
+	{
+		local row = this.currentRow();
+		if (row == null)
+		{
+			this.announceItem();
+			return;
+		}
+		this.leaveDetails();
+		::UnseenBanner.TooltipNav.hide();
+		this.m.Actions = this.buildActions(row);
+		if (this.m.Actions.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", row.name,
+				"world.recruit.actions.none");
+			return;
+		}
+		this.m.ActionMode = true;
+		this.m.ActionIndex = 0;
+		this.announceAction(true);
+	},
+	function leaveActions(_announceParent = false)
+	{
+		this.m.ActionMode = false;
+		this.m.Actions = null;
+		this.m.ActionIndex = 0;
+		if (_announceParent) this.announceItem();
+	},
+	function moveAction(_code)
+	{
+		if (this.m.Actions == null || this.m.Actions.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ActionIndex -= 1;
+		else if (dir == "down") this.m.ActionIndex += 1;
+		else if (dir == "home") this.m.ActionIndex = 0;
+		else this.m.ActionIndex = this.m.Actions.len() - 1;
+		if (this.m.ActionIndex < 0) this.m.ActionIndex = 0;
+		if (this.m.ActionIndex >= this.m.Actions.len())
+			this.m.ActionIndex = this.m.Actions.len() - 1;
+		this.announceAction();
+	},
+	function announceAction(_opened = false)
+	{
+		if (this.m.Actions == null || this.m.Actions.len() == 0) return;
+		local action = this.m.Actions[this.m.ActionIndex];
+		local detail = action.price + "|" + (this.m.ActionIndex + 1)
+			+ "|" + this.m.Actions.len() + "|" + (_opened ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", action.name,
+			"world.recruit.action", action.label, detail);
+	},
+	function actionError(_result)
+	{
+		if (typeof _result != "table" || !("Result" in _result))
+			return "unavailable";
+		if (_result.Result == ::Const.UI.Error.NotEnoughMoney) return "money";
+		if (_result.Result == ::Const.UI.Error.NotEnoughRosterSpace) return "roster";
+		if (_result.Result == ::Const.UI.Error.RosterEntryNotFound) return "missing";
+		return "unavailable";
+	},
+	function refreshNative()
+	{
+		if (this.m.Module == null || this.m.Screen == null) return;
+		local data = this.m.Module.queryHireInformation();
+		// Vanilla updates assets before recalculating the selected recruit's button
+		// availability. Preserve that order so Hire/Try Out do not use stale crowns
+		// after an accessible action.
+		this.m.Screen.updateAssets();
+		if (data != null && "Roster" in data)
+			this.m.Module.m.JSHandle.asyncCall("loadFromData", data.Roster);
+	},
+	function executeAction()
+	{
+		if (!this.m.ActionMode || this.m.Actions == null
+			|| this.m.Actions.len() == 0) return;
+
+		local action = this.m.Actions[this.m.ActionIndex];
+		local fallback = this.m.ItemIndex;
+		local result = action.execute == "hire"
+			? this.m.Module.onHireRosterEntry(action.entityID)
+			: this.m.Module.onTryoutRosterEntry(action.entityID);
+		this.leaveActions(false);
+
+		if (typeof result != "table" || !("Result" in result) || result.Result != 0)
+		{
+			this.buildItems(null, fallback);
+			::UnseenBanner.sendMessage("interrupt", action.name,
+				"world.recruit.error", this.actionError(result));
+			return;
+		}
+
+		this.refreshNative();
+		this.buildItems(action.execute == "tryout" ? action.entityID : null,
+			fallback);
+		::UnseenBanner.sendMessage("interrupt", action.name,
+			"world.recruit.result." + action.execute, action.price,
+			"" + ::World.Assets.getMoney());
+	},
+	function announceItem(_opened = false)
+	{
+		local row = this.currentRow();
+		if (row == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.recruit.empty",
+				"" + ::World.Assets.getMoney(), _opened ? "1" : "0");
+			return;
+		}
+
+		local detail = row.level + "|" + row.hireCost + "|" + row.dailyCost
+			+ "|" + row.tryoutCost + "|" + (row.tried ? "1" : "0")
+			+ "|" + row.traitCount + "|" + (this.m.ItemIndex + 1)
+			+ "|" + this.m.Items.len() + "|" + (_opened ? "1" : "0")
+			+ "|" + ::World.Assets.getMoney();
+		::UnseenBanner.sendMessage("interrupt", row.name,
+			"world.recruit.candidate", row.background, detail, null,
+			"" + row.details.len(), null, "" + this.buildActions(row).len());
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active) return;
+		if (this.m.ActionMode)
+		{
+			if (_code == this.InspectKey || _code == this.EscapeKey)
+			{
+				this.leaveActions(true);
+				return;
+			}
+			if (_code == this.ActionKey)
+			{
+				this.executeAction();
+				return;
+			}
+			if (_code in this.MoveKeys)
+			{
+				this.moveAction(_code);
+				return;
+			}
+			this.leaveActions(false);
+		}
+		if (this.m.DetailMode && _code == this.EscapeKey)
+		{
+			this.leaveDetails();
+			::UnseenBanner.TooltipNav.hide();
+			this.announceItem();
+			return;
+		}
+		if (_code == this.InspectKey)
+		{
+			this.toggleDetails();
+			return;
+		}
+		if (_code == this.ActionKey)
+		{
+			this.openActions();
+			return;
+		}
+		if (_code in this.MoveKeys)
+		{
+			if (this.m.DetailMode) this.moveDetail(_code);
+			else this.move(_code);
+		}
 	}
 };
 
@@ -3420,7 +3939,7 @@
 		Active = false
 	},
 	InspectKey = 32, // v -> open/close the focused entry's native tooltip details
-	ActionKey = 39, // Enter -> open/confirm the focused inventory action
+	ActionKey = 39, // Enter -> rename identity or open/confirm an inventory action
 	// d / right / Tab -> next brother; a / left -> previous. Same keys the vanilla
 	// character screen already uses, so muscle memory carries over.
 	NextKeys = {
@@ -3452,7 +3971,8 @@
 	{
 		return (_code == this.InspectKey && this.m.WorldMode)
 			|| (_code == this.ActionKey && this.m.WorldMode
-				&& (this.m.ActionMode || this.isInventorySection()))
+				&& (this.m.ActionMode || this.isInventorySection()
+					|| this.isIdentityRow()))
 			|| (this.m.WorldMode && _code in this.SectionKeys)
 			|| (_code in this.NextKeys)
 			|| (_code in this.PrevKeys)
@@ -3461,6 +3981,16 @@
 	function isMove(_code)
 	{
 		return _code in this.MoveKeys;
+	},
+	function isRenameKey(_code)
+	{
+		return _code == this.ActionKey && this.isIdentityRow();
+	},
+	function openRenameOnRelease(_screen)
+	{
+		if (::UnseenBanner.CharacterEdit.consumeSuppressedEnterRelease()) return;
+		if (!::UnseenBanner.CharacterEdit.isActive() && this.isIdentityRow())
+			this.onKey(this.ActionKey, _screen);
 	},
 	function isNext(_code)
 	{
@@ -3579,6 +4109,13 @@
 
 		if (_code == this.ActionKey)
 		{
+			if (this.isIdentityRow())
+			{
+				this.leaveDetails();
+				::UnseenBanner.TooltipNav.hide();
+				::UnseenBanner.CharacterEdit.open(this.current());
+				return;
+			}
 			this.openActions();
 			return;
 		}
@@ -3667,6 +4204,19 @@
 		local section = this.currentSection();
 		if (section == null) return false;
 		return section.id == "equipment" || section.id == "bag" || section.id == "stash";
+	},
+	function isIdentityRow()
+	{
+		if (!this.m.WorldMode || this.m.Items == null || this.m.Items.len() == 0)
+			return false;
+		local section = this.currentSection();
+		if (section == null || section.id != "sheet") return false;
+		return this.m.Items[this.m.ItemIndex].cat == "combat.sheet.identity";
+	},
+	function onNameEdited(_name)
+	{
+		if (_name == null || _name == "" || !this.isIdentityRow()) return;
+		this.m.Items[this.m.ItemIndex].texto = _name;
 	},
 	// Each section owns its last cursor position. Page navigation therefore returns
 	// to the element the player left, and rebuilding for another brother restores
@@ -3984,9 +4534,11 @@
 		local bro = _includeBrother && it.cat != "combat.sheet.identity" ? this.current() : null;
 		local name = bro != null ? bro.getName() : null;
 		local detailCount = this.m.WorldMode ? it.details.len() : 0;
-		local actionCount = this.m.WorldMode && this.isInventorySection()
-			? this.buildActions(it).len()
-			: 0;
+		local actionCount = 0;
+		if (this.m.WorldMode && this.isInventorySection())
+			actionCount = this.buildActions(it).len();
+		else if (this.isIdentityRow())
+			actionCount = 1;
 		local context = null;
 		local section = this.currentSection();
 		if (this.m.WorldMode && section != null)
@@ -4906,6 +5458,7 @@
 		::UnseenBanner.MenuNav.connect();
 		::UnseenBanner.EventNav.connect();
 		::UnseenBanner.TooltipNav.connect();
+		::UnseenBanner.CharacterEdit.connect();
 		::logInfo("UnseenBanner: root_state.onInit hook fired (class hooking alive).");
 		onInit();
 	}
@@ -5076,14 +5629,16 @@
 });
 
 // Town screen (phase 4.5 + market phase 2.3b). onScreenShown builds the flattened
-// building/contract list. showShopDialog is the shared funnel used by every shop
-// building, so it opens the accessible market cursor after vanilla has installed
-// its module. showMainDialog closes that cursor when Escape pops back to town.
+// building/contract list. showShopDialog and showHireDialog are the shared funnels
+// used by their respective buildings, so they open the accessible cursor only
+// after vanilla has installed the active module. showMainDialog closes whichever
+// cursor owns the sub-dialog when Escape pops back to town.
 ::UnseenBanner.Mod.hook("scripts/ui/screens/world/world_town_screen", function(q) {
 	q.onScreenShown = @(__original) function()
 	{
 		__original();
 		::UnseenBanner.WorldShop.close();
+		::UnseenBanner.WorldHire.close();
 		::UnseenBanner.WorldTown.open(this.getTown());
 	}
 
@@ -5091,6 +5646,7 @@
 	{
 		__original();
 		::UnseenBanner.WorldShop.close();
+		::UnseenBanner.WorldHire.close();
 		::UnseenBanner.WorldTown.close();
 	}
 
@@ -5104,13 +5660,24 @@
 		}
 	}
 
+	q.showHireDialog = @(__original) function()
+	{
+		__original();
+		if (this.isVisible() && this.m.HireDialogModule != null)
+		{
+			::UnseenBanner.WorldHire.open(this, this.m.HireDialogModule);
+		}
+	}
+
 	q.showMainDialog = @(__original) function()
 	{
 		local leavingShop = ::UnseenBanner.WorldShop.isCurrent(this);
+		local leavingHire = ::UnseenBanner.WorldHire.isCurrent(this);
 		__original();
-		if (leavingShop)
+		if (leavingShop) ::UnseenBanner.WorldShop.close();
+		if (leavingHire) ::UnseenBanner.WorldHire.close();
+		if (leavingShop || leavingHire)
 		{
-			::UnseenBanner.WorldShop.close();
 			if (::UnseenBanner.WorldTown.isActive())
 				::UnseenBanner.WorldTown.announceItem();
 		}
@@ -5322,14 +5889,18 @@
 		// World character screen (phase 2.2). This is the same CharacterScreen
 		// class and SheetNav used in tactical mode, but its brother order comes
 		// from World.Assets.getFormation(). Navigate on keydown with controlled
-		// repeat and consume keyup as well, so A/D never pan the hidden map.
-		// C, I and Escape are absent from SheetNav and therefore retain the
-		// world's native close path.
+		// repeat and consume keyup as well, so A/D never pan the hidden map. The one
+		// exception is Enter on the identity row: open the native name editor on
+		// keyup, after the triggering press has ended, or that same press immediately
+		// confirms and closes the popup. C, I and Escape are absent from SheetNav and
+		// therefore retain the world's native close path.
 		if (this.isInCharacterScreen()
 			&& ::UnseenBanner.SheetNav.isActive()
+			&& !this.m.CharacterScreen.isAnimating()
 			&& ::UnseenBanner.SheetNav.handles(code))
 		{
-			if (_key.getState() == 1)
+			local renameOnRelease = ::UnseenBanner.SheetNav.isRenameKey(code);
+			if (_key.getState() == 1 && !renameOnRelease)
 			{
 				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
 				{
@@ -5339,6 +5910,10 @@
 			else if (_key.getState() == 0)
 			{
 				::UnseenBanner.KeyGate.release(code);
+				if (renameOnRelease)
+				{
+					::UnseenBanner.SheetNav.openRenameOnRelease(this.m.CharacterScreen);
+				}
 			}
 			return true;
 		}
@@ -5432,6 +6007,22 @@
 			return true;
 		}
 
+		// Recruitment (phase 4.5): like the shop, the town frame remains technically
+		// visible behind this module. Candidate navigation and its action/detail
+		// sub-lists therefore take priority over the town list. At candidate level
+		// Escape remains native and returns through MenuStack.
+		if (this.m.WorldTownScreen.isVisible()
+			&& !::UnseenBanner.EventNav.isActive()
+			&& ::UnseenBanner.WorldHire.isCurrent(this.m.WorldTownScreen)
+			&& ::UnseenBanner.WorldHire.handles(code))
+		{
+			if (_key.getState() == 0 && !this.m.WorldTownScreen.isAnimating())
+			{
+				::UnseenBanner.WorldHire.onKey(code);
+			}
+			return true;
+		}
+
 		// Market (phase 2.3b): the town screen remains technically visible behind its
 		// shop module, so give the market cursor priority over the town list. Consume
 		// both key states; act on release once the native slide animation is finished.
@@ -5456,6 +6047,7 @@
 		if (this.m.WorldTownScreen.isVisible()
 			&& !::UnseenBanner.EventNav.isActive()
 			&& !::UnseenBanner.WorldShop.isCurrent(this.m.WorldTownScreen)
+			&& !::UnseenBanner.WorldHire.isCurrent(this.m.WorldTownScreen)
 			&& ::UnseenBanner.WorldTown.isActive()
 			&& ::UnseenBanner.WorldTown.handles(code))
 		{
@@ -5650,6 +6242,7 @@
 		// the keyboard while it is up.
 		if (this.isInCharacterScreen()
 			&& ::UnseenBanner.SheetNav.isActive()
+			&& !this.m.CharacterScreen.isAnimating()
 			&& ::UnseenBanner.SheetNav.handles(code))
 		{
 			// Act on the press (state 1), gated against auto-repeat: the screen pauses

@@ -40,7 +40,8 @@ before starting a serious campaign:
   accessible, including follower hiring/replacement, cart upgrades and complete
   brother readouts. The sheet also exposes the game's native details for
   backgrounds, statistics, skills, injuries, traits, perks and equipped items.
-  Inventory, market, brother recruitment and ambitions are not accessible yet.
+  Inventory, markets, brother recruitment and renaming brothers are accessible;
+  ambitions are not accessible yet.
 - ❌ **Pre-battle deployment** (arranging your formation before a fight): still
   mouse-only.
 
@@ -193,6 +194,11 @@ in the real game.
     tooltips, equipped-item comparison by brother, buying, selling, repairing,
     sorting and filtering. Unique and valuable sales use a safe confirmation
     with Cancel selected by default.
+  - Verified accessible recruitment opened from the town list: candidate
+    navigation, live hiring and wage costs, native background and revealed-trait
+    tooltips, tryouts and hiring through explicit keyboard action lists.
+  - Verified brother renaming from the identity row: Enter opens the native name
+    editor with the current name selected, Enter saves and Escape cancels.
 - **Phase 3 — Tactical combat (complete).**
   - Spoken combat log (hits, misses, morale, wounds, deaths, rounds).
   - Keyboard tile cursor with terrain, occupant, distance and direction, plus
@@ -208,7 +214,8 @@ in the real game.
   - Directional company movement and pause-state announcements.
   - Perception-safe nearby list (B) with entity details (V).
   - Company-status and active-objective list (G).
-  - Keyboard entry into settlements and a navigable town frame for contracts.
+  - Keyboard entry into settlements and a navigable town frame for contracts,
+    markets and recruitment.
 - **Phase 5 — Special screens (partial).**
   - Obituary (O) and factions/relations (R) as navigable lists.
   - Retinue (P): seats, follower details, requirements, hiring/replacement and
@@ -220,8 +227,7 @@ in the real game.
   - A keyboard-navigation review for mouse-only event focus, if any event turns
     up that the generic event screen does not cover.
 - **Phase 2 — Tooltips and company management (partial).**
-  - Reuse the native-tooltip reader for recruitment and other remaining
-    management surfaces.
+  - Reuse the native-tooltip reader for other remaining management surfaces.
 - **Phase 3 — Tactical combat.**
   - **Pre-battle deployment**: placing and rearranging the formation before a
     fight (mouse-only today; a known gap, not yet numbered in the roadmap).
@@ -229,7 +235,7 @@ in the real game.
 - **Phase 4 — World map (real-time, pausable).**
   - Positional sonar (settlements, contracts, enemy parties, locations).
   - Persistent beacon and travel-to-selection from the nearby list.
-  - Accessible building sub-dialogs for recruits, tavern and others.
+  - Accessible tavern and other remaining building sub-dialogs.
 - **Phase 5 — Polish and distribution (partial).**
   - Configurable verbosity and every parameter in config.
   - Remaining special screens (company creation, ambitions, end screen,
