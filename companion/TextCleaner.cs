@@ -19,6 +19,14 @@ namespace TheUnseenBanner.Companion
             CommonOptions | RegexOptions.Singleline,
             RegexTimeout);
 
+        // tooltip_nav.js replaces known image-only labels with semantic markers
+        // after reading the rendered DOM. Resolve those markers here, the single
+        // cleanup point, so every added word remains localizable through L10n.
+        private static readonly Regex TooltipIcon = new(
+            @"\[\[ub-icon:([a-z0-9_-]+)\]\]",
+            CommonOptions,
+            RegexTimeout);
+
         private static readonly Regex BbCodeParagraph = new(
             @"\[(?:/?p(?:=[^\]]*)?|br)\]",
             CommonOptions,
@@ -70,6 +78,8 @@ namespace TheUnseenBanner.Companion
                 // did the escaping (LogBridge, for log.html). Decoding twice
                 // would turn escaped angle brackets back into apparent markup.
                 string cleaned = BbCodeImage.Replace(text, " ");
+                cleaned = TooltipIcon.Replace(cleaned,
+                    match => L10n.T("tooltip.icon." + match.Groups[1].Value));
                 cleaned = BbCodeParagraph.Replace(cleaned, "\n");
                 cleaned = BbCodeFormatting.Replace(cleaned, "");
                 cleaned = HtmlBreak.Replace(cleaned, "\n");

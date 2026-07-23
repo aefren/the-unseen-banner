@@ -112,6 +112,7 @@ namespace TheUnseenBanner.Companion
                 string valor = GetOptionalString(root, "valor");
                 string detalle = GetOptionalString(root, "detalle");
                 string hermano = GetOptionalString(root, "hermano");
+                string detalles = GetOptionalString(root, "detalles");
                 string spoken = categoria switch
                 {
                     "tile.readout" => ComposeTileReadout(valor, texto, detalle),
@@ -129,6 +130,7 @@ namespace TheUnseenBanner.Companion
                     "combat.sheet.traits" => ComposeSheetList("combat.sheet.traits", texto, valor),
                     "combat.sheet.perks" => ComposeSheetList("combat.sheet.perks", texto, valor),
                     "combat.sheet.equipment" => ComposeSheetList("combat.sheet.equipment", texto, valor),
+                    "tooltip.detail" => ComposeTooltipDetail(texto, valor, detalle),
                     "combat.result.stat" => ComposeResultStat(texto, valor, detalle),
                     "menu.campaign" => ComposeCampaignEntry(texto, valor, detalle),
                     "menu.campaign.screen" => ComposeCampaignScreen(texto, valor),
@@ -143,6 +145,7 @@ namespace TheUnseenBanner.Companion
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
                 };
+                spoken = AppendDetailsHint(spoken, detalles);
                 // When changing the brother shown on the tactical character sheet,
                 // keep his name and the retained attribute in one utterance. Two
                 // consecutive interrupt messages would make the attribute cut off
@@ -162,6 +165,37 @@ namespace TheUnseenBanner.Companion
             return root.TryGetProperty(name, out JsonElement value)
                 ? value.GetString() ?? ""
                 : "";
+        }
+
+        /// <summary>Add the discoverable V-key hint only to semantic rows that
+        /// explicitly report one or more native tooltips. Rows with no details stay
+        /// concise; pressing V on one still produces an audible unavailable cue.</summary>
+        private static string AppendDetailsHint(string spoken, string countText)
+        {
+            if (!int.TryParse(countText, out int count) || count <= 0)
+                return spoken;
+
+            string hint = count == 1
+                ? L10n.T("tooltip.details.one")
+                : L10n.F("tooltip.details.many", count);
+            return spoken.Length > 0 ? spoken + " " + hint : hint;
+        }
+
+        /// <summary>Compose an entry in a multi-tooltip sub-list. Squirrel packs
+        /// detail as "total|parent-category"; the parent category is a localization
+        /// key, never spoken hook text. The tooltip body itself is the native game's
+        /// already-rendered DOM text.</summary>
+        private static string ComposeTooltipDetail(string text, string index, string detail)
+        {
+            string[] parts = detail.Split(new[] { '|' }, 2);
+            string total = parts.Length > 0 ? parts[0] : "1";
+            string groupKey = parts.Length > 1 && parts[1].Length > 0
+                ? parts[1] + ".details"
+                : "";
+            string group = groupKey.Length > 0 ? L10n.T(groupKey) : "";
+            if (group.Length == 0 || group == groupKey)
+                group = L10n.T("tooltip.details.group");
+            return L10n.F("tooltip.detail", group, index, total, text);
         }
 
         // Hex direction (0-5, from config/global.nut Const.Direction: N, NE, SE,

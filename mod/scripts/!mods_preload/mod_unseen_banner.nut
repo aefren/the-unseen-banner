@@ -16,7 +16,8 @@
 	Readout = null,
 	CombatResult = null,
 	SheetNav = null,
-	DialogNav = null
+	DialogNav = null,
+	TooltipNav = null
 };
 
 ::UnseenBanner.Mod = ::Hooks.register(::UnseenBanner.ID, ::UnseenBanner.Version, ::UnseenBanner.Name);
@@ -26,6 +27,7 @@
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/menu_nav.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/event_nav.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/retinue_nav.js");
+::Hooks.registerJS("ui/mods/mod_unseen_banner/tooltip_nav.js");
 ::Hooks.registerCSS("ui/mods/mod_unseen_banner/menu_nav.css");
 
 // Single choke point for every message sent to the companion app, so the
@@ -55,13 +57,14 @@
 	return out;
 }
 
-::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null)
+::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null)
 {
 	local json = "{\"canal\":\"" + ::UnseenBanner.jsonEscape(_canal) + "\",\"texto\":\"" + ::UnseenBanner.jsonEscape(_texto) + "\"";
 	if (_categoria != null) json += ",\"categoria\":\"" + ::UnseenBanner.jsonEscape(_categoria) + "\"";
 	if (_valor != null) json += ",\"valor\":\"" + ::UnseenBanner.jsonEscape(_valor) + "\"";
 	if (_detalle != null) json += ",\"detalle\":\"" + ::UnseenBanner.jsonEscape(_detalle) + "\"";
 	if (_hermano != null) json += ",\"hermano\":\"" + ::UnseenBanner.jsonEscape(_hermano) + "\"";
+	if (_detalles != null) json += ",\"detalles\":\"" + ::UnseenBanner.jsonEscape(_detalles) + "\"";
 	json += "}";
 	::logInfo("UB_MSG:" + json);
 }
@@ -85,6 +88,63 @@
 	function onJSLoaded()
 	{
 		::logInfo("UnseenBanner: injected JS is alive and reached Squirrel (JS -> SQ round-trip OK).");
+	}
+};
+
+// Generic tooltip funnel (phase 2.1). Nothing here depends on hover or a mouse:
+// an accessible cursor asks JS to show one native tooltip by its stable game ID,
+// tooltip_nav.js lets vanilla query and render it, then reads the final localized
+// DOM. Ordinary visual hovers remain silent. Squirrel owns no tooltip wording;
+// it only forwards the rendered snapshot to central cleanup/L10n.
+::UnseenBanner.TooltipNav = {
+	m = {
+		JSHandle = null
+	},
+	function connect()
+	{
+		this.m.JSHandle = ::UI.connect("UnseenBannerTooltipNav", this);
+	},
+	function show(_tooltip, _index, _total, _group)
+	{
+		if (this.m.JSHandle == null || _tooltip == null) return;
+		this.m.JSHandle.asyncCall("showDetail", {
+			tooltip = _tooltip,
+			indice = _index,
+			total = _total,
+			grupo = _group
+		});
+	},
+	function hide()
+	{
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("hideDetail", null);
+		}
+	},
+	function onTooltipHookReady()
+	{
+		::logInfo("UnseenBanner: generic rendered-DOM tooltip hook is ready.");
+	},
+	// Receives a single table because SQ.call transports one args value.
+	function onTooltipAnnouncement(_data)
+	{
+		if (_data == null || !("texto" in _data) || _data.texto == "") return;
+		local index = "indice" in _data ? "" + _data.indice : "1";
+		local total = "total" in _data ? "" + _data.total : "1";
+		local group = "grupo" in _data ? _data.grupo : "";
+		if (total.tointeger() > 1)
+		{
+			::UnseenBanner.sendMessage("interrupt", _data.texto, "tooltip.detail",
+				index, total + "|" + group);
+		}
+		else
+		{
+			::UnseenBanner.sendMessage("interrupt", _data.texto, "tooltip.content");
+		}
+	},
+	function onTooltipUnavailable()
+	{
+		::UnseenBanner.sendMessage("interrupt", "", "tooltip.unavailable");
 	}
 };
 
@@ -2538,8 +2598,12 @@
 		BroIndex = 0,
 		Items = null,
 		ItemIndex = 0,
+		DetailMode = false,
+		DetailIndex = 0,
+		WorldMode = false,
 		Active = false
 	},
+	InspectKey = 32, // v -> open/close the focused entry's native tooltip details
 	// d / right / Tab -> next brother; a / left -> previous. Same keys the vanilla
 	// character screen already uses, so muscle memory carries over.
 	NextKeys = {
@@ -2565,7 +2629,10 @@
 	},
 	function handles(_code)
 	{
-		return (_code in this.NextKeys) || (_code in this.PrevKeys) || (_code in this.MoveKeys);
+		return (_code == this.InspectKey && this.m.WorldMode)
+			|| (_code in this.NextKeys)
+			|| (_code in this.PrevKeys)
+			|| (_code in this.MoveKeys);
 	},
 	function isMove(_code)
 	{
@@ -2582,6 +2649,10 @@
 		this.m.Items = null;
 		this.m.BroIndex = 0;
 		this.m.ItemIndex = 0;
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
+		this.m.WorldMode = false;
+		::UnseenBanner.TooltipNav.hide();
 	},
 	// Called when the screen becomes visible. _active is the man whose sheet the
 	// screen opens on in battle. _roster is supplied by world mode; null keeps the
@@ -2601,6 +2672,7 @@
 			}
 		}
 		this.m.Brothers = list;
+		this.m.WorldMode = _roster != null;
 
 		this.m.BroIndex = 0;
 		if (_active != null)
@@ -2618,6 +2690,8 @@
 		this.m.Active = true;
 		this.buildItems();
 		this.m.ItemIndex = 0;
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
 		this.announceItem();
 	},
 	function close()
@@ -2629,6 +2703,42 @@
 		if (this.m.Brothers == null || this.m.Brothers.len() == 0) return null;
 		return this.m.Brothers[this.m.BroIndex];
 	},
+	// One input dispatcher shared by tactical and world CharacterScreen. V never
+	// reaches vanilla: it enters/leaves our detail list or opens the only detail.
+	// The native brother switch is still invoked by the state so the visible UI
+	// and this semantic cursor remain in lockstep.
+	function onKey(_code, _screen)
+	{
+		if (_code == this.InspectKey)
+		{
+			this.toggleDetails();
+			return;
+		}
+
+		if (_code in this.MoveKeys)
+		{
+			if (this.m.DetailMode) this.moveDetail(_code);
+			else
+			{
+				::UnseenBanner.TooltipNav.hide();
+				this.move(_code);
+			}
+			return;
+		}
+
+		// A/D, Left/Right and Tab always leave a nested detail list before changing
+		// brother, retaining the parent sheet category for quick comparison.
+		if (this.m.DetailMode)
+		{
+			this.m.DetailMode = false;
+			this.m.DetailIndex = 0;
+		}
+		::UnseenBanner.TooltipNav.hide();
+		local next = this.isNext(_code);
+		if (next) _screen.switchToNextBrother();
+		else _screen.switchToPreviousBrother();
+		this.switchBrother(next);
+	},
 	// Mirror a brother switch the same way the vanilla screen does (next/previous
 	// non-null with wrap; the tactical roster is dense, so a plain modular step
 	// matches). Rebuild the sheet for the new man but preserve the item index, then
@@ -2637,6 +2747,9 @@
 	function switchBrother(_next)
 	{
 		if (this.m.Brothers == null || this.m.Brothers.len() == 0) return;
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
+		::UnseenBanner.TooltipNav.hide();
 		local itemIndex = this.m.ItemIndex;
 		local n = this.m.Brothers.len();
 		if (_next) this.m.BroIndex = (this.m.BroIndex + 1) % n;
@@ -2676,7 +2789,97 @@
 		// that is the retained item.
 		local bro = _includeBrother && it.cat != "combat.sheet.identity" ? this.current() : null;
 		local name = bro != null ? bro.getName() : null;
-		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle, name);
+		local detailCount = this.m.WorldMode ? it.details.len() : 0;
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle,
+			name, "" + detailCount);
+	},
+	// V on a row with several native tooltips enters a nested list; V again backs
+	// out and re-announces the parent row. A single tooltip is shown/read directly
+	// without changing modes, so the player's Up/Down cursor remains on the sheet.
+	function toggleDetails()
+	{
+		if (this.m.DetailMode)
+		{
+			this.m.DetailMode = false;
+			this.m.DetailIndex = 0;
+			::UnseenBanner.TooltipNav.hide();
+			this.announceItem();
+			return;
+		}
+
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		if (it.details.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "tooltip.unavailable");
+			return;
+		}
+
+		this.m.DetailIndex = 0;
+		this.m.DetailMode = it.details.len() > 1;
+		this.showDetail();
+	},
+	function moveDetail(_code)
+	{
+		if (!this.m.DetailMode || this.m.Items == null || this.m.Items.len() == 0) return;
+		local details = this.m.Items[this.m.ItemIndex].details;
+		if (details.len() == 0) return;
+
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.DetailIndex -= 1;
+		else if (dir == "down") this.m.DetailIndex += 1;
+		else if (dir == "home") this.m.DetailIndex = 0;
+		else this.m.DetailIndex = details.len() - 1;
+
+		if (this.m.DetailIndex < 0) this.m.DetailIndex = 0;
+		if (this.m.DetailIndex >= details.len()) this.m.DetailIndex = details.len() - 1;
+		this.showDetail();
+	},
+	function showDetail()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		if (it.details.len() == 0) return;
+		if (this.m.DetailIndex < 0 || this.m.DetailIndex >= it.details.len()) this.m.DetailIndex = 0;
+		::UnseenBanner.TooltipNav.show(it.details[this.m.DetailIndex],
+			this.m.DetailIndex + 1, it.details.len(), it.cat);
+	},
+	function uiElementDetail(_bro, _elementID)
+	{
+		return {
+			contentType = "ui-element",
+			entityId = _bro.getID(),
+			elementId = _elementID
+		};
+	},
+	function rosterDetail(_bro)
+	{
+		return { contentType = "roster-entity", entityId = _bro.getID() };
+	},
+	function skillDetail(_bro, _skill)
+	{
+		return {
+			contentType = "skill",
+			entityId = _bro.getID(),
+			skillId = _skill.getID()
+		};
+	},
+	function statusDetail(_bro, _skill)
+	{
+		return {
+			contentType = "status-effect",
+			entityId = _bro.getID(),
+			statusEffectId = _skill.getID()
+		};
+	},
+	function itemDetail(_bro, _item)
+	{
+		return {
+			contentType = "ui-item",
+			entityId = _bro.getID(),
+			itemId = _item.getInstanceID(),
+			itemOwner = "entity"
+		};
 	},
 	// Build the ordered list of sheet entries for the shown brother. Each entry is a
 	// tagged line the companion localizes; the framing words ("Resolve", "Head
@@ -2698,9 +2901,15 @@
 		local isPlayer = ::isKindOf(bro, "player");
 		local p = bro.getCurrentProperties();
 
-		local function entry(_cat, _texto, _valor, _detalle)
+		local function entry(_cat, _texto, _valor, _detalle, _details = null)
 		{
-			return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle };
+			return {
+				cat = _cat,
+				texto = _texto,
+				valor = _valor,
+				detalle = _detalle,
+				details = _details != null ? _details : []
+			};
 		}
 
 		items.push(entry("combat.sheet.identity", bro.getName(), "" + bro.getLevel(), ""));
@@ -2708,21 +2917,40 @@
 		if (isPlayer)
 		{
 			local bg = bro.getBackground();
-			items.push(entry("combat.sheet.background", bg != null ? bg.getName() : "", "", ""));
-			items.push(entry("combat.sheet.xp", "", "" + bro.getXP(), "" + bro.getXPForNextLevel()));
-			items.push(entry("combat.sheet.mood", "", "" + bro.getMoodState(), ""));
+			local bgDetails = bg != null ? [this.statusDetail(bro, bg)] : [];
+			items.push(entry("combat.sheet.background", bg != null ? bg.getName() : "",
+				"", "", bgDetails));
+			items.push(entry("combat.sheet.xp", "", "" + bro.getXP(),
+				"" + bro.getXPForNextLevel(),
+				[this.uiElementDetail(bro, "character-screen.left-panel-header-module.Experience")]));
+			// Long-term company mood has no dedicated standalone tooltip. The native
+			// roster tooltip is its real visual source and includes the current mood.
+			items.push(entry("combat.sheet.mood", "", "" + bro.getMoodState(), "",
+				[this.rosterDetail(bro)]));
 		}
 
-		items.push(entry("combat.sheet.hp", "", "" + bro.getHitpoints(), "" + bro.getHitpointsMax()));
-		items.push(entry("combat.sheet.fatigue", "", "" + bro.getFatigue(), "" + bro.getFatigueMax()));
-		items.push(entry("combat.sheet.resolve", "", "" + p.getBravery(), ""));
-		items.push(entry("combat.sheet.initiative", "", "" + p.getInitiative(), ""));
-		items.push(entry("combat.sheet.mskill", "", "" + p.getMeleeSkill(), ""));
-		items.push(entry("combat.sheet.rskill", "", "" + p.getRangedSkill(), ""));
-		items.push(entry("combat.sheet.mdef", "", "" + p.getMeleeDefense(), ""));
-		items.push(entry("combat.sheet.rdef", "", "" + p.getRangedDefense(), ""));
-		items.push(entry("combat.sheet.armor.head", "", "" + bro.getArmor(::Const.BodyPart.Head), "" + bro.getArmorMax(::Const.BodyPart.Head)));
-		items.push(entry("combat.sheet.armor.body", "", "" + bro.getArmor(::Const.BodyPart.Body), "" + bro.getArmorMax(::Const.BodyPart.Body)));
+		items.push(entry("combat.sheet.hp", "", "" + bro.getHitpoints(),
+			"" + bro.getHitpointsMax(), [this.uiElementDetail(bro, "character-stats.Hitpoints")]));
+		items.push(entry("combat.sheet.fatigue", "", "" + bro.getFatigue(),
+			"" + bro.getFatigueMax(), [this.uiElementDetail(bro, "character-stats.Fatigue")]));
+		items.push(entry("combat.sheet.resolve", "", "" + p.getBravery(), "",
+			[this.uiElementDetail(bro, "character-stats.Bravery")]));
+		items.push(entry("combat.sheet.initiative", "", "" + p.getInitiative(), "",
+			[this.uiElementDetail(bro, "character-stats.Initiative")]));
+		items.push(entry("combat.sheet.mskill", "", "" + p.getMeleeSkill(), "",
+			[this.uiElementDetail(bro, "character-stats.MeleeSkill")]));
+		items.push(entry("combat.sheet.rskill", "", "" + p.getRangedSkill(), "",
+			[this.uiElementDetail(bro, "character-stats.RangeSkill")]));
+		items.push(entry("combat.sheet.mdef", "", "" + p.getMeleeDefense(), "",
+			[this.uiElementDetail(bro, "character-stats.MeleeDefense")]));
+		items.push(entry("combat.sheet.rdef", "", "" + p.getRangedDefense(), "",
+			[this.uiElementDetail(bro, "character-stats.RangeDefense")]));
+		items.push(entry("combat.sheet.armor.head", "",
+			"" + bro.getArmor(::Const.BodyPart.Head), "" + bro.getArmorMax(::Const.BodyPart.Head),
+			[this.uiElementDetail(bro, "character-stats.ArmorHead")]));
+		items.push(entry("combat.sheet.armor.body", "",
+			"" + bro.getArmor(::Const.BodyPart.Body), "" + bro.getArmorMax(::Const.BodyPart.Body),
+			[this.uiElementDetail(bro, "character-stats.ArmorBody")]));
 
 		// Active skills, so any brother's abilities can be read here — not just the
 		// active man's via the k key. Same source (queryActives) the numbered action
@@ -2750,14 +2978,16 @@
 		local skills = _bro.getSkills().query(_mask, false, true);
 		local text = "";
 		local n = 0;
+		local details = [];
 		foreach( s in skills )
 		{
 			if (s == null) continue;
 			if (n > 0) text += "\n";
 			text += s.getName();
+			details.push(this.statusDetail(_bro, s));
 			n += 1;
 		}
-		return { cat = _cat, texto = text, valor = "" + n, detalle = "" };
+		return { cat = _cat, texto = text, valor = "" + n, detalle = "", details = details };
 	},
 	// Active skills for the sheet: each line is "name\tap\tfatigue" (no slot number,
 	// since a non-active brother's hotkeys are not live, and no usability flag).
@@ -2766,14 +2996,22 @@
 		local list = _bro.getSkills().queryActives();
 		local text = "";
 		local n = 0;
+		local details = [];
 		foreach( s in list )
 		{
 			if (s == null) continue;
 			if (n > 0) text += "\n";
 			text += s.getName() + "\t" + s.getActionPointCost() + "\t" + s.getFatigueCost();
+			details.push(this.skillDetail(_bro, s));
 			n += 1;
 		}
-		return { cat = "combat.sheet.skills", texto = text, valor = "" + n, detalle = "" };
+		return {
+			cat = "combat.sheet.skills",
+			texto = text,
+			valor = "" + n,
+			detalle = "",
+			details = details
+		};
 	},
 	// Worn equipment: the fixed slots the paperdoll shows (weapon, shield/offhand,
 	// helmet, body armour, accessory), in reading order, names newline-joined.
@@ -2789,15 +3027,23 @@
 		];
 		local text = "";
 		local n = 0;
+		local details = [];
 		foreach( sl in slots )
 		{
 			local it = inv.getItemAtSlot(sl);
 			if (it == null) continue;
 			if (n > 0) text += "\n";
 			text += it.getName();
+			details.push(this.itemDetail(_bro, it));
 			n += 1;
 		}
-		return { cat = "combat.sheet.equipment", texto = text, valor = "" + n, detalle = "" };
+		return {
+			cat = "combat.sheet.equipment",
+			texto = text,
+			valor = "" + n,
+			detalle = "",
+			details = details
+		};
 	}
 };
 
@@ -3235,6 +3481,7 @@
 		::UnseenBanner.JSConnection.connect();
 		::UnseenBanner.MenuNav.connect();
 		::UnseenBanner.EventNav.connect();
+		::UnseenBanner.TooltipNav.connect();
 		::logInfo("UnseenBanner: root_state.onInit hook fired (class hooking alive).");
 		onInit();
 	}
@@ -3638,17 +3885,7 @@
 			{
 				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
 				{
-					if (::UnseenBanner.SheetNav.isMove(code))
-					{
-						::UnseenBanner.SheetNav.move(code);
-					}
-					else
-					{
-						local next = ::UnseenBanner.SheetNav.isNext(code);
-						if (next) this.m.CharacterScreen.switchToNextBrother();
-						else this.m.CharacterScreen.switchToPreviousBrother();
-						::UnseenBanner.SheetNav.switchBrother(next);
-					}
+					::UnseenBanner.SheetNav.onKey(code, this.m.CharacterScreen);
 				}
 			}
 			else if (_key.getState() == 0)
@@ -3957,17 +4194,7 @@
 			{
 				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
 				{
-					if (::UnseenBanner.SheetNav.isMove(code))
-					{
-						::UnseenBanner.SheetNav.move(code);
-					}
-					else
-					{
-						local next = ::UnseenBanner.SheetNav.isNext(code);
-						if (next) this.m.CharacterScreen.switchToNextBrother();
-						else this.m.CharacterScreen.switchToPreviousBrother();
-						::UnseenBanner.SheetNav.switchBrother(next);
-					}
+					::UnseenBanner.SheetNav.onKey(code, this.m.CharacterScreen);
 				}
 			}
 			else if (_key.getState() == 0)
