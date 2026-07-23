@@ -142,6 +142,7 @@ namespace TheUnseenBanner.Companion
             ["tile.position"] = "{0} tiles, {1} o'clock",
             ["tile.position.one"] = "1 tile, {0} o'clock",
             ["tile.no_enemies"] = "No enemies in sight.",
+            ["tile.no_allies"] = "No other allies on the battlefield.",
             // Target preview appended to the tile readout while a skill is armed
             // (phase 3.3).
             ["tile.target.valid"] = "Valid target.",

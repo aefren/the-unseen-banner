@@ -1041,6 +1041,7 @@
 		CursorTile = null,
 		LastActiveID = -1,
 		EnemyIndex = -1,
+		AllyIndex = -1,
 		// Skill armed on the active man while the cursor is being moved, so the
 		// readout can add "valid target, N% to hit" for the tile under it. Set
 		// afresh from tactical_state on every key, null when nothing is armed.
@@ -1062,8 +1063,14 @@
 	// z steps through the living, visible enemies sorted by distance from the
 	// active man: z alone to the farther, Shift+z to the nearer. c is left
 	// untouched (it opens the vanilla character screen).
-	CycleKeys = {
+	EnemyCycleKeys = {
 		[36] = true // z
+	},
+	// h mirrors the enemy cycle for allies: h advances through living allies by
+	// distance from the active man, Shift+h walks the same list backwards. The
+	// active man is excluded because x already recentres on him.
+	AllyCycleKeys = {
+		[18] = true // h
 	},
 	// v inspects the unit standing on the cursor tile — the same facts the mouse
 	// hover tooltip shows (armour, health, morale, fatigue, status effects, when it
@@ -1074,7 +1081,10 @@
 	},
 	function handles(_code)
 	{
-		return (_code in this.DirKeys) || (_code in this.RecenterKeys) || (_code in this.CycleKeys);
+		return (_code in this.DirKeys)
+			|| (_code in this.RecenterKeys)
+			|| (_code in this.EnemyCycleKeys)
+			|| (_code in this.AllyCycleKeys);
 	},
 	function handlesInspect(_code)
 	{
@@ -1085,13 +1095,14 @@
 		this.m.CursorTile = null;
 		this.m.LastActiveID = -1;
 		this.m.EnemyIndex = -1;
+		this.m.AllyIndex = -1;
 		this.m.CurrentSkill = null;
 	},
 	// Re-anchor on the active man on the first key of a turn (or the first key
 	// ever), so the cursor always starts from a known reference and any tile held
 	// from a previous turn/battle is dropped before use. A new turn also restarts
-	// enemy cycling from the nearest. Shared by onKey and getTile so acting on the
-	// focused tile never reads a stale cursor.
+	// enemy/ally cycling from the nearest. Shared by onKey and getTile so acting on
+	// the focused tile never reads a stale cursor.
 	function ensureAnchored(_active)
 	{
 		if (this.m.CursorTile == null || this.m.LastActiveID != _active.getID())
@@ -1099,6 +1110,7 @@
 			this.m.CursorTile = _active.getTile();
 			this.m.LastActiveID = _active.getID();
 			this.m.EnemyIndex = -1;
+			this.m.AllyIndex = -1;
 		}
 	},
 	function getTile(_active)
@@ -1125,9 +1137,15 @@
 			return;
 		}
 
-		if (_code in this.CycleKeys)
+		if (_code in this.EnemyCycleKeys)
 		{
 			this.cycleEnemy(_shift ? -1 : 1, _active, _entities);
+			return;
+		}
+
+		if (_code in this.AllyCycleKeys)
+		{
+			this.cycleAlly(_shift ? -1 : 1, _active, _entities);
 			return;
 		}
 
@@ -1174,6 +1192,44 @@
 		this.m.CursorTile = scored[this.m.EnemyIndex].e.getTile();
 		this.announce(_active);
 	},
+	function cycleAlly(_step, _active, _entities)
+	{
+		local activeTile = _active.getTile();
+		local activeID = _active.getID();
+		local scored = [];
+		foreach( e in _entities.getAllInstancesAsArray() )
+		{
+			if (e != null
+				&& e.getID() != activeID
+				&& e.isAlive()
+				&& e.isPlacedOnMap()
+				&& (e.isPlayerControlled() || e.isAlliedWithPlayer())
+				&& e.getTile() != null)
+			{
+				scored.push({ e = e, d = activeTile.getDistanceTo(e.getTile()) });
+			}
+		}
+
+		if (scored.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "tile.no_allies");
+			return;
+		}
+
+		scored.sort(function ( _a, _b )
+		{
+			if (_a.d > _b.d) return 1;
+			if (_a.d < _b.d) return -1;
+			return 0;
+		});
+
+		this.m.AllyIndex += _step;
+		if (this.m.AllyIndex < 0) this.m.AllyIndex = scored.len() - 1;
+		if (this.m.AllyIndex >= scored.len()) this.m.AllyIndex = 0;
+
+		this.m.CursorTile = scored[this.m.AllyIndex].e.getTile();
+		this.announce(_active);
+	},
 	function announce(_active)
 	{
 		local tile = this.m.CursorTile;
@@ -1198,14 +1254,14 @@
 				{
 					if (_active != null && e.getID() == _active.getID())
 						kind = "self";
-					else if (e.isPlayerControlled())
+					else if (e.isPlayerControlled() || e.isAlliedWithPlayer())
 						kind = "ally";
 					else
 						kind = "enemy";
 
 					// Current health, appended right after the name so surveying the
-					// field (X to recentre, Z/Shift+Z to cycle enemies, or any cursor
-					// step onto a unit) says at once how hurt it is.
+					// field (X to recentre, Z/Shift+Z to cycle enemies, H/Shift+H to
+					// cycle allies, or any cursor step onto a unit) says at once how hurt it is.
 					hp = "" + e.getHitpoints();
 					hpMax = "" + e.getHitpointsMax();
 				}
