@@ -76,7 +76,8 @@ UnseenBannerTooltipNav.MouseOnlyInventoryGroups = {
 	'combat.sheet.equipment': true,
 	'world.character.equipment': true,
 	'world.character.bag': true,
-	'world.character.stash': true
+	'world.character.stash': true,
+	'world.market.item': true
 };
 
 UnseenBannerTooltipNav.prototype.onConnection = function (_handle)

@@ -114,6 +114,8 @@ namespace TheUnseenBanner.Companion
                 string hermano = GetOptionalString(root, "hermano");
                 string detalles = GetOptionalString(root, "detalles");
                 string contexto = GetOptionalString(root, "contexto");
+                string acciones = GetOptionalString(root, "acciones");
+                string comparacion = GetOptionalString(root, "comparacion");
                 string spoken = categoria switch
                 {
                     "tile.readout" => ComposeTileReadout(valor, texto, detalle),
@@ -134,6 +136,30 @@ namespace TheUnseenBanner.Companion
                     "world.character.equipment.slot" => ComposeEquipmentSlot(texto, valor, detalle),
                     "world.character.bag.slot" => ComposeBagSlot(texto, valor, detalle),
                     "world.character.stash.item" => ComposeStashItem(texto, valor),
+                    "world.character.stash.commands" => ComposeStashCommands(valor),
+                    "world.inventory.action" => ComposeInventoryAction(texto, valor, detalle),
+                    "world.inventory.actions.none" => texto.Length > 0
+                        ? L10n.F("world.inventory.actions.none", texto)
+                        : L10n.T("world.inventory.actions.none_empty"),
+                    "world.inventory.error" => L10n.T("world.inventory.error." + valor),
+                    string key when key.StartsWith("world.inventory.result.", StringComparison.Ordinal)
+                        => L10n.F(key, texto),
+                    "world.market.screen" => ComposeMarketScreen(texto, valor, detalle),
+                    "world.market.buy.item" => ComposeMarketItem(
+                        texto, valor, detalle, hermano, comparacion, isBuying: true),
+                    "world.market.sell.item" => ComposeMarketItem(
+                        texto, valor, detalle, hermano, comparacion, isBuying: false),
+                    "world.market.commands" => ComposeMarketCommands(valor, detalle),
+                    "world.market.empty" => ComposeMarketEmpty(texto, detalle),
+                    "world.market.action" => ComposeMarketAction(texto, valor, detalle),
+                    "world.market.actions.none" => texto.Length > 0
+                        ? L10n.F("world.market.actions.none", texto)
+                        : L10n.T("world.market.actions.none_empty"),
+                    "world.market.confirm" => ComposeMarketConfirmation(texto, valor, detalle),
+                    "world.market.confirm.cancelled" => L10n.F(categoria, texto),
+                    "world.market.error" => L10n.T("world.market.error." + valor),
+                    string key when key.StartsWith("world.market.result.", StringComparison.Ordinal)
+                        => L10n.F(key, texto, valor, detalle),
                     "world.character.perk" => ComposeWorldPerk(texto, valor, detalle),
                     "world.character.formation.slot" => ComposeFormationSlot(texto, valor, detalle),
                     "tooltip.detail" => ComposeTooltipDetail(texto, valor, detalle),
@@ -152,12 +178,14 @@ namespace TheUnseenBanner.Companion
                         : texto,
                 };
                 spoken = AppendDetailsHint(spoken, detalles);
+                spoken = AppendActionsHint(spoken, acciones);
                 spoken = ComposeCharacterContext(spoken, contexto);
                 // When changing the brother shown on the tactical character sheet,
                 // keep his name and the retained attribute in one utterance. Two
                 // consecutive interrupt messages would make the attribute cut off
                 // the name before NVDA could finish it.
-                if (hermano.Length > 0)
+                if (hermano.Length > 0 &&
+                    !categoria.StartsWith("world.market.", StringComparison.Ordinal))
                     spoken = L10n.F("combat.sheet.brother", hermano, spoken);
                 Speech.Speak(spoken, interrupt: canal == "interrupt");
             }
@@ -185,6 +213,17 @@ namespace TheUnseenBanner.Companion
             string hint = count == 1
                 ? L10n.T("tooltip.details.one")
                 : L10n.F("tooltip.details.many", count);
+            return spoken.Length > 0 ? spoken + " " + hint : hint;
+        }
+
+        private static string AppendActionsHint(string spoken, string countText)
+        {
+            if (!int.TryParse(countText, out int count) || count <= 0)
+                return spoken;
+
+            string hint = count == 1
+                ? L10n.T("world.inventory.actions.one")
+                : L10n.F("world.inventory.actions.many", count);
             return spoken.Length > 0 ? spoken + " " + hint : hint;
         }
 
@@ -231,6 +270,129 @@ namespace TheUnseenBanner.Companion
         private static string ComposeStashItem(string name, string amount)
         {
             return L10n.F("world.character.stash.item", WithItemAmount(name, amount));
+        }
+
+        private static string ComposeStashCommands(string filter)
+        {
+            return L10n.F("world.character.stash.commands",
+                L10n.T("world.inventory.filter." + filter));
+        }
+
+        /// <summary>Compose one row in the explicit inventory action sub-list.
+        /// Squirrel sends detail as "index|total|opened"; the longer keyboard hint
+        /// is included only when Enter first opens the list.</summary>
+        private static string ComposeInventoryAction(string itemName, string action, string detail)
+        {
+            string label = L10n.T("world.inventory.action." + action);
+            string result = itemName.Length > 0
+                ? L10n.F("world.inventory.action.for_item", label, itemName)
+                : L10n.F("world.inventory.action.standalone", label);
+
+            string[] parts = detail.Split('|');
+            string index = parts.Length > 0 ? parts[0] : "1";
+            string total = parts.Length > 1 ? parts[1] : "1";
+            result += " " + L10n.F("world.inventory.action.position", index, total);
+
+            bool opened = parts.Length > 2 && parts[2] == "1";
+            return opened ? L10n.F("world.inventory.action.opened", result) : result;
+        }
+
+        private static string ComposeMarketScreen(string name, string money, string description)
+        {
+            return L10n.F("world.market.screen", name, description, money);
+        }
+
+        private static string ComposeMarketItem(
+            string name,
+            string price,
+            string detail,
+            string brother,
+            string comparison,
+            bool isBuying)
+        {
+            string[] parts = detail.Split('|');
+            string amount = parts.Length > 0 ? parts[0] : "";
+            string index = parts.Length > 1 ? parts[1] : "1";
+            string total = parts.Length > 2 ? parts[2] : "1";
+            bool announceSection = parts.Length > 3 && parts[3] == "1";
+            bool comparisonApplies = parts.Length > 4 && parts[4] == "1";
+            string section = isBuying ? "buy" : "sell";
+
+            string result = L10n.F(
+                isBuying ? "world.market.buy.item" : "world.market.sell.item",
+                WithItemAmount(name, amount),
+                price);
+            if (comparisonApplies && brother.Length > 0)
+            {
+                result += " " + (comparison.Length > 0
+                    ? L10n.F("world.market.comparison.equipped", brother, comparison)
+                    : L10n.F("world.market.comparison.empty", brother));
+            }
+            result += " " + L10n.F("world.market.position", index, total);
+            return announceSection
+                ? L10n.T("world.market.section." + section) + ". " + result
+                : result;
+        }
+
+        private static string ComposeMarketCommands(string filter, string detail)
+        {
+            string result = L10n.F(
+                "world.market.commands",
+                L10n.T("world.inventory.filter." + filter));
+            return AppendMarketPosition(result, "sell", detail);
+        }
+
+        private static string ComposeMarketEmpty(string section, string detail)
+        {
+            string label = L10n.T("world.market.section." + section);
+            string result = L10n.F("world.market.empty", label);
+            return AppendMarketPosition(result, section, detail);
+        }
+
+        /// <summary>Market command and empty rows use the same compact detail shape
+        /// as item rows: amount|index|total|announce-section.</summary>
+        private static string AppendMarketPosition(string spoken, string section, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string index = parts.Length > 1 ? parts[1] : "1";
+            string total = parts.Length > 2 ? parts[2] : "1";
+            bool announceSection = parts.Length > 3 && parts[3] == "1";
+            string result = spoken + " " + L10n.F("world.market.position", index, total);
+            return announceSection
+                ? L10n.T("world.market.section." + section) + ". " + result
+                : result;
+        }
+
+        private static string ComposeMarketAction(string itemName, string action, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string price = parts.Length > 0 ? parts[0] : "";
+            string index = parts.Length > 1 ? parts[1] : "1";
+            string total = parts.Length > 2 ? parts[2] : "1";
+            bool opened = parts.Length > 3 && parts[3] == "1";
+            bool priced = action is "buy" or "sell" or "repair";
+            string label = priced
+                ? L10n.F("world.market.action." + action, price)
+                : L10n.T("world.market.action." + action);
+            string result = itemName.Length > 0
+                ? L10n.F("world.market.action.for_item", label, itemName)
+                : L10n.F("world.market.action.standalone", label);
+            result += " " + L10n.F("world.market.action.position", index, total);
+            return opened ? L10n.F("world.market.action.opened", result) : result;
+        }
+
+        private static string ComposeMarketConfirmation(string itemName, string kind, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string choice = parts.Length > 0 ? parts[0] : "cancel";
+            string index = parts.Length > 1 ? parts[1] : "1";
+            string total = parts.Length > 2 ? parts[2] : "2";
+            string price = parts.Length > 3 ? parts[3] : "";
+            bool opened = parts.Length > 4 && parts[4] == "1";
+            string result = L10n.F("world.market.confirm." + kind, itemName, price)
+                + " " + L10n.T("world.market.confirm.choice." + choice) + ". "
+                + L10n.F("world.market.confirm.choice.position", index, total);
+            return opened ? L10n.F("world.market.confirm.opened", result) : result;
         }
 
         private static string ComposeWorldPerk(string name, string state, string tier)

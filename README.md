@@ -185,6 +185,14 @@ in the real game.
     Page Down/Page Up change section; list navigation, quick brother comparison
     and V-key native details work throughout. Multi-detail rows become navigable
     sub-lists, and mouse-only item instructions are omitted.
+  - Verified keyboard inventory actions for equipped items, backpack and stash:
+    equip/use, move, mark for repair, sort and filter through explicit action
+    sub-lists with localized result and error announcements.
+  - Verified accessible markets opened directly from the town list: shop stock
+    and company stash navigation, live prices and quantities, native item
+    tooltips, equipped-item comparison by brother, buying, selling, repairing,
+    sorting and filtering. Unique and valuable sales use a safe confirmation
+    with Cancel selected by default.
 - **Phase 3 — Tactical combat (complete).**
   - Spoken combat log (hits, misses, morale, wounds, deaths, rounds).
   - Keyboard tile cursor with terrain, occupant, distance and direction, plus
@@ -212,11 +220,8 @@ in the real game.
   - A keyboard-navigation review for mouse-only event focus, if any event turns
     up that the generic event screen does not cover.
 - **Phase 2 — Tooltips and company management (partial).**
-  - Inventory and market (item, price, comparison).
-  - Reuse the native-tooltip reader from the character sheet for inventory,
-    market, recruitment and other management surfaces.
-  - Keyboard actions for equipment, backpack and stash: equip/use, move items,
-    mark for repair, sort and filter, with accessible confirmations where needed.
+  - Reuse the native-tooltip reader for recruitment and other remaining
+    management surfaces.
 - **Phase 3 — Tactical combat.**
   - **Pre-battle deployment**: placing and rearranging the formation before a
     fight (mouse-only today; a known gap, not yet numbered in the roadmap).
@@ -224,7 +229,7 @@ in the real game.
 - **Phase 4 — World map (real-time, pausable).**
   - Positional sonar (settlements, contracts, enemy parties, locations).
   - Persistent beacon and travel-to-selection from the nearby list.
-  - Accessible building sub-dialogs (market, recruits, tavern and others).
+  - Accessible building sub-dialogs for recruits, tavern and others.
 - **Phase 5 — Polish and distribution (partial).**
   - Configurable verbosity and every parameter in config.
   - Remaining special screens (company creation, ambitions, end screen,

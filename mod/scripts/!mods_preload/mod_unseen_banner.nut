@@ -57,7 +57,7 @@
 	return out;
 }
 
-::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null)
+::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null, _acciones = null, _comparacion = null)
 {
 	local json = "{\"canal\":\"" + ::UnseenBanner.jsonEscape(_canal) + "\",\"texto\":\"" + ::UnseenBanner.jsonEscape(_texto) + "\"";
 	if (_categoria != null) json += ",\"categoria\":\"" + ::UnseenBanner.jsonEscape(_categoria) + "\"";
@@ -66,6 +66,8 @@
 	if (_hermano != null) json += ",\"hermano\":\"" + ::UnseenBanner.jsonEscape(_hermano) + "\"";
 	if (_detalles != null) json += ",\"detalles\":\"" + ::UnseenBanner.jsonEscape(_detalles) + "\"";
 	if (_contexto != null) json += ",\"contexto\":\"" + ::UnseenBanner.jsonEscape(_contexto) + "\"";
+	if (_acciones != null) json += ",\"acciones\":\"" + ::UnseenBanner.jsonEscape(_acciones) + "\"";
+	if (_comparacion != null) json += ",\"comparacion\":\"" + ::UnseenBanner.jsonEscape(_comparacion) + "\"";
 	json += "}";
 	::logInfo("UB_MSG:" + json);
 }
@@ -1033,9 +1035,9 @@
 // each open contract by title, and a Leave action. Up/Down/Home/End walk it, Enter
 // activates. A contract opens through the game's own onContractClicked, which shows
 // it as the very event screen EventNav already narrates (phase 1.1), so taking and
-// turning in contracts works end to end. The building sub-dialogs (shop, hire,
-// tavern...) are still mouse-only, so Enter on a building says so rather than opening
-// a trap — those are their own later increment (they overlap the phase 2 market work).
+// turning in contracts works end to end. Phase 2.3b opens shop buildings through
+// their native slot callback; other building sub-dialogs (hire, tavern...) remain
+// mouse-only and announce that limitation instead of opening a keyboard trap.
 // Escape leaves the town on its own (the native menu-stack pop), so it is left alone.
 ::UnseenBanner.WorldTown <- {
 	m = {
@@ -1064,9 +1066,15 @@
 		this.m.ItemIndex = 0;
 		this.m.Active = false;
 	},
-	function item(_cat, _texto = "", _valor = "", _action = null)
+	function item(_cat, _texto = "", _valor = "", _action = null, _payload = null)
 	{
-		return { cat = _cat, texto = _texto, valor = _valor, action = _action };
+		return {
+			cat = _cat,
+			texto = _texto,
+			valor = _valor,
+			action = _action,
+			payload = _payload
+		};
 	},
 	function open(_town)
 	{
@@ -1084,16 +1092,20 @@
 		local items = [];
 		items.push(this.item("world.town.screen", town.getName()));
 
-		// Buildings: name every non-empty, non-hidden slot (informational this version).
+		// Buildings: retain the native slot index so accessible shops can enter through
+		// WorldTownScreen.onSlotClicked, the exact same funnel as a mouse click.
 		// No `in` guard here on purpose: the game's inherit()/new() builds an instance's
 		// m table DELEGATING to the parent class's m, and Squirrel's `in` operator does
 		// not follow delegates — so `"Buildings" in town.m` was false even though
 		// town.m.Buildings resolves fine through the delegate chain. This screen only
 		// ever opens for settlements, which always define Buildings.
-		foreach( b in town.m.Buildings )
+		foreach( index, b in town.m.Buildings )
 		{
 			if (b == null || b.isHidden()) continue;
-			items.push(this.item("world.town.building", b.getName(), "", "building"));
+			items.push(this.item("world.town.building", b.getName(), "", "building", {
+				slot = index,
+				building = b
+			}));
 		}
 
 		// Contracts: name + id. The active one is kept (tagged apart) rather than
@@ -1166,7 +1178,19 @@
 		}
 		else if (it.action == "building")
 		{
-			::UnseenBanner.sendMessage("interrupt", it.texto, "world.town.building.locked");
+			local building = it.payload != null ? it.payload.building : null;
+			if (building == null || building.getTooltip() == null)
+			{
+				::UnseenBanner.sendMessage("interrupt", it.texto, "world.town.building.closed");
+			}
+			else if (building.getStash() != null)
+			{
+				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
+			}
+			else
+			{
+				::UnseenBanner.sendMessage("interrupt", it.texto, "world.town.building.locked");
+			}
 		}
 		else
 		{
@@ -1178,6 +1202,781 @@
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local it = this.m.Items[this.m.ItemIndex];
 		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor);
+	}
+};
+
+// Market navigation (phase 2.3b). A shop is represented as three linear sections:
+// overview, stock to buy and company stash to sell/repair. Page Up/Down changes
+// section; Up/Down/Home/End moves within it; Enter opens an explicit action list;
+// V reads the focused item's native rendered tooltip. A/D, Left/Right and Tab cycle
+// the brother used for comparison. When an equivalent item is equipped, V exposes
+// the market item and equipped item as a two-entry tooltip list.
+//
+// All mutations call town_shop_dialog_module's native endpoints. This preserves
+// prices, unique/precious confirmation policy, stash capacity, achievements and
+// repair rules; the accessible layer only chooses an endpoint and rebuilds its
+// semantic rows from live state afterwards.
+::UnseenBanner.WorldShop <- {
+	m = {
+		Screen = null,
+		Module = null,
+		Sections = null,
+		SectionIndex = 0,
+		Items = null,
+		ItemIndex = 0,
+		Brothers = null,
+		BroIndex = 0,
+		DetailMode = false,
+		DetailIndex = 0,
+		ActionMode = false,
+		Actions = null,
+		ActionIndex = 0,
+		ConfirmMode = false,
+		ConfirmAction = null,
+		ConfirmIndex = 0,
+		Active = false
+	},
+	InspectKey = 32, // v
+	ActionKey = 39, // enter
+	EscapeKey = 41,
+	MoveKeys = {
+		[44] = "end",
+		[45] = "home",
+		[49] = "up",
+		[51] = "down"
+	},
+	SectionKeys = {
+		[46] = "prev",
+		[47] = "next"
+	},
+	NextKeys = {
+		[14] = true, // d
+		[50] = true, // right
+		[38] = true  // tab
+	},
+	PrevKeys = {
+		[11] = true, // a
+		[48] = true  // left
+	},
+	ShopOwner = "world-town-screen-shop-dialog-module.shop",
+	StashOwner = "world-town-screen-shop-dialog-module.stash",
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function isCurrent(_screen)
+	{
+		return this.m.Active && _screen != null && this.m.Screen == _screen
+			&& _screen.m.LastActiveModule == this.m.Module;
+	},
+	function handles(_code)
+	{
+		if (!this.m.Active) return false;
+		return _code == this.InspectKey
+			|| _code == this.ActionKey
+			|| (_code == this.EscapeKey && (this.m.ActionMode || this.m.ConfirmMode))
+			|| _code in this.MoveKeys
+			|| _code in this.SectionKeys
+			|| _code in this.NextKeys
+			|| _code in this.PrevKeys;
+	},
+	function reset()
+	{
+		this.m.Screen = null;
+		this.m.Module = null;
+		this.m.Sections = null;
+		this.m.SectionIndex = 0;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Brothers = null;
+		this.m.BroIndex = 0;
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
+		this.m.ActionMode = false;
+		this.m.Actions = null;
+		this.m.ActionIndex = 0;
+		this.m.ConfirmMode = false;
+		this.m.ConfirmAction = null;
+		this.m.ConfirmIndex = 0;
+		this.m.Active = false;
+		::UnseenBanner.TooltipNav.hide();
+	},
+	function open(_screen, _module)
+	{
+		this.reset();
+		if (_screen == null || _module == null || _module.getShop() == null) return;
+
+		this.m.Screen = _screen;
+		this.m.Module = _module;
+		this.m.Brothers = [];
+		local formation = ::World.Assets.getFormation();
+		if (formation != null)
+		{
+			foreach( bro in formation )
+			{
+				if (bro != null) this.m.Brothers.push(bro);
+			}
+		}
+
+		this.buildSections();
+		this.m.SectionIndex = 0;
+		this.m.Active = true;
+		this.activateSection(0, false, false);
+		this.announceItem(true);
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function currentBrother()
+	{
+		if (this.m.Brothers == null || this.m.Brothers.len() == 0) return null;
+		if (this.m.BroIndex < 0 || this.m.BroIndex >= this.m.Brothers.len())
+			this.m.BroIndex = 0;
+		return this.m.Brothers[this.m.BroIndex];
+	},
+	function currentSection()
+	{
+		if (this.m.Sections == null || this.m.Sections.len() == 0) return null;
+		if (this.m.SectionIndex < 0 || this.m.SectionIndex >= this.m.Sections.len())
+			return null;
+		return this.m.Sections[this.m.SectionIndex];
+	},
+	function row(_key, _cat, _texto = "", _precio = "", _cantidad = "",
+		_details = null, _payload = null, _comparison = null)
+	{
+		return {
+			key = _key,
+			cat = _cat,
+			texto = _texto,
+			precio = _precio,
+			cantidad = _cantidad,
+			details = _details != null ? _details : [],
+			payload = _payload,
+			comparison = _comparison
+		};
+	},
+	function section(_id, _rows, _saved)
+	{
+		if (_rows.len() == 0)
+			_rows.push(this.row(_id + ":empty", "world.market.empty", _id));
+
+		local result = { id = _id, items = _rows, index = 0 };
+		if (_saved != null && _id in _saved)
+		{
+			result.index = _saved[_id].index;
+			local key = _saved[_id].key;
+			if (key != "")
+			{
+				for (local i = 0; i < _rows.len(); i += 1)
+				{
+					if (_rows[i].key == key)
+					{
+						result.index = i;
+						break;
+					}
+				}
+			}
+		}
+		if (result.index < 0) result.index = 0;
+		if (result.index >= _rows.len()) result.index = _rows.len() - 1;
+		return result;
+	},
+	function capturePositions()
+	{
+		local saved = {};
+		if (this.m.Sections == null) return saved;
+		local current = this.currentSection();
+		if (current != null) current.index = this.m.ItemIndex;
+		foreach( section in this.m.Sections )
+		{
+			local index = section.index;
+			if (index < 0) index = 0;
+			if (index >= section.items.len()) index = section.items.len() - 1;
+			local key = section.items.len() > 0 ? section.items[index].key : "";
+			saved[section.id] <- { index = index, key = key };
+		}
+		return saved;
+	},
+	function itemAmount(_item)
+	{
+		return _item != null && _item.isAmountShown() ? "" + _item.getAmountString() : "";
+	},
+	function filterName(_filter)
+	{
+		if (_filter == ::Const.Items.ItemFilter.Weapons) return "weapons";
+		if (_filter == ::Const.Items.ItemFilter.Armor) return "armor";
+		if (_filter == ::Const.Items.ItemFilter.Misc) return "misc";
+		if (_filter == ::Const.Items.ItemFilter.Usable) return "usable";
+		return "all";
+	},
+	function itemDetail(_item, _owner, _bro = null)
+	{
+		return {
+			contentType = "ui-item",
+			entityId = _bro != null ? _bro.getID() : null,
+			itemId = _item.getInstanceID(),
+			itemOwner = _owner
+		};
+	},
+	function comparisonFor(_item)
+	{
+		local result = {
+			applicable = false,
+			brother = null,
+			item = null
+		};
+		local bro = this.currentBrother();
+		if (bro == null || _item == null) return result;
+
+		local slot = _item.getSlotType();
+		if (slot == ::Const.ItemSlot.None || slot == ::Const.ItemSlot.Bag) return result;
+
+		result.applicable = true;
+		result.brother = bro;
+		local equipped = bro.getItems().getItemAtSlot(slot);
+		if (equipped != null && equipped != -1) result.item = equipped;
+		return result;
+	},
+	function marketItemRow(_source, _index, _item)
+	{
+		local owner = _source == "buy" ? this.ShopOwner : this.StashOwner;
+		local comparison = this.comparisonFor(_item);
+		local details = [this.itemDetail(_item, owner)];
+		if (comparison.item != null)
+			details.push(this.itemDetail(comparison.item, "entity", comparison.brother));
+
+		return this.row(_source + ":" + _item.getInstanceID(),
+			_source == "buy" ? "world.market.buy.item" : "world.market.sell.item",
+			_item.getName(),
+			"" + (_source == "buy" ? _item.getBuyPrice() : _item.getSellPrice()),
+			this.itemAmount(_item),
+			details, {
+				source = _source,
+				index = _index,
+				item = _item,
+				itemId = _item.getInstanceID()
+			}, comparison);
+	},
+	function buildBuyRows()
+	{
+		local rows = [];
+		local shop = this.m.Module != null ? this.m.Module.getShop() : null;
+		local stash = shop != null ? shop.getStash() : null;
+		if (stash == null) return rows;
+		foreach( index, item in stash.getItems() )
+		{
+			if (item == null || item == -1) continue;
+			rows.push(this.marketItemRow("buy", index, item));
+		}
+		return rows;
+	},
+	function buildSellRows()
+	{
+		local rows = [];
+		if (this.m.Module == null) return rows;
+		local filter = this.m.Module.m.InventoryFilter;
+		rows.push(this.row("sell:commands", "world.market.commands", "",
+			this.filterName(filter), "", [], { source = "commands" }));
+
+		local stash = ::World.Assets.getStash();
+		if (stash == null) return rows;
+		foreach( index, item in stash.getItems() )
+		{
+			if (item == null || item == -1) continue;
+			if (filter != ::Const.Items.ItemFilter.All
+				&& (item.getItemType() & filter) == 0) continue;
+			rows.push(this.marketItemRow("sell", index, item));
+		}
+		return rows;
+	},
+	function buildSections(_saved = null)
+	{
+		local overview = [];
+		local shop = this.m.Module != null ? this.m.Module.getShop() : null;
+		if (shop != null)
+		{
+			overview.push(this.row("overview", "world.market.screen",
+				shop.getName(), "" + ::World.Assets.getMoney(), shop.getDescription()));
+		}
+		this.m.Sections = [
+			this.section("overview", overview, _saved),
+			this.section("buy", this.buildBuyRows(), _saved),
+			this.section("sell", this.buildSellRows(), _saved)
+		];
+	},
+	function activateSection(_index, _announce = true, _saveOld = true)
+	{
+		if (this.m.Sections == null || this.m.Sections.len() == 0) return;
+		local old = this.currentSection();
+		if (_saveOld && old != null) old.index = this.m.ItemIndex;
+		if (_index < 0) _index = 0;
+		if (_index >= this.m.Sections.len()) _index = this.m.Sections.len() - 1;
+		this.m.SectionIndex = _index;
+		local section = this.m.Sections[_index];
+		this.m.Items = section.items;
+		this.m.ItemIndex = section.index;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		section.index = this.m.ItemIndex;
+		::UnseenBanner.TooltipNav.hide();
+		if (_announce) this.announceItem(true);
+	},
+	function moveSection(_code)
+	{
+		local next = this.SectionKeys[_code] == "next";
+		local index = this.m.SectionIndex + (next ? 1 : -1);
+		if (index < 0) index = 0;
+		if (index >= this.m.Sections.len()) index = this.m.Sections.len() - 1;
+		this.activateSection(index);
+	},
+	function move(_code)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		local section = this.currentSection();
+		if (section != null) section.index = this.m.ItemIndex;
+		::UnseenBanner.TooltipNav.hide();
+		this.announceItem();
+	},
+	function switchBrother(_next)
+	{
+		if (this.m.Brothers == null || this.m.Brothers.len() == 0)
+		{
+			this.announceItem();
+			return;
+		}
+		local saved = this.capturePositions();
+		local n = this.m.Brothers.len();
+		if (_next) this.m.BroIndex = (this.m.BroIndex + 1) % n;
+		else this.m.BroIndex = (this.m.BroIndex - 1 + n) % n;
+		this.leaveDetails();
+		::UnseenBanner.TooltipNav.hide();
+		this.buildSections(saved);
+		this.activateSection(this.m.SectionIndex, false, false);
+		this.announceItem();
+	},
+	function repairPrice(_item)
+	{
+		local price = (_item.getConditionMax() - _item.getCondition())
+			* ::Const.World.Assets.CostToRepairPerPoint;
+		local value = _item.m.Value
+			* (1.0 - _item.getCondition() / _item.getConditionMax())
+			* 0.2
+			* ::World.State.getCurrentTown().getPriceMult()
+			* ::Const.Difficulty.SellPriceMult[::World.Assets.getEconomicDifficulty()];
+		return ::Math.max(price, value);
+	},
+	function action(_execute, _label, _result, _name, _price, _payload)
+	{
+		return {
+			execute = _execute,
+			label = _label,
+			result = _result,
+			name = _name,
+			price = _price,
+			payload = _payload
+		};
+	},
+	function buildActions(_row)
+	{
+		local actions = [];
+		local payload = _row != null ? _row.payload : null;
+		if (payload == null) return actions;
+		if (payload.source == "commands")
+		{
+			actions.push(this.action("sort", "sort", "sort", "", "", payload));
+			actions.push(this.action("filter_all", "filter_all", "filter_all", "", "", payload));
+			actions.push(this.action("filter_weapons", "filter_weapons", "filter_weapons", "", "", payload));
+			actions.push(this.action("filter_armor", "filter_armor", "filter_armor", "", "", payload));
+			actions.push(this.action("filter_misc", "filter_misc", "filter_misc", "", "", payload));
+			actions.push(this.action("filter_usable", "filter_usable", "filter_usable", "", "", payload));
+		}
+		else if (payload.source == "buy")
+		{
+			actions.push(this.action("buy", "buy", "buy", payload.item.getName(),
+				"" + payload.item.getBuyPrice(), payload));
+		}
+		else if (payload.source == "sell")
+		{
+			if (payload.item.isSellable())
+				actions.push(this.action("sell", "sell", "sell", payload.item.getName(),
+					"" + payload.item.getSellPrice(), payload));
+			if (this.m.Module.getShop().isRepairOffered()
+				&& payload.item.getConditionMax() > 1
+				&& payload.item.getCondition() < payload.item.getConditionMax())
+			{
+				actions.push(this.action("repair", "repair", "repair", payload.item.getName(),
+					"" + this.repairPrice(payload.item), payload));
+			}
+		}
+		return actions;
+	},
+	function openActions()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		this.leaveDetails();
+		::UnseenBanner.TooltipNav.hide();
+		local row = this.m.Items[this.m.ItemIndex];
+		local actions = this.buildActions(row);
+		if (actions.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt",
+				row.cat == "world.market.empty" ? "" : row.texto,
+				"world.market.actions.none");
+			return;
+		}
+		this.m.ActionMode = true;
+		this.m.Actions = actions;
+		this.m.ActionIndex = 0;
+		this.announceAction(true);
+	},
+	function leaveActions(_announceParent = false)
+	{
+		this.m.ActionMode = false;
+		this.m.Actions = null;
+		this.m.ActionIndex = 0;
+		if (_announceParent) this.announceItem();
+	},
+	function moveAction(_code)
+	{
+		if (this.m.Actions == null || this.m.Actions.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ActionIndex -= 1;
+		else if (dir == "down") this.m.ActionIndex += 1;
+		else if (dir == "home") this.m.ActionIndex = 0;
+		else this.m.ActionIndex = this.m.Actions.len() - 1;
+		if (this.m.ActionIndex < 0) this.m.ActionIndex = 0;
+		if (this.m.ActionIndex >= this.m.Actions.len())
+			this.m.ActionIndex = this.m.Actions.len() - 1;
+		this.announceAction();
+	},
+	function announceAction(_opened = false)
+	{
+		if (this.m.Actions == null || this.m.Actions.len() == 0) return;
+		local action = this.m.Actions[this.m.ActionIndex];
+		local detail = action.price + "|" + (this.m.ActionIndex + 1)
+			+ "|" + this.m.Actions.len() + "|" + (_opened ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", action.name, "world.market.action",
+			action.label, detail);
+	},
+	function beginConfirmation(_action, _kind)
+	{
+		this.leaveActions(false);
+		this.m.ConfirmMode = true;
+		this.m.ConfirmAction = _action;
+		this.m.ConfirmAction.confirmKind <- _kind;
+		this.m.ConfirmIndex = 0; // safe default: cancel
+		this.announceConfirmation(true);
+	},
+	function leaveConfirmation(_announceParent = false)
+	{
+		this.m.ConfirmMode = false;
+		this.m.ConfirmAction = null;
+		this.m.ConfirmIndex = 0;
+		if (_announceParent) this.announceItem();
+	},
+	function moveConfirmation(_code)
+	{
+		local dir = this.MoveKeys[_code];
+		if (dir == "up" || dir == "home") this.m.ConfirmIndex = 0;
+		else this.m.ConfirmIndex = 1;
+		this.announceConfirmation();
+	},
+	function announceConfirmation(_opened = false)
+	{
+		if (!this.m.ConfirmMode || this.m.ConfirmAction == null) return;
+		local choice = this.m.ConfirmIndex == 0 ? "cancel" : "sell";
+		local detail = choice + "|" + (this.m.ConfirmIndex + 1)
+			+ "|2|" + this.m.ConfirmAction.price + "|" + (_opened ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", this.m.ConfirmAction.name,
+			"world.market.confirm", this.m.ConfirmAction.confirmKind, detail);
+	},
+	function confirm()
+	{
+		if (!this.m.ConfirmMode || this.m.ConfirmAction == null) return;
+		if (this.m.ConfirmIndex == 0)
+		{
+			local name = this.m.ConfirmAction.name;
+			this.leaveConfirmation(false);
+			::UnseenBanner.sendMessage("interrupt", name, "world.market.confirm.cancelled");
+			return;
+		}
+		local action = this.m.ConfirmAction;
+		this.leaveConfirmation(false);
+		this.performTrade(action);
+	},
+	function tradeError(_result)
+	{
+		if (typeof _result != "table" || !("Result" in _result)) return "unavailable";
+		if (_result.Result == ::Const.UI.Error.NotEnoughMoney) return "money";
+		if (_result.Result == ::Const.UI.Error.NotEnoughStashSpace) return "space";
+		return "unavailable";
+	},
+	function refreshNative()
+	{
+		if (this.m.Module == null || this.m.Screen == null) return;
+		this.m.Module.m.JSHandle.asyncCall("loadFromData",
+			this.m.Module.queryShopInformation());
+		this.m.Screen.updateAssets();
+	},
+	function refreshSemantic(_saved, _section)
+	{
+		this.buildSections(_saved);
+		this.activateSection(_section, false, false);
+	},
+	function announceError(_code)
+	{
+		::UnseenBanner.sendMessage("interrupt", "", "world.market.error", _code);
+	},
+	function requestSell(_action)
+	{
+		local payload = _action.payload;
+		local canSwap = this.m.Module.onCanSwapItem([
+			payload.index, this.StashOwner, null, this.ShopOwner
+		]);
+		if (typeof canSwap != "table" || !("Result" in canSwap))
+		{
+			this.leaveActions(false);
+			this.announceError("unavailable");
+			return;
+		}
+		if (canSwap.Result == ::Const.UI.Swap.CanSwap)
+		{
+			this.leaveActions(false);
+			this.performTrade(_action);
+		}
+		else if (canSwap.Result == ::Const.UI.Swap.ConfirmNoReplaceSwap)
+		{
+			this.beginConfirmation(_action, "unique");
+		}
+		else if (canSwap.Result == ::Const.UI.Swap.ConfirmReplaceSwap)
+		{
+			this.beginConfirmation(_action, "precious");
+		}
+		else
+		{
+			this.leaveActions(false);
+			this.announceError("cannot_sell");
+		}
+	},
+	function performTrade(_action)
+	{
+		local payload = _action.payload;
+		local saved = this.capturePositions();
+		local section = this.m.SectionIndex;
+		local sourceOwner = _action.execute == "buy" ? this.ShopOwner : this.StashOwner;
+		local targetOwner = _action.execute == "buy" ? this.StashOwner : this.ShopOwner;
+		local result = this.m.Module.onSwapItem([
+			payload.index, sourceOwner, null, targetOwner
+		]);
+		if (typeof result != "table" || !("Result" in result) || result.Result != 0)
+		{
+			this.announceError(this.tradeError(result));
+			return;
+		}
+		this.refreshNative();
+		this.refreshSemantic(saved, section);
+		::UnseenBanner.sendMessage("interrupt", _action.name,
+			"world.market.result." + _action.result, _action.price,
+			"" + ::World.Assets.getMoney());
+	},
+	function executeAction()
+	{
+		if (!this.m.ActionMode || this.m.Actions == null || this.m.Actions.len() == 0)
+			return;
+		local action = this.m.Actions[this.m.ActionIndex];
+		if (action.execute == "sell")
+		{
+			this.requestSell(action);
+			return;
+		}
+		if (action.execute == "buy")
+		{
+			this.leaveActions(false);
+			this.performTrade(action);
+			return;
+		}
+
+		local saved = this.capturePositions();
+		local section = this.m.SectionIndex;
+		local success = true;
+		if (action.execute == "repair")
+		{
+			local result = this.m.Module.onRepairItem(action.payload.index);
+			success = typeof result == "table" && "Item" in result;
+			if (success) this.refreshNative();
+		}
+		else if (action.execute == "sort") this.m.Module.onSortButtonClicked();
+		else if (action.execute == "filter_all") this.m.Module.onFilterAll();
+		else if (action.execute == "filter_weapons") this.m.Module.onFilterWeapons();
+		else if (action.execute == "filter_armor") this.m.Module.onFilterArmor();
+		else if (action.execute == "filter_misc") this.m.Module.onFilterMisc();
+		else if (action.execute == "filter_usable") this.m.Module.onFilterUsable();
+		else success = false;
+
+		this.leaveActions(false);
+		if (!success)
+		{
+			this.announceError(action.execute == "repair" ? "repair" : "unavailable");
+			return;
+		}
+		this.refreshSemantic(saved, section);
+		::UnseenBanner.sendMessage("interrupt", action.name,
+			"world.market.result." + action.result, action.price,
+			"" + ::World.Assets.getMoney());
+	},
+	function leaveDetails()
+	{
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
+	},
+	function toggleDetails()
+	{
+		if (this.m.DetailMode)
+		{
+			this.leaveDetails();
+			::UnseenBanner.TooltipNav.hide();
+			this.announceItem();
+			return;
+		}
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local details = this.m.Items[this.m.ItemIndex].details;
+		if (details.len() == 0)
+		{
+			::UnseenBanner.TooltipNav.onTooltipUnavailable();
+			return;
+		}
+		this.m.DetailIndex = 0;
+		if (details.len() > 1) this.m.DetailMode = true;
+		this.showDetail();
+	},
+	function moveDetail(_code)
+	{
+		local details = this.m.Items[this.m.ItemIndex].details;
+		if (details.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.DetailIndex -= 1;
+		else if (dir == "down") this.m.DetailIndex += 1;
+		else if (dir == "home") this.m.DetailIndex = 0;
+		else this.m.DetailIndex = details.len() - 1;
+		if (this.m.DetailIndex < 0) this.m.DetailIndex = 0;
+		if (this.m.DetailIndex >= details.len()) this.m.DetailIndex = details.len() - 1;
+		this.showDetail();
+	},
+	function showDetail()
+	{
+		local row = this.m.Items[this.m.ItemIndex];
+		if (row.details.len() == 0) return;
+		::UnseenBanner.TooltipNav.show(row.details[this.m.DetailIndex],
+			this.m.DetailIndex + 1, row.details.len(), "world.market.item");
+	},
+	function announceItem(_includeSection = false)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local row = this.m.Items[this.m.ItemIndex];
+		if (row.cat == "world.market.screen")
+		{
+			::UnseenBanner.sendMessage("interrupt", row.texto, row.cat,
+				row.precio, row.cantidad);
+			return;
+		}
+
+		local section = this.currentSection();
+		local detail = row.cantidad + "|" + (this.m.ItemIndex + 1)
+			+ "|" + this.m.Items.len() + "|" + (_includeSection ? "1" : "0");
+		if (row.cat == "world.market.commands" || row.cat == "world.market.empty")
+		{
+			::UnseenBanner.sendMessage("interrupt", row.texto, row.cat,
+				row.precio, detail, null, "" + row.details.len(), null,
+				"" + this.buildActions(row).len());
+			return;
+		}
+
+		local comparison = row.comparison;
+		local broName = comparison != null && comparison.applicable
+			&& comparison.brother != null ? comparison.brother.getName() : null;
+		local comparedName = comparison != null && comparison.item != null
+			? comparison.item.getName() : null;
+		detail += "|" + (comparison != null && comparison.applicable ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", row.texto, row.cat,
+			row.precio, detail, broName, "" + row.details.len(), null,
+			"" + this.buildActions(row).len(), comparedName);
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active) return;
+		if (this.m.ConfirmMode)
+		{
+			if (_code == this.InspectKey || _code == this.EscapeKey)
+			{
+				this.leaveConfirmation(true);
+				return;
+			}
+			if (_code == this.ActionKey)
+			{
+				this.confirm();
+				return;
+			}
+			if (_code in this.MoveKeys)
+			{
+				this.moveConfirmation(_code);
+				return;
+			}
+			return;
+		}
+		if (this.m.ActionMode)
+		{
+			if (_code == this.InspectKey || _code == this.EscapeKey)
+			{
+				this.leaveActions(true);
+				return;
+			}
+			if (_code == this.ActionKey)
+			{
+				this.executeAction();
+				return;
+			}
+			if (_code in this.MoveKeys)
+			{
+				this.moveAction(_code);
+				return;
+			}
+			this.leaveActions(false);
+		}
+		if (_code == this.InspectKey)
+		{
+			this.toggleDetails();
+			return;
+		}
+		if (_code == this.ActionKey)
+		{
+			this.leaveDetails();
+			this.openActions();
+			return;
+		}
+		if (_code in this.SectionKeys)
+		{
+			this.leaveDetails();
+			this.moveSection(_code);
+			return;
+		}
+		if (_code in this.MoveKeys)
+		{
+			if (this.m.DetailMode) this.moveDetail(_code);
+			else this.move(_code);
+			return;
+		}
+		if (_code in this.NextKeys || _code in this.PrevKeys)
+		{
+			this.switchBrother(_code in this.NextKeys);
+		}
 	}
 };
 
@@ -2613,10 +3412,15 @@
 		ItemIndex = 0,
 		DetailMode = false,
 		DetailIndex = 0,
+		ActionMode = false,
+		Actions = null,
+		ActionIndex = 0,
+		Screen = null,
 		WorldMode = false,
 		Active = false
 	},
 	InspectKey = 32, // v -> open/close the focused entry's native tooltip details
+	ActionKey = 39, // Enter -> open/confirm the focused inventory action
 	// d / right / Tab -> next brother; a / left -> previous. Same keys the vanilla
 	// character screen already uses, so muscle memory carries over.
 	NextKeys = {
@@ -2647,6 +3451,8 @@
 	function handles(_code)
 	{
 		return (_code == this.InspectKey && this.m.WorldMode)
+			|| (_code == this.ActionKey && this.m.WorldMode
+				&& (this.m.ActionMode || this.isInventorySection()))
 			|| (this.m.WorldMode && _code in this.SectionKeys)
 			|| (_code in this.NextKeys)
 			|| (_code in this.PrevKeys)
@@ -2671,6 +3477,10 @@
 		this.m.ItemIndex = 0;
 		this.m.DetailMode = false;
 		this.m.DetailIndex = 0;
+		this.m.ActionMode = false;
+		this.m.Actions = null;
+		this.m.ActionIndex = 0;
+		this.m.Screen = null;
 		this.m.WorldMode = false;
 		::UnseenBanner.TooltipNav.hide();
 	},
@@ -2678,7 +3488,7 @@
 	// screen opens on in battle. _roster is supplied by world mode; null keeps the
 	// verified tactical source. With no selected actor, both native modes default
 	// to the first non-null entry in their source roster.
-	function open(_active, _roster = null)
+	function open(_active, _roster = null, _screen = null)
 	{
 		local raw = _roster != null
 			? _roster
@@ -2693,6 +3503,7 @@
 		}
 		this.m.Brothers = list;
 		this.m.WorldMode = _roster != null;
+		this.m.Screen = _screen;
 
 		this.m.BroIndex = 0;
 		if (_active != null)
@@ -2737,9 +3548,38 @@
 	// and this semantic cursor remain in lockstep.
 	function onKey(_code, _screen)
 	{
+		if (this.m.ActionMode)
+		{
+			if (_code == this.InspectKey)
+			{
+				this.leaveActions(true);
+				return;
+			}
+			if (_code == this.ActionKey)
+			{
+				this.executeAction(_screen);
+				return;
+			}
+			if (_code in this.MoveKeys)
+			{
+				this.moveAction(_code);
+				return;
+			}
+
+			// Page navigation and brother switching leave the action sub-list first,
+			// then continue through their ordinary CharacterScreen path below.
+			this.leaveActions(false);
+		}
+
 		if (_code == this.InspectKey)
 		{
 			this.toggleDetails();
+			return;
+		}
+
+		if (_code == this.ActionKey)
+		{
+			this.openActions();
 			return;
 		}
 
@@ -2809,11 +3649,24 @@
 		this.m.DetailMode = false;
 		this.m.DetailIndex = 0;
 	},
+	function leaveActions(_announceParent = false)
+	{
+		this.m.ActionMode = false;
+		this.m.Actions = null;
+		this.m.ActionIndex = 0;
+		if (_announceParent) this.announceItem();
+	},
 	function currentSection()
 	{
 		if (this.m.Sections == null || this.m.Sections.len() == 0) return null;
 		if (this.m.SectionIndex < 0 || this.m.SectionIndex >= this.m.Sections.len()) return null;
 		return this.m.Sections[this.m.SectionIndex];
+	},
+	function isInventorySection()
+	{
+		local section = this.currentSection();
+		if (section == null) return false;
+		return section.id == "equipment" || section.id == "bag" || section.id == "stash";
 	},
 	// Each section owns its last cursor position. Page navigation therefore returns
 	// to the element the player left, and rebuilding for another brother restores
@@ -2883,6 +3736,245 @@
 
 		this.announceItem();
 	},
+	function action(_execute, _label, _result, _name, _payload)
+	{
+		return {
+			execute = _execute,
+			label = _label,
+			result = _result,
+			name = _name,
+			payload = _payload
+		};
+	},
+	function buildActions(_row)
+	{
+		local payload = _row != null ? _row.payload : null;
+		local actions = [];
+
+		if (payload != null && payload.source == "commands")
+		{
+			actions.push(this.action("sort", "sort", "sort", "", payload));
+			actions.push(this.action("filter_all", "filter_all", "filter_all", "", payload));
+			actions.push(this.action("filter_weapons", "filter_weapons", "filter_weapons", "", payload));
+			actions.push(this.action("filter_armor", "filter_armor", "filter_armor", "", payload));
+			actions.push(this.action("filter_misc", "filter_misc", "filter_misc", "", payload));
+			actions.push(this.action("filter_usable", "filter_usable", "filter_usable", "", payload));
+		}
+		else if (payload != null && payload.item != null)
+		{
+			local item = payload.item;
+			local name = item.getName();
+			local slot = item.getSlotType();
+			local equipable = slot != ::Const.ItemSlot.None && slot != ::Const.ItemSlot.Bag;
+
+			if (payload.source == "stash")
+			{
+				if (item.isUsable())
+					actions.push(this.action("use_stash", "use", "use", name, payload));
+				else if (equipable)
+					actions.push(this.action("equip_stash", "equip", "equip", name, payload));
+
+				if (item.isAllowedInBag())
+					actions.push(this.action("stash_to_bag", "move_bag", "move_bag", name, payload));
+
+				if (item.getConditionMax() > 1 && item.getCondition() < item.getConditionMax())
+				{
+					local marked = item.isToBeRepaired();
+					actions.push(this.action(marked ? "repair_unmark" : "repair_mark",
+						marked ? "repair_unmark" : "repair_mark",
+						marked ? "repair_unmark" : "repair_mark", name, payload));
+				}
+			}
+			else if (payload.source == "bag")
+			{
+				if (equipable)
+					actions.push(this.action("equip_bag", "equip", "equip", name, payload));
+				actions.push(this.action("bag_to_stash", "move_stash", "move_stash", name, payload));
+			}
+			else if (payload.source == "equipment")
+			{
+				if (item.isAllowedInBag())
+					actions.push(this.action("equipment_to_bag", "move_bag", "move_bag", name, payload));
+				actions.push(this.action("equipment_to_stash", "move_stash", "move_stash", name, payload));
+			}
+		}
+		return actions;
+	},
+	// Phase 2.3 inventory actions. Enter opens an explicit sub-list instead of
+	// mutating immediately: consumables and equipment changes therefore require a
+	// deliberate second Enter. V returns to the parent item without changing state.
+	function openActions()
+	{
+		if (!this.m.WorldMode || !this.isInventorySection()
+			|| this.m.Items == null || this.m.Items.len() == 0) return;
+
+		this.leaveDetails();
+		::UnseenBanner.TooltipNav.hide();
+		local row = this.m.Items[this.m.ItemIndex];
+		local actions = this.buildActions(row);
+		if (actions.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", row.texto, "world.inventory.actions.none");
+			return;
+		}
+
+		this.m.ActionMode = true;
+		this.m.Actions = actions;
+		this.m.ActionIndex = 0;
+		this.announceAction(true);
+	},
+	function moveAction(_code)
+	{
+		if (!this.m.ActionMode || this.m.Actions == null || this.m.Actions.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ActionIndex -= 1;
+		else if (dir == "down") this.m.ActionIndex += 1;
+		else if (dir == "home") this.m.ActionIndex = 0;
+		else this.m.ActionIndex = this.m.Actions.len() - 1;
+
+		if (this.m.ActionIndex < 0) this.m.ActionIndex = 0;
+		if (this.m.ActionIndex >= this.m.Actions.len()) this.m.ActionIndex = this.m.Actions.len() - 1;
+		this.announceAction();
+	},
+	function announceAction(_opened = false)
+	{
+		if (!this.m.ActionMode || this.m.Actions == null || this.m.Actions.len() == 0) return;
+		local action = this.m.Actions[this.m.ActionIndex];
+		local detail = (this.m.ActionIndex + 1) + "|" + this.m.Actions.len()
+			+ "|" + (_opened ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", action.name, "world.inventory.action",
+			action.label, detail);
+	},
+	function mutationSucceeded(_result)
+	{
+		return typeof _result == "table" && !("error" in _result);
+	},
+	function mutationErrorCode(_result)
+	{
+		if (typeof _result == "table" && "error" in _result)
+			return "code" in _result ? "" + _result.code : "0";
+		return "0";
+	},
+	// Call CharacterScreen's own UI endpoints. They are the vanilla funnels that
+	// enforce two-handed/offhand displacement, bag and stash capacity, consumable
+	// behavior, AP costs and rollback on failure. On success loadData refreshes the
+	// visible UI, then the semantic lists are rebuilt from live state.
+	function executeAction(_screen)
+	{
+		if (!this.m.ActionMode || this.m.Actions == null || this.m.Actions.len() == 0
+			|| _screen == null) return;
+
+		local action = this.m.Actions[this.m.ActionIndex];
+		local payload = action.payload;
+		local bro = this.current();
+		local saved = this.captureSectionPositions();
+		local oldSection = this.m.SectionIndex;
+		local result = null;
+		local success = false;
+
+		if (payload == null || (payload.source != "commands" && bro == null))
+		{
+			this.leaveActions(false);
+			::UnseenBanner.sendMessage("interrupt", "", "world.inventory.error", "0");
+			return;
+		}
+
+		switch(action.execute)
+		{
+		case "equip_stash":
+		case "use_stash":
+			result = _screen.onEquipInventoryItem([
+				bro.getID(), payload.itemId, payload.sourceIndex
+			]);
+			success = this.mutationSucceeded(result);
+			break;
+
+		case "stash_to_bag":
+			result = _screen.onDropInventoryItemIntoBag([
+				bro.getID(), payload.itemId, payload.sourceIndex, null
+			]);
+			success = this.mutationSucceeded(result);
+			break;
+
+		case "equip_bag":
+			result = _screen.onEquipBagItem([
+				bro.getID(), payload.itemId, payload.slotIndex
+			]);
+			success = this.mutationSucceeded(result);
+			break;
+
+		case "bag_to_stash":
+			result = _screen.onDropBagItemIntoInventory([
+				bro.getID(), payload.itemId, payload.slotIndex, null
+			]);
+			success = this.mutationSucceeded(result);
+			break;
+
+		case "equipment_to_bag":
+			result = _screen.onDropPaperdollItemIntoBag([
+				bro.getID(), payload.itemId, null
+			]);
+			success = this.mutationSucceeded(result);
+			break;
+
+		case "equipment_to_stash":
+			result = _screen.onDropPaperdollItem([
+				bro.getID(), payload.itemId, null
+			]);
+			success = this.mutationSucceeded(result);
+			break;
+
+		case "repair_mark":
+		case "repair_unmark":
+			_screen.onRepairInventoryItem(payload.itemId);
+			success = payload.item.isToBeRepaired() == (action.execute == "repair_mark");
+			break;
+
+		case "sort":
+			_screen.onSortButtonClicked();
+			success = true;
+			break;
+
+		case "filter_all":
+			_screen.onFilterAll();
+			success = true;
+			break;
+
+		case "filter_weapons":
+			_screen.onFilterWeapons();
+			success = true;
+			break;
+
+		case "filter_armor":
+			_screen.onFilterArmor();
+			success = true;
+			break;
+
+		case "filter_misc":
+			_screen.onFilterMisc();
+			success = true;
+			break;
+
+		case "filter_usable":
+			_screen.onFilterUsable();
+			success = true;
+			break;
+		}
+
+		this.leaveActions(false);
+		if (!success)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.inventory.error",
+				this.mutationErrorCode(result));
+			return;
+		}
+
+		_screen.loadData();
+		this.buildWorldSections(saved);
+		this.activateSection(oldSection, false, false);
+		::UnseenBanner.sendMessage("interrupt", action.name,
+			"world.inventory.result." + action.result);
+	},
 	function announceItem(_includeBrother = false, _includeSection = false)
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
@@ -2892,6 +3984,9 @@
 		local bro = _includeBrother && it.cat != "combat.sheet.identity" ? this.current() : null;
 		local name = bro != null ? bro.getName() : null;
 		local detailCount = this.m.WorldMode ? it.details.len() : 0;
+		local actionCount = this.m.WorldMode && this.isInventorySection()
+			? this.buildActions(it).len()
+			: 0;
 		local context = null;
 		local section = this.currentSection();
 		if (this.m.WorldMode && section != null)
@@ -2900,7 +3995,7 @@
 				+ "|" + (_includeSection ? "1" : "0");
 		}
 		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle,
-			name, "" + detailCount, context);
+			name, "" + detailCount, context, "" + actionCount);
 	},
 	// V on a row with several native tooltips enters a nested list; V again backs
 	// out and re-announces the parent row. A single tooltip is shown/read directly
@@ -3001,7 +4096,8 @@
 			perkId = _perk.ID
 		};
 	},
-	function row(_key, _cat, _texto = "", _valor = "", _detalle = "", _details = null)
+	function row(_key, _cat, _texto = "", _valor = "", _detalle = "", _details = null,
+		_payload = null)
 	{
 		return {
 			key = _key,
@@ -3009,7 +4105,8 @@
 			texto = _texto,
 			valor = _valor,
 			detalle = _detalle,
-			details = _details != null ? _details : []
+			details = _details != null ? _details : [],
+			payload = _payload
 		};
 	},
 	function section(_id, _items, _detailGroup, _saved)
@@ -3040,10 +4137,9 @@
 		if (result.index >= _items.len()) result.index = _items.len() - 1;
 		return result;
 	},
-	// Phase 2.4 world CharacterScreen. The tactical screen deliberately keeps its
-	// already-verified flat sheet; only world mode gains Page Up/Down sections.
-	// Inventory and formation are read-only in this increment. Enter actions are a
-	// separate phase because they mutate native state and require callback rebuilds.
+	// Phase 2.4 world CharacterScreen sections, extended by phase 2.3 inventory
+	// actions. Tactical keeps its already-verified flat sheet. Formation and perks
+	// remain read-only; equipment, backpack and stash expose an explicit Enter menu.
 	function buildWorldSections(_saved = null)
 	{
 		this.buildItems();
@@ -3091,7 +4187,14 @@
 			rows.push(this.row("equipment:" + slot.id, "world.character.equipment.slot",
 				item != null ? item.getName() : "", slot.id,
 				item != null ? this.itemAmount(item) : "",
-				item != null ? [this.itemDetail(bro, item)] : []));
+				item != null ? [this.itemDetail(bro, item)] : [],
+				item != null ? {
+					source = "equipment",
+					item = item,
+					itemId = item.getInstanceID(),
+					sourceIndex = null,
+					slotIndex = slot.value
+				} : null));
 		}
 		return rows;
 	},
@@ -3108,9 +4211,29 @@
 			rows.push(this.row("bag:" + i, "world.character.bag.slot",
 				occupied ? item.getName() : "", "" + (i + 1),
 				occupied ? this.itemAmount(item) : "",
-				occupied ? [this.itemDetail(bro, item)] : []));
+				occupied ? [this.itemDetail(bro, item)] : [],
+				occupied ? {
+					source = "bag",
+					item = item,
+					itemId = item.getInstanceID(),
+					sourceIndex = null,
+					slotIndex = i
+				} : null));
 		}
 		return rows;
+	},
+	function stashFilterName(_filter)
+	{
+		if (_filter == ::Const.Items.ItemFilter.Weapons) return "weapons";
+		if (_filter == ::Const.Items.ItemFilter.Armor) return "armor";
+		if (_filter == ::Const.Items.ItemFilter.Misc) return "misc";
+		if (_filter == ::Const.Items.ItemFilter.Usable) return "usable";
+		return "all";
+	},
+	function currentStashFilter()
+	{
+		if (this.m.Screen == null) return ::Const.Items.ItemFilter.All;
+		return this.m.Screen.m.InventoryFilter;
 	},
 	function buildStashRows()
 	{
@@ -3119,12 +4242,24 @@
 		if (bro == null) return rows;
 		local stash = ::World.Assets.getStash();
 		if (stash == null) return rows;
-		foreach( item in stash.getItems() )
+		local filter = this.currentStashFilter();
+		rows.push(this.row("stash:commands", "world.character.stash.commands", "",
+			this.stashFilterName(filter), "", [], { source = "commands" }));
+
+		foreach( index, item in stash.getItems() )
 		{
 			if (item == null || item == -1) continue;
+			if (filter != ::Const.Items.ItemFilter.All
+				&& (item.getItemType() & filter) == 0) continue;
 			rows.push(this.row("stash:" + item.getInstanceID(), "world.character.stash.item",
 				item.getName(), this.itemAmount(item), "",
-				[this.itemDetail(bro, item, "stash")]));
+				[this.itemDetail(bro, item, "stash")], {
+					source = "stash",
+					item = item,
+					itemId = item.getInstanceID(),
+					sourceIndex = index,
+					slotIndex = null
+				}));
 		}
 		return rows;
 	},
@@ -3940,21 +5075,45 @@
 	}
 });
 
-// Town screen (phase 4.5). onScreenShown is the deterministic point at which the
-// settlement screen's DOM is up (same pattern as the event screen), so the flattened
-// building/contract list is built and announced there; onScreenHidden clears it.
-// Keys are driven from world_state.onKeyInput, where the town screen lives.
+// Town screen (phase 4.5 + market phase 2.3b). onScreenShown builds the flattened
+// building/contract list. showShopDialog is the shared funnel used by every shop
+// building, so it opens the accessible market cursor after vanilla has installed
+// its module. showMainDialog closes that cursor when Escape pops back to town.
 ::UnseenBanner.Mod.hook("scripts/ui/screens/world/world_town_screen", function(q) {
 	q.onScreenShown = @(__original) function()
 	{
 		__original();
+		::UnseenBanner.WorldShop.close();
 		::UnseenBanner.WorldTown.open(this.getTown());
 	}
 
 	q.onScreenHidden = @(__original) function()
 	{
 		__original();
+		::UnseenBanner.WorldShop.close();
 		::UnseenBanner.WorldTown.close();
+	}
+
+	q.showShopDialog = @(__original) function()
+	{
+		__original();
+		if (this.isVisible() && this.m.ShopDialogModule != null
+			&& this.m.ShopDialogModule.getShop() != null)
+		{
+			::UnseenBanner.WorldShop.open(this, this.m.ShopDialogModule);
+		}
+	}
+
+	q.showMainDialog = @(__original) function()
+	{
+		local leavingShop = ::UnseenBanner.WorldShop.isCurrent(this);
+		__original();
+		if (leavingShop)
+		{
+			::UnseenBanner.WorldShop.close();
+			if (::UnseenBanner.WorldTown.isActive())
+				::UnseenBanner.WorldTown.announceItem();
+		}
 	}
 });
 
@@ -4273,12 +5432,30 @@
 			return true;
 		}
 
+		// Market (phase 2.3b): the town screen remains technically visible behind its
+		// shop module, so give the market cursor priority over the town list. Consume
+		// both key states; act on release once the native slide animation is finished.
+		// Escape is captured only inside an action/confirmation sub-list. At the normal
+		// item level it falls through to MenuStack and returns to the town frame.
+		if (this.m.WorldTownScreen.isVisible()
+			&& !::UnseenBanner.EventNav.isActive()
+			&& ::UnseenBanner.WorldShop.isCurrent(this.m.WorldTownScreen)
+			&& ::UnseenBanner.WorldShop.handles(code))
+		{
+			if (_key.getState() == 0 && !this.m.WorldTownScreen.isAnimating())
+			{
+				::UnseenBanner.WorldShop.onKey(code);
+			}
+			return true;
+		}
+
 		// Town screen (phase 4.5): while the settlement screen is up (and no event is
 		// layered over it), our list drives it — Up/Down/Home/End walk buildings and
 		// contracts, Enter activates. Act on release, consume the key. Escape is left
 		// alone so the native menu-stack pop still leaves the town.
 		if (this.m.WorldTownScreen.isVisible()
 			&& !::UnseenBanner.EventNav.isActive()
+			&& !::UnseenBanner.WorldShop.isCurrent(this.m.WorldTownScreen)
 			&& ::UnseenBanner.WorldTown.isActive()
 			&& ::UnseenBanner.WorldTown.handles(code))
 		{
@@ -4635,14 +5812,14 @@
 			// In battle the screen opens on the active brother; in battle
 			// preparation there is none and SheetNav falls back to the first of
 			// the roster — the same man the screen shows.
-			::UnseenBanner.SheetNav.open(::Tactical.TurnSequenceBar.getActiveEntity());
+			::UnseenBanner.SheetNav.open(::Tactical.TurnSequenceBar.getActiveEntity(), null, this);
 		}
 		else
 		{
 			// strategic_onQueryBrothersList feeds this same 27-slot formation to
 			// the native JS. SheetNav filters its null slots but retains formation
 			// order, so every next/previous operation remains in lockstep.
-			::UnseenBanner.SheetNav.open(null, ::World.Assets.getFormation());
+			::UnseenBanner.SheetNav.open(null, ::World.Assets.getFormation(), this);
 		}
 	}
 
