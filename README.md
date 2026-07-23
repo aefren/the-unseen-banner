@@ -108,7 +108,7 @@ acts on it and consumes the press during your turn.
 
 | Key | Action |
 |---|---|
-| G | Company status: day, number of brothers, money and daily wage, food and days it lasts, active contract |
+| G | Company status: day, brothers, money, wages, food, active contract and current objectives |
 
 On an **event screen**: the arrows move through the options and Enter picks one
 (the native number keys 1-6 still work). A first Enter with nothing focused

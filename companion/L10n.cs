@@ -279,6 +279,12 @@ namespace TheUnseenBanner.Companion
             ["world.status.food.none"] = "No food upkeep.",
             ["world.status.contract"] = "Contract: {0}.",
             ["world.status.contract.none"] = "No active contract.",
+            ["world.status.objective"] = "Objective: {0}.",
+            ["world.status.objectives.none"] = "No current objectives.",
+            ["world.status.objectives.current.one"] = "Current objective: {0}.",
+            ["world.status.objectives.current"] = "Current objectives: {0}.",
+            ["world.status.objectives.updated.one"] = "Objective updated: {0}.",
+            ["world.status.objectives.updated"] = "Objectives updated: {0}.",
             // World-map "what's in view" survey (phase 4.3, B then Up/Down). A
             // navigable list of visible parties and known settlements/locations, each
             // with its kind, distance and clock bearing. Distance/bearing reuse the

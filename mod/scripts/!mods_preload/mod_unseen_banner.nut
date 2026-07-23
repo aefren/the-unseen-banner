@@ -233,12 +233,88 @@
 	}
 };
 
+// Active-contract objectives (phase 4.4). The world panel is fed by
+// contract.getUIBulletpoints(), whose objective texts have already passed through
+// contract.buildText() (town/employer placeholders resolved) and are exactly the
+// source rendered on screen. Keep the last rendered signature so the common panel
+// refresh funnel can announce genuine changes without speaking on every redraw.
+::UnseenBanner.ContractObjectives <- {
+	m = {
+		ContractID = null,
+		Signature = null
+	},
+	function reset()
+	{
+		this.m.ContractID = null;
+		this.m.Signature = null;
+	},
+	function getTexts(_contract)
+	{
+		local texts = [];
+		if (_contract == null) return texts;
+
+		// Request objectives only; payment is useful contract detail but does not
+		// answer the immediate "what do I do next?" question this readout solves.
+		local lists = _contract.getUIBulletpoints(true, false);
+		if (lists == null) return texts;
+
+		foreach( list in lists )
+		{
+			if (list == null || list.items == null) continue;
+			foreach( item in list.items )
+			{
+				if (item != null && item.text != null && item.text != "")
+					texts.push(item.text);
+			}
+		}
+		return texts;
+	},
+	function join(_texts)
+	{
+		local out = "";
+		foreach( i, text in _texts )
+		{
+			if (i > 0) out += "\n";
+			out += text;
+		}
+		return out;
+	},
+	function observe(_contract)
+	{
+		if (_contract == null)
+		{
+			this.reset();
+			return;
+		}
+
+		local texts = this.getTexts(_contract);
+		local id = "" + _contract.getID();
+		local joined = this.join(texts);
+		local signature = id + "\n" + joined;
+		if (this.m.Signature == signature) return;
+
+		local isUpdate = this.m.Signature != null && this.m.ContractID == id;
+		this.m.ContractID = id;
+		this.m.Signature = signature;
+
+		// An objective change is a game event, not cursor focus: queue it so it
+		// cannot cut off another result/event announcement. Empty objectives are
+		// kept in the signature but stay silent; contract completion has its own UI.
+		if (texts.len() == 0) return;
+		local category = isUpdate
+			? (texts.len() == 1 ? "world.status.objectives.updated.one" : "world.status.objectives.updated")
+			: (texts.len() == 1 ? "world.status.objectives.current.one" : "world.status.objectives.current");
+		::UnseenBanner.sendMessage("queue", joined, category);
+	}
+};
+
 // World-map company/campaign readout (phase 4.4). The map's topbar status is a
 // short semantic list: day and time of day, brother count, crowns, daily wages,
-// food, days of food, and the active contract. Pull, not push: G opens/closes the
-// list and Up/Down read one fact at a time. Every fact is a Squirrel API
-// (World.Assets / World.getTime / World.Contracts / the player roster), so
-// nothing is scraped from the DOM; the companion owns the framing words.
+// food, days of food, and the active contract with its current objectives. Pull,
+// not push: G opens/closes the list and Up/Down read one fact at a time. Every
+// fact is a Squirrel API (World.Assets / World.getTime / World.Contracts / the
+// player roster), so nothing is scraped from the DOM; the companion owns the
+// framing words.
 //
 // Key: g (code 17). g is unbound on the world map in vanilla — the letters the
 // map already claims are c/f/i/o/p/r/t (character, ?, inventory, obituary, perks,
@@ -305,6 +381,15 @@
 		if (foodDays < 0) items.push(this.item("world.status.food.none"));
 		else items.push(this.item(foodDays == 1 ? "world.status.food.day" : "world.status.food.days", "", "" + foodDays));
 		items.push(this.item(contract != null ? "world.status.contract" : "world.status.contract.none", title));
+		if (contract != null)
+		{
+			local objectives = ::UnseenBanner.ContractObjectives.getTexts(contract);
+			if (objectives.len() == 0)
+				items.push(this.item("world.status.objectives.none"));
+			else
+				foreach( objective in objectives )
+					items.push(this.item("world.status.objective", objective));
+		}
 
 		this.m.Items = items;
 		this.m.ItemIndex = 0;
@@ -2510,6 +2595,23 @@
 	}
 });
 
+// The active-contract panel is the single UI funnel for acceptance, state changes
+// (including post-combat "return to town" objectives) and save loading. Observe
+// only after vanilla has successfully rendered the same getUIBulletpoints data.
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/modules/world_contract_screen/world_active_contract_panel_module", function(q) {
+	q.updateContract = @(__original) function( _contract = null )
+	{
+		__original(_contract);
+		::UnseenBanner.ContractObjectives.observe(_contract);
+	}
+
+	q.clearContract = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.ContractObjectives.reset();
+	}
+});
+
 // Town screen (phase 4.5). onScreenShown is the deterministic point at which the
 // settlement screen's DOM is up (same pattern as the event screen), so the flattened
 // building/contract list is built and announced there; onScreenHidden clears it.
@@ -2597,6 +2699,7 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
+		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -2607,6 +2710,7 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
+		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -2617,6 +2721,7 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
+		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
