@@ -116,7 +116,7 @@ acts on it and consumes the press during your turn.
 | Enter | Enter a settlement or location when standing on it |
 | B | Open perceived nearby parties, settlements and locations; Up/Down review, Home/End jump, V opens details, B closes |
 | G | Company status: day, brothers, money, wages, food, active contract and current objectives |
-| C / I | Open the character sheet; Up/Down review, Home/End jump, V opens native details, A selects the previous brother, D or Tab selects the next, C/I/Escape closes |
+| C / I | Open company management; Page Down/Page Up move through character sheet, equipped items, backpack, stash, perks and formation; Up/Down review, Home/End jump, V opens native details, A selects the previous brother, D or Tab selects the next, C/I/Escape closes |
 | O | Open the obituary; Up/Down review the fallen, Home/End jump to the start/end, O or Escape closes |
 | R | Open factions and relations; Up/Down review, Home/End jump to the start/end, R or Escape closes |
 | P | Open the Retinue; Up/Down review, Home/End jump, Enter hires/replaces followers or upgrades the cart, P or Escape goes back |
@@ -180,9 +180,11 @@ in the real game.
 - **Phase 2 — Tooltips and company management (partial).**
   - Generic on-demand native-tooltip reader: the game renders its localized
     tooltip first, then the mod reads the final DOM and announces it.
-  - Navigable world-map brother sheet with statistics, injuries, traits, perks
-    and equipment, quick brother comparison, and V-key details. A multi-detail
-    row becomes a navigable sub-list; mouse-only item instructions are omitted.
+  - Full read-only keyboard navigation of the world-map character screen:
+    character sheet, equipped items, backpack, stash, perks and formation.
+    Page Down/Page Up change section; list navigation, quick brother comparison
+    and V-key native details work throughout. Multi-detail rows become navigable
+    sub-lists, and mouse-only item instructions are omitted.
 - **Phase 3 — Tactical combat (complete).**
   - Spoken combat log (hits, misses, morale, wounds, deaths, rounds).
   - Keyboard tile cursor with terrain, occupant, distance and direction, plus
@@ -213,7 +215,8 @@ in the real game.
   - Inventory and market (item, price, comparison).
   - Reuse the native-tooltip reader from the character sheet for inventory,
     market, recruitment and other management surfaces.
-  - Keyboard navigation of the management grids.
+  - Keyboard actions for equipment, backpack and stash: equip/use, move items,
+    mark for repair, sort and filter, with accessible confirmations where needed.
 - **Phase 3 — Tactical combat.**
   - **Pre-battle deployment**: placing and rearranging the formation before a
     fight (mouse-only today; a known gap, not yet numbered in the roadmap).

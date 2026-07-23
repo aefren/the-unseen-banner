@@ -72,7 +72,12 @@ UnseenBannerTooltipNav.IconTokens = {
 	xp_received: 'experience'
 };
 
-UnseenBannerTooltipNav.EquipmentGroup = 'combat.sheet.equipment';
+UnseenBannerTooltipNav.MouseOnlyInventoryGroups = {
+	'combat.sheet.equipment': true,
+	'world.character.equipment': true,
+	'world.character.bag': true,
+	'world.character.stash': true
+};
 
 UnseenBannerTooltipNav.prototype.onConnection = function (_handle)
 {
@@ -148,6 +153,40 @@ UnseenBannerTooltipNav.prototype.hideDetail = function ()
 	if (tooltip !== null)
 	{
 		tooltip.hideTooltip();
+	}
+};
+
+UnseenBannerTooltipNav.prototype.showCharacterSection = function (_section)
+{
+	if (typeof Screens === 'undefined' ||
+		typeof Screens.WorldCharacterScreen === 'undefined' ||
+		Screens.WorldCharacterScreen === null)
+	{
+		return;
+	}
+	var screen = Screens.WorldCharacterScreen;
+	var panel = screen.mRightPanelModule;
+	if (typeof panel === 'undefined' || panel === null ||
+		typeof panel.mHeaderModule === 'undefined' || panel.mHeaderModule === null)
+	{
+		return;
+	}
+
+	// Perks is the only section that lives on the other native tab. Every other
+	// semantic section is represented by the normal inventory/paperdoll/roster
+	// view. Call the same module methods as the tab buttons without synthesizing
+	// a mouse event or triggering any inventory action.
+	if (_section === 'perks')
+	{
+		panel.switchToPerks();
+		panel.mHeaderModule.mSwitchToInventoryButton.removeClass('is-selected');
+		panel.mHeaderModule.mSwitchToPerksButton.addClass('is-selected');
+	}
+	else
+	{
+		panel.switchToInventory();
+		panel.mHeaderModule.mSwitchToPerksButton.removeClass('is-selected');
+		panel.mHeaderModule.mSwitchToInventoryButton.addClass('is-selected');
 	}
 };
 
@@ -271,10 +310,10 @@ UnseenBannerTooltipNav.prototype.isMouseInstruction = function (_row)
 	return found;
 };
 
-UnseenBannerTooltipNav.prototype.readRow = function (_row)
+UnseenBannerTooltipNav.prototype.readFragment = function (_fragment)
 {
 	var self = this;
-	var clone = _row.clone();
+	var clone = _fragment.clone();
 
 	// Image-only semantics become localizable markers. Decorative portraits, item
 	// art and skill art remain silent instead of guessing at their meaning.
@@ -298,12 +337,99 @@ UnseenBannerTooltipNav.prototype.readRow = function (_row)
 		$(this).prepend(document.createTextNode('\n'));
 		$(this).append(document.createTextNode('\n'));
 	});
-	clone.find('.title, .description, .label, .text, .progressbar-label, .section-title').each(function ()
-	{
-		$(this).append(document.createTextNode('\n'));
-	});
 
 	return $.trim(clone.text());
+};
+
+UnseenBannerTooltipNav.prototype.punctuateText = function (_text)
+{
+	var lines = _text.replace(/\r/g, '\n').split('\n');
+	var result = [];
+	for (var i = 0; i < lines.length; ++i)
+	{
+		var line = $.trim(lines[i]);
+		if (line.length === 0)
+		{
+			continue;
+		}
+		// Preserve punctuation already supplied by the game. Otherwise make each
+		// rendered visual line a sentence so NVDA pauses before the next row.
+		if (!/[.!?;:]$/.test(line))
+		{
+			line += '.';
+		}
+		result.push(line);
+	}
+	return result.join('\n');
+};
+
+UnseenBannerTooltipNav.prototype.labelText = function (_text)
+{
+	var label = $.trim(_text);
+	if (label.length === 0)
+	{
+		return '';
+	}
+	return /[:.!?;]$/.test(label) ? label : label + ':';
+};
+
+UnseenBannerTooltipNav.prototype.readRow = function (_row)
+{
+	var parts = [];
+	var left = _row.children('.l-left-column:first');
+	var right = _row.children('.l-right-column:first');
+
+	if (left.length > 0 || right.length > 0)
+	{
+		var label = left.length > 0
+			? this.readFragment(left.find('.label:first'))
+			: '';
+		var value = right.length > 0 ? this.readFragment(right) : '';
+		var line = '';
+		if (label.length > 0 && value.length > 0)
+		{
+			line = this.labelText(label) + ' ' + this.punctuateText(value);
+		}
+		else if (value.length > 0)
+		{
+			line = this.punctuateText(value);
+		}
+		else if (label.length > 0)
+		{
+			line = this.punctuateText(label);
+		}
+		if (line.length > 0)
+		{
+			parts.push(line);
+		}
+	}
+	else
+	{
+		// Titles, descriptions and footer headings have no two-column wrapper.
+		// Exclude nested child rows here; they are handled recursively below.
+		var body = _row.clone();
+		body.children('.row').remove();
+		var text = this.readFragment(body);
+		if (text.length > 0)
+		{
+			parts.push(this.punctuateText(text));
+		}
+	}
+
+	var self = this;
+	_row.children('.row').each(function ()
+	{
+		var child = $(this);
+		if (!child.hasClass('display-none'))
+		{
+			var childText = self.readRow(child);
+			if (childText.length > 0)
+			{
+				parts.push(childText);
+			}
+		}
+	});
+	return parts.join('\n');
 };
 
 UnseenBannerTooltipNav.prototype.readTooltip = function (_container)
@@ -313,8 +439,8 @@ UnseenBannerTooltipNav.prototype.readTooltip = function (_container)
 		return '';
 	}
 
-	// Select top-level rows only; child rows are already part of their parent's
-	// textContent and selecting both would announce the same line twice.
+	// Select top-level rows only; readRow recursively handles child rows and
+	// preserves each visual label/value relationship as "Label: value."
 	var rows = _container.find(
 		'.header-container:first > .row,' +
 		'.content-container:first > .left-content-container:first > .row,' +
@@ -325,7 +451,7 @@ UnseenBannerTooltipNav.prototype.readTooltip = function (_container)
 	var parts = [];
 	var self = this;
 	var omitMouseInstructions = this.mPending !== null &&
-		this.mPending.grupo === UnseenBannerTooltipNav.EquipmentGroup;
+		this.mPending.grupo in UnseenBannerTooltipNav.MouseOnlyInventoryGroups;
 	rows.each(function ()
 	{
 		var row = $(this);
@@ -335,7 +461,7 @@ UnseenBannerTooltipNav.prototype.readTooltip = function (_container)
 		}
 		// Item tooltips end with mouse-only inventory actions. They are unusable
 		// for this keyboard accessibility cursor and would falsely instruct a blind
-		// player, so omit those whole hint rows only in Equipment details.
+		// player, so omit those whole hint rows in keyboard inventory details.
 		if (omitMouseInstructions && self.isMouseInstruction(row))
 		{
 			return;

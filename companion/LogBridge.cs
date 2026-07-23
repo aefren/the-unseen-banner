@@ -113,6 +113,7 @@ namespace TheUnseenBanner.Companion
                 string detalle = GetOptionalString(root, "detalle");
                 string hermano = GetOptionalString(root, "hermano");
                 string detalles = GetOptionalString(root, "detalles");
+                string contexto = GetOptionalString(root, "contexto");
                 string spoken = categoria switch
                 {
                     "tile.readout" => ComposeTileReadout(valor, texto, detalle),
@@ -130,6 +131,11 @@ namespace TheUnseenBanner.Companion
                     "combat.sheet.traits" => ComposeSheetList("combat.sheet.traits", texto, valor),
                     "combat.sheet.perks" => ComposeSheetList("combat.sheet.perks", texto, valor),
                     "combat.sheet.equipment" => ComposeSheetList("combat.sheet.equipment", texto, valor),
+                    "world.character.equipment.slot" => ComposeEquipmentSlot(texto, valor, detalle),
+                    "world.character.bag.slot" => ComposeBagSlot(texto, valor, detalle),
+                    "world.character.stash.item" => ComposeStashItem(texto, valor),
+                    "world.character.perk" => ComposeWorldPerk(texto, valor, detalle),
+                    "world.character.formation.slot" => ComposeFormationSlot(texto, valor, detalle),
                     "tooltip.detail" => ComposeTooltipDetail(texto, valor, detalle),
                     "combat.result.stat" => ComposeResultStat(texto, valor, detalle),
                     "menu.campaign" => ComposeCampaignEntry(texto, valor, detalle),
@@ -146,6 +152,7 @@ namespace TheUnseenBanner.Companion
                         : texto,
                 };
                 spoken = AppendDetailsHint(spoken, detalles);
+                spoken = ComposeCharacterContext(spoken, contexto);
                 // When changing the brother shown on the tactical character sheet,
                 // keep his name and the retained attribute in one utterance. Two
                 // consecutive interrupt messages would make the attribute cut off
@@ -181,21 +188,79 @@ namespace TheUnseenBanner.Companion
             return spoken.Length > 0 ? spoken + " " + hint : hint;
         }
 
+        /// <summary>Append a world CharacterScreen row's position after its detail
+        /// hint. Squirrel packs "section|index|total|announce-section"; the section
+        /// name is included only on opening the screen or changing it with Page
+        /// Up/Down, never while walking the list with Up/Down.</summary>
+        private static string ComposeCharacterContext(string spoken, string context)
+        {
+            if (context.Length == 0) return spoken;
+            string[] parts = context.Split('|');
+            if (parts.Length < 3) return spoken;
+
+            string position = L10n.F("world.character.position", parts[1], parts[2]);
+            string result = spoken.Length > 0 ? spoken + " " + position : position;
+            bool includeSection = parts.Length > 3 && parts[3] == "1";
+            if (!includeSection) return result;
+
+            string section = L10n.T("world.character.section." + parts[0]);
+            return L10n.F("world.character.section.changed", section, result);
+        }
+
+        private static string WithItemAmount(string name, string amount)
+        {
+            string item = name.Length > 0 ? name : L10n.T("world.character.item.empty");
+            return amount.Length > 0
+                ? L10n.F("world.character.item.amount", item, amount)
+                : item;
+        }
+
+        private static string ComposeEquipmentSlot(string name, string slot, string amount)
+        {
+            string slotName = L10n.T("world.character.equipment.slot." + slot);
+            return L10n.F("world.character.equipment.slot", slotName,
+                WithItemAmount(name, amount));
+        }
+
+        private static string ComposeBagSlot(string name, string slot, string amount)
+        {
+            return L10n.F("world.character.bag.slot", slot,
+                WithItemAmount(name, amount));
+        }
+
+        private static string ComposeStashItem(string name, string amount)
+        {
+            return L10n.F("world.character.stash.item", WithItemAmount(name, amount));
+        }
+
+        private static string ComposeWorldPerk(string name, string state, string tier)
+        {
+            return L10n.F("world.character.perk", name, tier,
+                L10n.T("world.character.perk.state." + state));
+        }
+
+        private static string ComposeFormationSlot(string name, string line, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string position = parts.Length > 0 ? parts[0] : "";
+            bool selected = parts.Length > 1 && parts[1] == "1";
+            string occupant = name.Length > 0 ? name : L10n.T("world.character.item.empty");
+            string result = L10n.F("world.character.formation.slot",
+                L10n.T("world.character.formation.line." + line), position, occupant);
+            return selected
+                ? result + " " + L10n.T("world.character.formation.selected")
+                : result;
+        }
+
         /// <summary>Compose an entry in a multi-tooltip sub-list. Squirrel packs
-        /// detail as "total|parent-category"; the parent category is a localization
-        /// key, never spoken hook text. The tooltip body itself is the native game's
-        /// already-rendered DOM text.</summary>
+        /// detail as "total|parent-category"; the category remains useful to the JS
+        /// tooltip filter but is deliberately not spoken. Put the position after
+        /// the native rendered body, matching all other navigable list positions.</summary>
         private static string ComposeTooltipDetail(string text, string index, string detail)
         {
             string[] parts = detail.Split(new[] { '|' }, 2);
             string total = parts.Length > 0 ? parts[0] : "1";
-            string groupKey = parts.Length > 1 && parts[1].Length > 0
-                ? parts[1] + ".details"
-                : "";
-            string group = groupKey.Length > 0 ? L10n.T(groupKey) : "";
-            if (group.Length == 0 || group == groupKey)
-                group = L10n.T("tooltip.details.group");
-            return L10n.F("tooltip.detail", group, index, total, text);
+            return L10n.F("tooltip.detail", text, index, total);
         }
 
         // Hex direction (0-5, from config/global.nut Const.Direction: N, NE, SE,

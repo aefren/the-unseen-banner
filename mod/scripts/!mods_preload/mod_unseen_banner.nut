@@ -57,7 +57,7 @@
 	return out;
 }
 
-::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null)
+::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null)
 {
 	local json = "{\"canal\":\"" + ::UnseenBanner.jsonEscape(_canal) + "\",\"texto\":\"" + ::UnseenBanner.jsonEscape(_texto) + "\"";
 	if (_categoria != null) json += ",\"categoria\":\"" + ::UnseenBanner.jsonEscape(_categoria) + "\"";
@@ -65,6 +65,7 @@
 	if (_detalle != null) json += ",\"detalle\":\"" + ::UnseenBanner.jsonEscape(_detalle) + "\"";
 	if (_hermano != null) json += ",\"hermano\":\"" + ::UnseenBanner.jsonEscape(_hermano) + "\"";
 	if (_detalles != null) json += ",\"detalles\":\"" + ::UnseenBanner.jsonEscape(_detalles) + "\"";
+	if (_contexto != null) json += ",\"contexto\":\"" + ::UnseenBanner.jsonEscape(_contexto) + "\"";
 	json += "}";
 	::logInfo("UB_MSG:" + json);
 }
@@ -119,6 +120,16 @@
 		if (this.m.JSHandle != null)
 		{
 			this.m.JSHandle.asyncCall("hideDetail", null);
+		}
+	},
+	// Keep the visible native CharacterScreen tab synchronized with the semantic
+	// section selected by Page Up/Down. This only toggles vanilla's Inventory/Perks
+	// panels; it never clicks, equips, spends a point or mutates game state.
+	function showCharacterSection(_section)
+	{
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("showCharacterSection", _section);
 		}
 	},
 	function onTooltipHookReady()
@@ -2596,6 +2607,8 @@
 	m = {
 		Brothers = null,
 		BroIndex = 0,
+		Sections = null,
+		SectionIndex = 0,
 		Items = null,
 		ItemIndex = 0,
 		DetailMode = false,
@@ -2623,6 +2636,10 @@
 		[49] = "up",
 		[51] = "down"
 	},
+	SectionKeys = {
+		[46] = "prev", // Page Up
+		[47] = "next"  // Page Down
+	},
 	function isActive()
 	{
 		return this.m.Active;
@@ -2630,6 +2647,7 @@
 	function handles(_code)
 	{
 		return (_code == this.InspectKey && this.m.WorldMode)
+			|| (this.m.WorldMode && _code in this.SectionKeys)
 			|| (_code in this.NextKeys)
 			|| (_code in this.PrevKeys)
 			|| (_code in this.MoveKeys);
@@ -2646,6 +2664,8 @@
 	{
 		this.m.Active = false;
 		this.m.Brothers = null;
+		this.m.Sections = null;
+		this.m.SectionIndex = 0;
 		this.m.Items = null;
 		this.m.BroIndex = 0;
 		this.m.ItemIndex = 0;
@@ -2688,11 +2708,19 @@
 		}
 
 		this.m.Active = true;
-		this.buildItems();
-		this.m.ItemIndex = 0;
+		if (this.m.WorldMode)
+		{
+			this.buildWorldSections();
+			this.activateSection(0, false, false);
+		}
+		else
+		{
+			this.buildItems();
+			this.m.ItemIndex = 0;
+		}
 		this.m.DetailMode = false;
 		this.m.DetailIndex = 0;
-		this.announceItem();
+		this.announceItem(false, this.m.WorldMode);
 	},
 	function close()
 	{
@@ -2715,6 +2743,14 @@
 			return;
 		}
 
+		if (this.m.WorldMode && _code in this.SectionKeys)
+		{
+			this.leaveDetails();
+			::UnseenBanner.TooltipNav.hide();
+			this.moveSection(_code);
+			return;
+		}
+
 		if (_code in this.MoveKeys)
 		{
 			if (this.m.DetailMode) this.moveDetail(_code);
@@ -2728,11 +2764,7 @@
 
 		// A/D, Left/Right and Tab always leave a nested detail list before changing
 		// brother, retaining the parent sheet category for quick comparison.
-		if (this.m.DetailMode)
-		{
-			this.m.DetailMode = false;
-			this.m.DetailIndex = 0;
-		}
+		this.leaveDetails();
 		::UnseenBanner.TooltipNav.hide();
 		local next = this.isNext(_code);
 		if (next) _screen.switchToNextBrother();
@@ -2747,22 +2779,90 @@
 	function switchBrother(_next)
 	{
 		if (this.m.Brothers == null || this.m.Brothers.len() == 0) return;
-		this.m.DetailMode = false;
-		this.m.DetailIndex = 0;
+		this.leaveDetails();
 		::UnseenBanner.TooltipNav.hide();
 		local itemIndex = this.m.ItemIndex;
+		local saved = this.m.WorldMode ? this.captureSectionPositions() : null;
 		local n = this.m.Brothers.len();
 		if (_next) this.m.BroIndex = (this.m.BroIndex + 1) % n;
 		else this.m.BroIndex = (this.m.BroIndex - 1 + n) % n;
 
-		this.buildItems();
-		this.m.ItemIndex = itemIndex;
+		if (this.m.WorldMode)
+		{
+			this.buildWorldSections(saved);
+			this.activateSection(this.m.SectionIndex, false, false);
+		}
+		else
+		{
+			this.buildItems();
+			this.m.ItemIndex = itemIndex;
+		}
 		if (this.m.Items != null && this.m.Items.len() > 0)
 		{
 			if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
 			if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
 		}
 		this.announceItem(true);
+	},
+	function leaveDetails()
+	{
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
+	},
+	function currentSection()
+	{
+		if (this.m.Sections == null || this.m.Sections.len() == 0) return null;
+		if (this.m.SectionIndex < 0 || this.m.SectionIndex >= this.m.Sections.len()) return null;
+		return this.m.Sections[this.m.SectionIndex];
+	},
+	// Each section owns its last cursor position. Page navigation therefore returns
+	// to the element the player left, and rebuilding for another brother restores
+	// by stable key first (slot, perk ID, item instance ID or formation position).
+	function activateSection(_index, _announce = true, _saveOld = true)
+	{
+		if (!this.m.WorldMode || this.m.Sections == null || this.m.Sections.len() == 0) return;
+		local old = this.currentSection();
+		if (_saveOld && old != null) old.index = this.m.ItemIndex;
+
+		if (_index < 0) _index = 0;
+		if (_index >= this.m.Sections.len()) _index = this.m.Sections.len() - 1;
+		this.m.SectionIndex = _index;
+		local section = this.m.Sections[_index];
+		this.m.Items = section.items;
+		this.m.ItemIndex = section.index;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.Items != null && this.m.Items.len() > 0 && this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		section.index = this.m.ItemIndex;
+		::UnseenBanner.TooltipNav.showCharacterSection(section.id);
+		if (_announce) this.announceItem(false, true);
+	},
+	function moveSection(_code)
+	{
+		if (this.m.Sections == null || this.m.Sections.len() == 0) return;
+		local next = this.SectionKeys[_code] == "next";
+		local index = this.m.SectionIndex + (next ? 1 : -1);
+		// Clamp, rather than wrap, so the first and final sections are audible
+		// boundaries. Re-reading their current row is intentional edge feedback.
+		if (index < 0) index = 0;
+		if (index >= this.m.Sections.len()) index = this.m.Sections.len() - 1;
+		this.activateSection(index);
+	},
+	function captureSectionPositions()
+	{
+		local saved = {};
+		if (this.m.Sections == null) return saved;
+		local current = this.currentSection();
+		if (current != null) current.index = this.m.ItemIndex;
+		foreach( section in this.m.Sections )
+		{
+			local index = section.index;
+			if (index < 0) index = 0;
+			if (section.items.len() > 0 && index >= section.items.len()) index = section.items.len() - 1;
+			local key = section.items.len() > 0 ? section.items[index].key : "";
+			saved[section.id] <- { index = index, key = key };
+		}
+		return saved;
 	},
 	// Move within the current sheet, clamping at the ends (no wrap, so the edges are
 	// discoverable), or jump straight to either edge. Re-reading the same entry at
@@ -2778,10 +2878,12 @@
 
 		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
 		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		local section = this.currentSection();
+		if (section != null) section.index = this.m.ItemIndex;
 
 		this.announceItem();
 	},
-	function announceItem(_includeBrother = false)
+	function announceItem(_includeBrother = false, _includeSection = false)
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local it = this.m.Items[this.m.ItemIndex];
@@ -2790,8 +2892,15 @@
 		local bro = _includeBrother && it.cat != "combat.sheet.identity" ? this.current() : null;
 		local name = bro != null ? bro.getName() : null;
 		local detailCount = this.m.WorldMode ? it.details.len() : 0;
+		local context = null;
+		local section = this.currentSection();
+		if (this.m.WorldMode && section != null)
+		{
+			context = section.id + "|" + (this.m.ItemIndex + 1) + "|" + this.m.Items.len()
+				+ "|" + (_includeSection ? "1" : "0");
+		}
 		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle,
-			name, "" + detailCount);
+			name, "" + detailCount, context);
 	},
 	// V on a row with several native tooltips enters a nested list; V again backs
 	// out and re-announces the parent row. A single tooltip is shown/read directly
@@ -2800,8 +2909,7 @@
 	{
 		if (this.m.DetailMode)
 		{
-			this.m.DetailMode = false;
-			this.m.DetailIndex = 0;
+			this.leaveDetails();
 			::UnseenBanner.TooltipNav.hide();
 			this.announceItem();
 			return;
@@ -2841,8 +2949,12 @@
 		local it = this.m.Items[this.m.ItemIndex];
 		if (it.details.len() == 0) return;
 		if (this.m.DetailIndex < 0 || this.m.DetailIndex >= it.details.len()) this.m.DetailIndex = 0;
+		local group = it.cat;
+		local section = this.currentSection();
+		if (this.m.WorldMode && section != null && section.detailGroup != "")
+			group = section.detailGroup;
 		::UnseenBanner.TooltipNav.show(it.details[this.m.DetailIndex],
-			this.m.DetailIndex + 1, it.details.len(), it.cat);
+			this.m.DetailIndex + 1, it.details.len(), group);
 	},
 	function uiElementDetail(_bro, _elementID)
 	{
@@ -2872,14 +2984,188 @@
 			statusEffectId = _skill.getID()
 		};
 	},
-	function itemDetail(_bro, _item)
+	function itemDetail(_bro, _item, _owner = "entity")
 	{
 		return {
 			contentType = "ui-item",
 			entityId = _bro.getID(),
 			itemId = _item.getInstanceID(),
-			itemOwner = "entity"
+			itemOwner = _owner
 		};
+	},
+	function perkDetail(_bro, _perk)
+	{
+		return {
+			contentType = "ui-perk",
+			entityId = _bro.getID(),
+			perkId = _perk.ID
+		};
+	},
+	function row(_key, _cat, _texto = "", _valor = "", _detalle = "", _details = null)
+	{
+		return {
+			key = _key,
+			cat = _cat,
+			texto = _texto,
+			valor = _valor,
+			detalle = _detalle,
+			details = _details != null ? _details : []
+		};
+	},
+	function section(_id, _items, _detailGroup, _saved)
+	{
+		if (_items.len() == 0)
+			_items.push(this.row(_id + ":empty", "world.character.empty"));
+
+		local result = {
+			id = _id,
+			items = _items,
+			detailGroup = _detailGroup,
+			index = 0
+		};
+		if (_saved == null || !(_id in _saved)) return result;
+
+		local old = _saved[_id];
+		local found = -1;
+		for (local i = 0; i < _items.len(); i += 1)
+		{
+			if (_items[i].key == old.key)
+			{
+				found = i;
+				break;
+			}
+		}
+		result.index = found >= 0 ? found : old.index;
+		if (result.index < 0) result.index = 0;
+		if (result.index >= _items.len()) result.index = _items.len() - 1;
+		return result;
+	},
+	// Phase 2.4 world CharacterScreen. The tactical screen deliberately keeps its
+	// already-verified flat sheet; only world mode gains Page Up/Down sections.
+	// Inventory and formation are read-only in this increment. Enter actions are a
+	// separate phase because they mutate native state and require callback rebuilds.
+	function buildWorldSections(_saved = null)
+	{
+		this.buildItems();
+		local sheet = [];
+		foreach( it in this.m.Items )
+		{
+			// Perks and worn equipment now have their own element-by-element sections.
+			// The remaining sheet still includes stats, skills, injuries and traits.
+			if (it.cat == "combat.sheet.perks" || it.cat == "combat.sheet.equipment") continue;
+			sheet.push(it);
+		}
+
+		this.m.Sections = [
+			this.section("sheet", sheet, "", _saved),
+			this.section("equipment", this.buildEquipmentRows(), "world.character.equipment", _saved),
+			this.section("bag", this.buildBagRows(), "world.character.bag", _saved),
+			this.section("stash", this.buildStashRows(), "world.character.stash", _saved),
+			this.section("perks", this.buildPerkRows(), "world.character.perks", _saved),
+			this.section("formation", this.buildFormationRows(), "world.character.formation", _saved)
+		];
+		if (this.m.SectionIndex < 0) this.m.SectionIndex = 0;
+		if (this.m.SectionIndex >= this.m.Sections.len()) this.m.SectionIndex = this.m.Sections.len() - 1;
+	},
+	function itemAmount(_item)
+	{
+		return _item != null && _item.isAmountShown() ? "" + _item.getAmountString() : "";
+	},
+	function buildEquipmentRows()
+	{
+		local bro = this.current();
+		local rows = [];
+		if (bro == null) return rows;
+		local inv = bro.getItems();
+		local slots = [
+			{ id = "mainhand", value = ::Const.ItemSlot.Mainhand },
+			{ id = "offhand", value = ::Const.ItemSlot.Offhand },
+			{ id = "head", value = ::Const.ItemSlot.Head },
+			{ id = "body", value = ::Const.ItemSlot.Body },
+			{ id = "accessory", value = ::Const.ItemSlot.Accessory },
+			{ id = "ammo", value = ::Const.ItemSlot.Ammo }
+		];
+		foreach( slot in slots )
+		{
+			local item = inv.getItemAtSlot(slot.value);
+			rows.push(this.row("equipment:" + slot.id, "world.character.equipment.slot",
+				item != null ? item.getName() : "", slot.id,
+				item != null ? this.itemAmount(item) : "",
+				item != null ? [this.itemDetail(bro, item)] : []));
+		}
+		return rows;
+	},
+	function buildBagRows()
+	{
+		local bro = this.current();
+		local rows = [];
+		if (bro == null) return rows;
+		local inv = bro.getItems();
+		for (local i = 0; i < inv.getUnlockedBagSlots(); i += 1)
+		{
+			local item = inv.getItemAtBagSlot(i);
+			local occupied = item != null && item != -1;
+			rows.push(this.row("bag:" + i, "world.character.bag.slot",
+				occupied ? item.getName() : "", "" + (i + 1),
+				occupied ? this.itemAmount(item) : "",
+				occupied ? [this.itemDetail(bro, item)] : []));
+		}
+		return rows;
+	},
+	function buildStashRows()
+	{
+		local bro = this.current();
+		local rows = [];
+		if (bro == null) return rows;
+		local stash = ::World.Assets.getStash();
+		if (stash == null) return rows;
+		foreach( item in stash.getItems() )
+		{
+			if (item == null || item == -1) continue;
+			rows.push(this.row("stash:" + item.getInstanceID(), "world.character.stash.item",
+				item.getName(), this.itemAmount(item), "",
+				[this.itemDetail(bro, item, "stash")]));
+		}
+		return rows;
+	},
+	function buildPerkRows()
+	{
+		local bro = this.current();
+		local rows = [];
+		if (bro == null || !::isKindOf(bro, "player")) return rows;
+		local spent = bro.getPerkPointsSpent();
+		local points = bro.getPerkPoints();
+		foreach( rowIndex, perkRow in ::Const.Perks.Perks )
+		{
+			foreach( perk in perkRow )
+			{
+				local state = "locked";
+				if (bro.hasPerk(perk.ID)) state = "acquired";
+				else if (spent >= perk.Unlocks) state = points > 0 ? "available" : "no_points";
+				rows.push(this.row("perk:" + perk.ID, "world.character.perk",
+					perk.Name, state, "" + (rowIndex + 1), [this.perkDetail(bro, perk)]));
+			}
+		}
+		return rows;
+	},
+	function buildFormationRows()
+	{
+		local selected = this.current();
+		local rows = [];
+		local formation = ::World.Assets.getFormation();
+		if (formation == null) return rows;
+		for (local i = 0; i < formation.len(); i += 1)
+		{
+			local line = i < 9 ? "front" : (i < 18 ? "back" : "reserve");
+			local position = (i % 9) + 1;
+			local bro = formation[i];
+			local isSelected = bro != null && selected != null && bro.getID() == selected.getID();
+			rows.push(this.row("formation:" + i, "world.character.formation.slot",
+				bro != null ? bro.getName() : "", line,
+				position + "|" + (isSelected ? "1" : "0"),
+				bro != null ? [this.rosterDetail(bro)] : []));
+		}
+		return rows;
 	},
 	// Build the ordered list of sheet entries for the shown brother. Each entry is a
 	// tagged line the companion localizes; the framing words ("Resolve", "Head
@@ -2904,6 +3190,7 @@
 		local function entry(_cat, _texto, _valor, _detalle, _details = null)
 		{
 			return {
+				key = _cat,
 				cat = _cat,
 				texto = _texto,
 				valor = _valor,
@@ -2987,7 +3274,7 @@
 			details.push(this.statusDetail(_bro, s));
 			n += 1;
 		}
-		return { cat = _cat, texto = text, valor = "" + n, detalle = "", details = details };
+		return { key = _cat, cat = _cat, texto = text, valor = "" + n, detalle = "", details = details };
 	},
 	// Active skills for the sheet: each line is "name\tap\tfatigue" (no slot number,
 	// since a non-active brother's hotkeys are not live, and no usability flag).
@@ -3006,6 +3293,7 @@
 			n += 1;
 		}
 		return {
+			key = "combat.sheet.skills",
 			cat = "combat.sheet.skills",
 			texto = text,
 			valor = "" + n,
@@ -3038,6 +3326,7 @@
 			n += 1;
 		}
 		return {
+			key = "combat.sheet.equipment",
 			cat = "combat.sheet.equipment",
 			texto = text,
 			valor = "" + n,
