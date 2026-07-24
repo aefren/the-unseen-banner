@@ -79,9 +79,40 @@
 
 ::logInfo("UnseenBanner: preload executed (Squirrel layer alive).");
 
-::UnseenBanner.Mod.queue(function() {
+::UnseenBanner.Mod.queue(">mod_msu", function() {
 	::logInfo("UnseenBanner: queued function executed (Modern Hooks queue alive).");
+	// MSU is guaranteed loaded here (the > dependency), so its vanilla keybinds
+	// exist and can be rebound. See disarmVanillaWaitTurnEnd for why End must go.
+	::UnseenBanner.disarmVanillaWaitTurnEnd();
 });
+
+// MSU reimplements the vanilla tactical hotkeys as its own remappable keybinds
+// (msu/vanilla_mod/vanilla_keybinds.nut) and dispatches them from its OWN
+// tactical_state.onKeyInput wrapper. MSU's hooks register during its queued
+// function — after this preload's hooks — so its wrapper sits OUTSIDE ours and
+// sees every key first. Consuming End in our hook therefore cannot stop MSU's
+// "tactical_waitTurn" (bound to "end/space", no guard for our lists) from
+// passing the active brother's turn before we ever run: exactly the bug where
+// End meant "last row of the open list" to the player and "wait turn" to MSU.
+// The fix goes through the keybind's own MSU setting — the same funnel its Mod
+// Settings UI uses — so the dispatch index is rebuilt, the settings screen
+// shows the truth, and the value persists. Space stays as the deliberate
+// wait-turn key; End belongs to list navigation everywhere in this mod.
+::UnseenBanner.disarmVanillaWaitTurnEnd <- function()
+{
+	// Defensive: a future MSU could rename the mod ID or the keybind. Losing
+	// the rebind must degrade to the old behavior, never break loading (the
+	// TacticalBlockedKeys fallthrough still blocks vanilla's own End path).
+	try
+	{
+		local setting = ::getModSetting("vanilla", "tactical_waitTurn");
+		if (setting.getValue() != "space") setting.set("space");
+	}
+	catch (error)
+	{
+		::logError("UnseenBanner: could not unbind End from MSU wait-turn: " + error);
+	}
+}
 
 // JS -> Squirrel bridge for the smoke test: the injected JS registers a fake
 // screen named UnseenBannerConnection and calls onJSLoaded() once connected.
@@ -3591,6 +3622,13 @@
 		// Engine code of the key that closed the inspect list on its press, so its
 		// own release can be swallowed instead of leaking into vanilla (-1 = none).
 		PendingRelease = -1,
+		// True from the press of V until its release. V is a toggle (it opens the
+		// list, and Shift+V closes it again), and the engine auto-repeats a held key
+		// as a stream of fresh presses, so without this one physical Shift+V that
+		// the player holds for more than KeyGate's 0.2 s opens the list and closes
+		// it right back — leaving him on the battlefield still believing he is in
+		// the list, where End is vanilla's "wait turn" instead of "last row".
+		InspectKeyHeld = false,
 		// Skill armed on the active man while the cursor is being moved, so the
 		// readout can add "valid target, N% to hit" for the tile under it. Set
 		// afresh from tactical_state on every key, null when nothing is armed.
@@ -3675,9 +3713,16 @@
 		this.m.PendingRelease = -1;
 		return true;
 	},
+	// Called for every key release reaching the tactical hook, whatever else that
+	// release does, so the held-V latch can never stay stuck on a path we forgot.
+	function clearInspectKeyHeld(_code)
+	{
+		if (_code in this.InspectKeys) this.m.InspectKeyHeld = false;
+	},
 	function reset()
 	{
 		this.m.PendingRelease = -1;
+		this.m.InspectKeyHeld = false;
 		this.closeInspectMenu(false);
 		this.m.CursorTile = null;
 		this.m.LastActiveID = -1;
@@ -4193,6 +4238,16 @@
 	},
 	function onInspectMenuKey(_code, _shift, _active)
 	{
+		// V acts once per physical press, never on the engine's auto-repeat of a
+		// key still held down: it is a toggle, so a repeat would undo what the very
+		// same keystroke just did. The move keys below are deliberately left
+		// repeatable — holding End to run to the end of the list is wanted.
+		if (_code in this.InspectKeys)
+		{
+			if (this.m.InspectKeyHeld) return;
+			this.m.InspectKeyHeld = true;
+		}
+
 		if (!this.m.InspectMenuActive)
 		{
 			if (_shift && (_code in this.InspectKeys)) this.openInspectMenu(_active);
@@ -6902,6 +6957,17 @@
 	[97] = true  // alt
 };
 
+// Keys that must never reach vanilla's tactical handler, whatever state the mod
+// is in. End is the whole reason this table exists: vanilla binds it to "wait
+// turn" (tactical_state, case 44, alongside Space), while every list the mod
+// offers binds it to "jump to the last row". A sighted player sees which one is
+// in front of him; a blind one does not, so a single stale cursor turned a
+// navigation keystroke into a spent turn with no way back. Space is left alone
+// and remains the way to wait a turn deliberately.
+::UnseenBanner.TacticalBlockedKeys <- {
+	[44] = true // end
+};
+
 // Left / Right are adjustment keys only inside Options. Keeping them out of the
 // shared KeyCodes table prevents the event cursor and New Campaign flow from
 // stealing native horizontal input they do not handle.
@@ -7443,24 +7509,31 @@
 		// C, I and ordinary Escape retain the world's native close path.
 		if (this.isInCharacterScreen()
 			&& ::UnseenBanner.SheetNav.isActive()
-			&& !this.m.CharacterScreen.isAnimating()
 			&& ::UnseenBanner.SheetNav.handles(code))
 		{
-			local handleOnRelease = ::UnseenBanner.SheetNav.isReleaseHandledKey(code);
-			if (_key.getState() == 1 && !handleOnRelease)
+			// isAnimating() must only gate the ACTION, not this whole block: while
+			// the show/hide transition plays, Home/End/etc. still have to be
+			// swallowed here, or they fall through to __original and, mid-combat,
+			// End is vanilla's own "wait turn" binding — pressing it to jump the
+			// sheet's list to its last row passed the active brother's turn instead.
+			if (!this.m.CharacterScreen.isAnimating())
 			{
-				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				local handleOnRelease = ::UnseenBanner.SheetNav.isReleaseHandledKey(code);
+				if (_key.getState() == 1 && !handleOnRelease)
 				{
-					::UnseenBanner.SheetNav.onKey(code, this.m.CharacterScreen);
+					if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+					{
+						::UnseenBanner.SheetNav.onKey(code, this.m.CharacterScreen);
+					}
 				}
-			}
-			else if (_key.getState() == 0)
-			{
-				::UnseenBanner.KeyGate.release(code);
-				if (handleOnRelease)
+				else if (_key.getState() == 0)
 				{
-					::UnseenBanner.SheetNav.onReleaseHandledKey(code,
-						this.m.CharacterScreen);
+					::UnseenBanner.KeyGate.release(code);
+					if (handleOnRelease)
+					{
+						::UnseenBanner.SheetNav.onReleaseHandledKey(code,
+							this.m.CharacterScreen);
+					}
 				}
 			}
 			return true;
@@ -7813,6 +7886,11 @@
 	q.onInit = @(__original) function()
 	{
 		__original();
+		// Belt and braces: MSU restores persisted settings when its UI connects,
+		// after our queue-time rebind, and a user reset of MSU settings would
+		// also bring "end/space" back. Re-asserting at every battle start is a
+		// cheap no-op when the value is already "space".
+		::UnseenBanner.disarmVanillaWaitTurnEnd();
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.TileCursor.reset();
 		::UnseenBanner.SheetNav.reset();
@@ -7841,6 +7919,11 @@
 		local code = _key.getKey();
 		local shift = (_key.getModifier() & 1) != 0;
 
+		// Before any dispatch, and whatever the key ends up doing: a release ends
+		// the physical press of V, so the auto-repeat latch is cleared here for
+		// every path through this hook, including the ones that return early.
+		if (_key.getState() == 0) ::UnseenBanner.TileCursor.clearInspectKeyHeld(code);
+
 		// Post-combat result screen. The state swallows every key once the battle
 		// has ended (isBattleEnded short-circuits its own onKeyInput), so this must
 		// run before every other cursor to keep list navigation and its buttons
@@ -7862,10 +7945,12 @@
 		// Releases reach this outer hook while vanilla considers the modal active.
 		if (this.m.TacticalDialogScreen != null
 			&& this.m.TacticalDialogScreen.isVisible()
-			&& !this.m.TacticalDialogScreen.isAnimating()
 			&& ::UnseenBanner.TacticalDialogNav.handles(code))
 		{
-			if (_key.getState() == 0)
+			// Same isAnimating() placement bug as the character sheet below: gating
+			// the whole block let its keys leak to __original during the dialog's
+			// own show/hide transition.
+			if (_key.getState() == 0 && !this.m.TacticalDialogScreen.isAnimating())
 			{
 				::UnseenBanner.TacticalDialogNav.onKey(code);
 			}
@@ -7908,23 +7993,30 @@
 		// the keyboard while it is up.
 		if (this.isInCharacterScreen()
 			&& ::UnseenBanner.SheetNav.isActive()
-			&& !this.m.CharacterScreen.isAnimating()
 			&& ::UnseenBanner.SheetNav.handles(code))
 		{
-			// Act on the press (state 1), gated against auto-repeat: the screen pauses
-			// the game and swallows the release of the brother-switch keys, so a
-			// release-driven handler would never fire (see KeyGate). Consume both
-			// states so no vanilla behavior leaks through.
-			if (_key.getState() == 1)
+			// isAnimating() must only gate the ACTION below, not this whole block:
+			// during the show/hide transition the key still has to be swallowed
+			// here or it falls through to __original, and mid-combat End is
+			// vanilla's own "wait turn" binding — jumping this list to its last
+			// row with End while the sheet was still opening passed the active
+			// brother's turn instead of moving the cursor.
+			if (!this.m.CharacterScreen.isAnimating())
 			{
-				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				// Act on the press (state 1), gated against auto-repeat: the screen
+				// pauses the game and swallows the release of the brother-switch
+				// keys, so a release-driven handler would never fire (see KeyGate).
+				if (_key.getState() == 1)
 				{
-					::UnseenBanner.SheetNav.onKey(code, this.m.CharacterScreen);
+					if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+					{
+						::UnseenBanner.SheetNav.onKey(code, this.m.CharacterScreen);
+					}
 				}
-			}
-			else if (_key.getState() == 0)
-			{
-				::UnseenBanner.KeyGate.release(code);
+				else if (_key.getState() == 0)
+				{
+					::UnseenBanner.KeyGate.release(code);
+				}
 			}
 			return true;
 		}
@@ -8014,6 +8106,15 @@
 			}
 		}
 
+		// Last line of defence. Reaching here means no cursor of ours claimed the
+		// key, which is exactly the situation the player cannot perceive: he
+		// pressed End meaning "last row" of a list that, for whatever reason, is
+		// no longer under him, and vanilla reads it as "wait turn" and spends the
+		// turn irreversibly. The mod uses End for list navigation everywhere, so
+		// the safe trade is to deny it here; Space keeps vanilla's own wait-turn
+		// binding, so nothing the player needs is actually lost.
+		if (code in ::UnseenBanner.TacticalBlockedKeys) return true;
+
 		return __original(_key);
 	}
 
@@ -8083,7 +8184,11 @@
 		__original(_entity);
 		// The Shift+V list is a snapshot of live combat state. Drop it as soon as
 		// initiative advances so armor, fatigue, morale and effects cannot go stale.
-		::UnseenBanner.TileCursor.closeInspectMenu(false);
+		// Say so: a list that dies in silence leaves the player navigating a cursor
+		// that is no longer there, and his next Home/End is no longer list
+		// navigation but vanilla's "wait turn" — the turn is gone before he can
+		// hear that anything changed. Announced only when one was really open.
+		::UnseenBanner.TileCursor.closeInspectMenu(true);
 
 		if (_entity != null && _entity.isPlayerControlled() && _entity.isAlive())
 		{
