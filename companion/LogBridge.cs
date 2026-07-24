@@ -116,9 +116,10 @@ namespace TheUnseenBanner.Companion
                 string contexto = GetOptionalString(root, "contexto");
                 string acciones = GetOptionalString(root, "acciones");
                 string comparacion = GetOptionalString(root, "comparacion");
+                string cadaver = GetOptionalString(root, "cadaver");
                 string spoken = categoria switch
                 {
-                    "tile.readout" => ComposeTileReadout(valor, texto, detalle),
+                    "tile.readout" => ComposeTileReadout(valor, texto, detalle, cadaver),
                     "combat.skill.selected" => ComposeSkillSelected(texto, valor, detalle),
                     "combat.move" => ComposeMove(valor),
                     "combat.status" => ComposeStatus(texto, valor, detalle),
@@ -126,7 +127,9 @@ namespace TheUnseenBanner.Companion
                     "combat.enemies" => ComposeEnemies(texto, valor),
                     "combat.engaged" => ComposeEngaged(texto, valor),
                     "combat.skills" => ComposeSkills(texto, valor),
-                    "combat.inspect" => ComposeInspect(texto, valor, detalle),
+                    "combat.inspect" => ComposeInspect(texto, valor, detalle, cadaver),
+                    "combat.inspect.menu.morale"
+                        => L10n.F(categoria, L10n.T("combat.morale." + valor)),
                     "combat.sheet.mood" => L10n.F("combat.sheet.mood", L10n.T("combat.mood." + valor)),
                     "combat.sheet.skills" => ComposeSheetSkills(texto, valor),
                     "combat.sheet.injuries" => ComposeSheetList("combat.sheet.injuries", texto, valor),
@@ -614,12 +617,15 @@ namespace TheUnseenBanner.Companion
 
         /// <summary>Compose a tactical tile readout (phase 3.2). The Squirrel side
         /// sends only semantics — terrain as an enum integer, the occupant's
-        /// already-localized game name, and a packed "kind|distance|direction"
-        /// detail — so every spoken word here (terrain names, "ally"/"enemy", the
+        /// already-localized game name, a packed
+        /// "kind|distance|direction|hp|hpMax" detail, and the corpse name as its
+        /// own JSON field (names are player-editable and may contain delimiters) —
+        /// so every spoken word here (terrain names, "ally"/"enemy", the
         /// clock position) stays in <see cref="L10n"/>. Kinds: "self", "ally",
         /// "enemy", anything else is empty. direction is -1 on the active man's
         /// own tile.</summary>
-        private static string ComposeTileReadout(string terrain, string name, string detail)
+        private static string ComposeTileReadout(
+            string terrain, string name, string detail, string corpseName)
         {
             string[] parts = detail.Split('|');
             string kind = parts.Length > 0 ? parts[0] : "";
@@ -627,7 +633,6 @@ namespace TheUnseenBanner.Companion
             string dirText = parts.Length > 2 ? parts[2] : "-1";
             string hpText = parts.Length > 3 ? parts[3] : "";
             string hpMaxText = parts.Length > 4 ? parts[4] : "";
-
             string terrainText = L10n.T("tile.terrain." + terrain);
             string occupant = kind switch
             {
@@ -644,9 +649,11 @@ namespace TheUnseenBanner.Companion
                 occupant += ", " + L10n.F("tile.health", hpText, hpMaxText);
 
             string position = ComposePosition(distText, dirText);
-            string readout = position.Length > 0
-                ? terrainText + ". " + occupant + ". " + position
-                : terrainText + ". " + occupant + ".";
+            string readout = terrainText + ". " + occupant + ".";
+            if (corpseName.Length > 0)
+                readout += " " + L10n.F("tile.corpse", corpseName) + ".";
+            if (position.Length > 0)
+                readout += " " + position + ".";
 
             // With a skill armed the Squirrel side packs two extra fields: whether
             // the tile is a legal target ("1"/"0") and, for an attackable actor on
@@ -1036,9 +1043,12 @@ namespace TheUnseenBanner.Companion
         /// the mouse tooltip shows for any unit on the field, respecting fog of war.
         /// valor is "sight" (discovered but out of sight, name only) or "ok" (full).
         /// For the full case detail packs "kind|level|timing|hp|hpMax|fat|fatMax|
-        /// armHead|armHeadMax|armBody|armBodyMax|morale|effects", where effects is a
-        /// newline-separated list of already-localized names (possibly empty).</summary>
-        private static string ComposeInspect(string name, string valor, string detail)
+        /// armHead|armHeadMax|armBody|armBodyMax|morale|effects", where effects is
+        /// a newline-separated list of already-localized names (possibly empty).
+        /// The corpse name is a separate JSON field because character names are
+        /// player-editable and may contain the packed detail delimiter.</summary>
+        private static string ComposeInspect(
+            string name, string valor, string detail, string corpseName)
         {
             if (valor == "sight")
                 return L10n.F("combat.inspect.sight", name);
@@ -1073,6 +1083,8 @@ namespace TheUnseenBanner.Companion
 
             string effects = JoinNames(At(12));
             if (effects.Length > 0) result += " " + L10n.F("combat.inspect.effects", effects);
+            if (corpseName.Length > 0)
+                result += " " + L10n.F("combat.inspect.corpse", corpseName);
 
             return result;
         }

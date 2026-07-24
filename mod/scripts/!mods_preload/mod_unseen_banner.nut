@@ -61,7 +61,7 @@
 	return out;
 }
 
-::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null, _acciones = null, _comparacion = null)
+::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null, _acciones = null, _comparacion = null, _cadaver = null)
 {
 	local json = "{\"canal\":\"" + ::UnseenBanner.jsonEscape(_canal) + "\",\"texto\":\"" + ::UnseenBanner.jsonEscape(_texto) + "\"";
 	if (_categoria != null) json += ",\"categoria\":\"" + ::UnseenBanner.jsonEscape(_categoria) + "\"";
@@ -72,6 +72,7 @@
 	if (_contexto != null) json += ",\"contexto\":\"" + ::UnseenBanner.jsonEscape(_contexto) + "\"";
 	if (_acciones != null) json += ",\"acciones\":\"" + ::UnseenBanner.jsonEscape(_acciones) + "\"";
 	if (_comparacion != null) json += ",\"comparacion\":\"" + ::UnseenBanner.jsonEscape(_comparacion) + "\"";
+	if (_cadaver != null) json += ",\"cadaver\":\"" + ::UnseenBanner.jsonEscape(_cadaver) + "\"";
 	json += "}";
 	::logInfo("UB_MSG:" + json);
 }
@@ -3416,6 +3417,9 @@
 		LastActiveID = -1,
 		EnemyIndex = -1,
 		AllyIndex = -1,
+		InspectItems = null,
+		InspectIndex = 0,
+		InspectMenuActive = false,
 		// Skill armed on the active man while the cursor is being moved, so the
 		// readout can add "valid target, N% to hit" for the tile under it. Set
 		// afresh from tactical_state on every key, null when nothing is armed.
@@ -3453,6 +3457,13 @@
 	InspectKeys = {
 		[32] = true // v
 	},
+	InspectMoveKeys = {
+		[44] = "end",
+		[45] = "home",
+		[49] = "up",
+		[51] = "down"
+	},
+	InspectCancelKey = 41, // Escape
 	function handles(_code)
 	{
 		return (_code in this.DirKeys)
@@ -3464,8 +3475,23 @@
 	{
 		return _code in this.InspectKeys;
 	},
+	function handlesInspectMenu(_code, _shift)
+	{
+		if (this.m.InspectMenuActive)
+		{
+			return (_code in this.InspectKeys)
+				|| (_code in this.InspectMoveKeys)
+				|| _code == this.InspectCancelKey;
+		}
+		return _shift && (_code in this.InspectKeys);
+	},
+	function isInspectMenuActive()
+	{
+		return this.m.InspectMenuActive;
+	},
 	function reset()
 	{
+		this.closeInspectMenu(false);
 		this.m.CursorTile = null;
 		this.m.LastActiveID = -1;
 		this.m.EnemyIndex = -1;
@@ -3481,6 +3507,7 @@
 	{
 		if (this.m.CursorTile == null || this.m.LastActiveID != _active.getID())
 		{
+			this.closeInspectMenu(false);
 			this.m.CursorTile = _active.getTile();
 			this.m.LastActiveID = _active.getID();
 			this.m.EnemyIndex = -1;
@@ -3494,6 +3521,8 @@
 	},
 	function onKey(_code, _active, _entities, _shift = false, _state = null)
 	{
+		this.closeInspectMenu(false);
+
 		// A targeted skill armed on the active man turns the survey into a target
 		// preview: announce() then adds validity + hit chance for the cursor tile.
 		this.m.CurrentSkill = null;
@@ -3604,6 +3633,19 @@
 		this.m.CursorTile = scored[this.m.AllyIndex].e.getTile();
 		this.announce(_active);
 	},
+	function getCorpseName(_tile)
+	{
+		if (_tile == null || !_tile.IsCorpseSpawned
+			|| !_tile.Properties.has("Corpse"))
+		{
+			return "";
+		}
+
+		local corpse = _tile.Properties.get("Corpse");
+		return corpse != null && ("CorpseName" in corpse) && corpse.CorpseName != null
+			? corpse.CorpseName
+			: "";
+	},
 	function announce(_active)
 	{
 		local tile = this.m.CursorTile;
@@ -3611,6 +3653,7 @@
 		local kind = "empty";
 		local hp = "";
 		local hpMax = "";
+		local corpseName = this.getCorpseName(tile);
 
 		// A non-empty tile can hold an actor OR a non-actor object (cover and
 		// decorations such as a brush), so the actor-only API must be gated by an
@@ -3662,8 +3705,9 @@
 		}
 
 		// hp/hpMax are empty for empty tiles and scenery; the companion only voices
-		// the health clause for an actor. They sit before the optional target fields
-		// so those stay at the tail regardless of whether a unit is present.
+		// the health clause for an actor. A corpse is independent of the current
+		// occupant: actors can stand over one, and skills such as Gruesome Feast
+		// target that corpse rather than the living actor on the same hex.
 		local detail = kind + "|" + dist + "|" + dir + "|" + hp + "|" + hpMax;
 
 		// With a skill armed, tack on two more fields so the companion can say
@@ -3684,7 +3728,9 @@
 			detail += "|" + targetable + "|" + hit;
 		}
 
-		::UnseenBanner.sendMessage("interrupt", name, "tile.readout", "" + tile.Type, detail);
+		::UnseenBanner.sendMessage("interrupt", name, "tile.readout", "" + tile.Type,
+			detail, null, null, null, null, null,
+			corpseName != "" ? corpseName : null);
 	},
 	// On-demand detail for whatever stands on the cursor tile (the v key). Reads the
 	// same funnel the mouse tooltip is built from (actor.getTooltip), honouring fog
@@ -3697,17 +3743,24 @@
 	{
 		this.ensureAnchored(_active);
 		local tile = this.m.CursorTile;
+		local corpseName = this.getCorpseName(tile);
 
 		if (tile == null || tile.IsEmpty)
 		{
-			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", corpseName, "combat.inspect.corpse");
+			else
+				::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
 			return;
 		}
 
 		local e = tile.getEntity();
 		if (e == null)
 		{
-			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", corpseName, "combat.inspect.corpse");
+			else
+				::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
 			return;
 		}
 
@@ -3715,13 +3768,20 @@
 		{
 			// Cover or decoration — worth naming (it affects line of sight and
 			// defence) but there are no combat stats to read.
-			::UnseenBanner.sendMessage("interrupt", e.getName(), "combat.inspect.object");
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", e.getName(),
+					"combat.inspect.object_corpse", corpseName);
+			else
+				::UnseenBanner.sendMessage("interrupt", e.getName(), "combat.inspect.object");
 			return;
 		}
 
 		if (!e.isAlive() || e.isDying() || !e.isPlacedOnMap())
 		{
-			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", corpseName, "combat.inspect.corpse");
+			else
+				::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
 			return;
 		}
 
@@ -3741,7 +3801,7 @@
 
 		local kind = "enemy";
 		if (_active != null && e.getID() == _active.getID()) kind = "self";
-		else if (e.isPlayerControlled()) kind = "ally";
+		else if (e.isPlayerControlled() || e.isAlliedWithPlayer()) kind = "ally";
 
 		// When it next acts, mirroring the tooltip's "Acting right now / Turn done /
 		// Acts in N turns" line. getTurnsUntilActive returns the slot index in this
@@ -3783,7 +3843,232 @@
 			+ "|" + e.getMoraleState()
 			+ "|" + effects;
 
-		::UnseenBanner.sendMessage("interrupt", name, "combat.inspect", "ok", detail);
+		::UnseenBanner.sendMessage("interrupt", name, "combat.inspect", "ok", detail,
+			null, null, null, null, null, corpseName != "" ? corpseName : null);
+	},
+	function inspectItem(_cat, _texto = "", _valor = "", _detalle = "", _tooltip = null)
+	{
+		return {
+			cat = _cat,
+			texto = _texto,
+			valor = _valor,
+			detalle = _detalle,
+			tooltip = _tooltip
+		};
+	},
+	function statusDetail(_actor, _skill)
+	{
+		return {
+			contentType = "status-effect",
+			entityId = _actor.getID(),
+			statusEffectId = _skill.getID()
+		};
+	},
+	function timing(_actor)
+	{
+		local active = ::Tactical.TurnSequenceBar.getActiveEntity();
+		if (active != null && active.getID() == _actor.getID()) return "now";
+		if (_actor.isTurnDone()) return "done";
+
+		local turns = ::Tactical.TurnSequenceBar.getTurnsUntilActive(_actor.getID());
+		return turns != null && turns > 0 ? "" + turns : "none";
+	},
+	// Shift+V turns the unit tooltip readout into a navigable semantic menu. Each
+	// status effect is its own row and carries the exact native status-effect
+	// descriptor used by the visible UI, so plain V can render and read its tooltip.
+	function openInspectMenu(_active)
+	{
+		this.ensureAnchored(_active);
+		local tile = this.m.CursorTile;
+		local corpseName = this.getCorpseName(tile);
+
+		if (tile == null || tile.IsEmpty)
+		{
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", corpseName, "combat.inspect.corpse");
+			else
+				::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			return;
+		}
+
+		local actor = tile.getEntity();
+		if (actor == null)
+		{
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", corpseName, "combat.inspect.corpse");
+			else
+				::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			return;
+		}
+		if (!::isKindOf(actor, "actor"))
+		{
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", actor.getName(),
+					"combat.inspect.object_corpse", corpseName);
+			else
+				::UnseenBanner.sendMessage("interrupt", actor.getName(),
+					"combat.inspect.object");
+			return;
+		}
+		if (!actor.isAlive() || actor.isDying() || !actor.isPlacedOnMap())
+		{
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", corpseName, "combat.inspect.corpse");
+			else
+				::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			return;
+		}
+		if (!actor.isDiscovered())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.hidden");
+			return;
+		}
+		if (actor.isHiddenToPlayer())
+		{
+			::UnseenBanner.sendMessage("interrupt", actor.getName(), "combat.inspect",
+				"sight", "");
+			return;
+		}
+
+		local kind = "enemy";
+		if (_active != null && actor.getID() == _active.getID()) kind = "self";
+		else if (actor.isPlayerControlled() || actor.isAlliedWithPlayer()) kind = "ally";
+
+		local items = [];
+		items.push(this.inspectItem("combat.inspect.menu.screen", actor.getName()));
+		items.push(this.inspectItem("combat.inspect.header." + kind,
+			actor.getName(), "" + actor.getLevel()));
+
+		local when = this.timing(actor);
+		if (when == "now")
+			items.push(this.inspectItem("combat.inspect.timing.now"));
+		else if (when == "done")
+			items.push(this.inspectItem("combat.inspect.timing.done"));
+		else if (when != "none")
+			items.push(this.inspectItem(when == "1"
+				? "combat.inspect.timing.turns.one"
+				: "combat.inspect.timing.turns", when));
+
+		items.push(this.inspectItem("combat.inspect.menu.health",
+			"", "" + actor.getHitpoints(), "" + actor.getHitpointsMax()));
+		items.push(this.inspectItem("combat.inspect.menu.armor.head",
+			"", "" + actor.getArmor(::Const.BodyPart.Head),
+			"" + actor.getArmorMax(::Const.BodyPart.Head)));
+		items.push(this.inspectItem("combat.inspect.menu.armor.body",
+			"", "" + actor.getArmor(::Const.BodyPart.Body),
+			"" + actor.getArmorMax(::Const.BodyPart.Body)));
+		items.push(this.inspectItem("combat.inspect.menu.fatigue",
+			"", "" + actor.getFatigue(), "" + actor.getFatigueMax()));
+
+		local statuses = actor.getSkills().query(
+			::Const.SkillType.StatusEffect | ::Const.SkillType.TemporaryInjury,
+			false, true);
+		local moraleTooltip = null;
+		foreach( status in statuses )
+		{
+			if (status != null && status.getID() == "special.morale.check")
+			{
+				moraleTooltip = this.statusDetail(actor, status);
+				break;
+			}
+		}
+		items.push(this.inspectItem("combat.inspect.menu.morale", "",
+			"" + actor.getMoraleState(), "", moraleTooltip));
+
+		local effectCount = 0;
+		foreach( status in statuses )
+		{
+			if (status == null || status.getID() == "special.morale.check") continue;
+			items.push(this.inspectItem("combat.inspect.menu.effect", status.getName(),
+				"", "", this.statusDetail(actor, status)));
+			effectCount += 1;
+		}
+		if (effectCount == 0)
+			items.push(this.inspectItem("combat.inspect.menu.effects.none"));
+		if (corpseName != "")
+			items.push(this.inspectItem("combat.inspect.corpse", corpseName));
+
+		this.m.InspectItems = items;
+		this.m.InspectIndex = 0;
+		this.m.InspectMenuActive = true;
+		::UnseenBanner.TooltipNav.hide();
+		this.announceInspectItem();
+	},
+	function closeInspectMenu(_announce = false)
+	{
+		local wasActive = this.m.InspectMenuActive;
+		this.m.InspectItems = null;
+		this.m.InspectIndex = 0;
+		this.m.InspectMenuActive = false;
+		::UnseenBanner.TooltipNav.hide();
+		if (_announce && wasActive)
+			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.menu.closed");
+	},
+	function onInspectMenuKey(_code, _shift, _active)
+	{
+		if (!this.m.InspectMenuActive)
+		{
+			if (_shift && (_code in this.InspectKeys)) this.openInspectMenu(_active);
+			return;
+		}
+
+		if (_code == this.InspectCancelKey
+			|| (_shift && (_code in this.InspectKeys)))
+		{
+			this.closeInspectMenu(true);
+			return;
+		}
+
+		if (_code in this.InspectKeys)
+		{
+			this.showInspectDetail();
+			return;
+		}
+		if (!(_code in this.InspectMoveKeys)
+			|| this.m.InspectItems == null || this.m.InspectItems.len() == 0)
+		{
+			return;
+		}
+
+		local move = this.InspectMoveKeys[_code];
+		if (move == "up") this.m.InspectIndex -= 1;
+		else if (move == "down") this.m.InspectIndex += 1;
+		else if (move == "home") this.m.InspectIndex = 0;
+		else this.m.InspectIndex = this.m.InspectItems.len() - 1;
+
+		if (this.m.InspectIndex < 0) this.m.InspectIndex = 0;
+		if (this.m.InspectIndex >= this.m.InspectItems.len())
+			this.m.InspectIndex = this.m.InspectItems.len() - 1;
+		::UnseenBanner.TooltipNav.hide();
+		this.announceInspectItem();
+	},
+	function announceInspectItem()
+	{
+		if (!this.m.InspectMenuActive || this.m.InspectItems == null
+			|| this.m.InspectItems.len() == 0)
+		{
+			return;
+		}
+
+		local item = this.m.InspectItems[this.m.InspectIndex];
+		::UnseenBanner.sendMessage("interrupt", item.texto, item.cat,
+			item.valor, item.detalle, null, item.tooltip != null ? "1" : null);
+	},
+	function showInspectDetail()
+	{
+		if (!this.m.InspectMenuActive || this.m.InspectItems == null
+			|| this.m.InspectItems.len() == 0)
+		{
+			return;
+		}
+
+		local item = this.m.InspectItems[this.m.InspectIndex];
+		if (item.tooltip == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "tooltip.unavailable");
+			return;
+		}
+		::UnseenBanner.TooltipNav.show(item.tooltip, 1, 1, "combat.inspect.menu.effect");
 	}
 };
 
@@ -7249,6 +7534,7 @@
 	q.onFinish = @(__original) function()
 	{
 		::UnseenBanner.MenuNav.reset();
+		::UnseenBanner.TileCursor.reset();
 		::UnseenBanner.CombatResult.reset();
 		::UnseenBanner.DialogNav.reset();
 		::UnseenBanner.TacticalDialogNav.reset();
@@ -7258,6 +7544,7 @@
 	q.onKeyInput = @(__original) function( _key )
 	{
 		local code = _key.getKey();
+		local shift = (_key.getModifier() & 1) != 0;
 
 		// Post-combat result screen. The state swallows every key once the battle
 		// has ended (isBattleEnded short-circuits its own onKeyInput), so this must
@@ -7347,11 +7634,39 @@
 			return true;
 		}
 
+		// Shift+V's unit list is a real modal cursor once opened. Its rows and
+		// status descriptors are already captured, so navigation must not depend on
+		// TurnSequenceBar still reporting an active player or on transient
+		// MenuStack/input-lock flags. Those checks silently discarded the list on
+		// the very next key in live play. Native result/dialog/character screens
+		// retain priority because their handlers run above this block.
+		if (::UnseenBanner.TileCursor.isInspectMenuActive())
+		{
+			if (::UnseenBanner.TileCursor.handlesInspectMenu(code, shift))
+			{
+				if (_key.getState() == 1)
+				{
+					if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+						::UnseenBanner.TileCursor.onInspectMenuKey(code, shift, null);
+				}
+				else if (_key.getState() == 0)
+				{
+					::UnseenBanner.KeyGate.release(code);
+				}
+			}
+
+			// Consume every key while the list is open. Unrelated bindings must
+			// never pan the camera, arm a skill or silently destroy the menu state;
+			// Shift+V and Escape are its explicit exits.
+			return true;
+		}
+
 		local isCursorKey = ::UnseenBanner.TileCursor.handles(code);
+		local isInspectMenuKey = ::UnseenBanner.TileCursor.handlesInspectMenu(code, shift);
 		local isInspectKey = ::UnseenBanner.TileCursor.handlesInspect(code);
 		local isActKey = ::UnseenBanner.Combat.handles(code);
 		local isReadoutKey = ::UnseenBanner.Readout.handles(code);
-		if ((isCursorKey || isInspectKey || isActKey || isReadoutKey)
+		if ((isCursorKey || isInspectMenuKey || isInspectKey || isActKey || isReadoutKey)
 			&& !this.isInLoadingScreen()
 			&& !this.isBattleEnded()
 			&& !this.isInCharacterScreen()
@@ -7361,6 +7676,8 @@
 			local active = this.Tactical.TurnSequenceBar.getActiveEntity();
 			if (active != null && active.isPlayerControlled())
 			{
+				::UnseenBanner.TileCursor.ensureAnchored(active);
+
 				// Act on the press (state 1), gated against auto-repeat: during active
 				// combat the engine swallows the release of natively-bound keys (camera
 				// pan Q/W/E/A/S/D, overlay toggles T/B), so a release-driven handler
@@ -7371,13 +7688,17 @@
 					if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
 					{
 						if (isCursorKey)
-							::UnseenBanner.TileCursor.onKey(code, active, this.Tactical.Entities, (_key.getModifier() & 1) != 0, this);
+							::UnseenBanner.TileCursor.onKey(code, active,
+								this.Tactical.Entities, shift, this);
+						else if (isInspectMenuKey)
+							::UnseenBanner.TileCursor.onInspectMenuKey(code, shift, active);
 						else if (isInspectKey)
 							::UnseenBanner.TileCursor.inspect(active);
 						else if (isActKey)
 							::UnseenBanner.Combat.onKey(code, active, this, ::UnseenBanner.TileCursor.getTile(active));
 						else
-							::UnseenBanner.Readout.onKey(code, active, this.Tactical.Entities, (_key.getModifier() & 1) != 0);
+							::UnseenBanner.Readout.onKey(code, active,
+								this.Tactical.Entities, shift);
 					}
 				}
 				else if (_key.getState() == 0)
@@ -7455,6 +7776,9 @@
 	q.turnsequencebar_onEntityEnteredFirstSlotFully = @(__original) function( _entity )
 	{
 		__original(_entity);
+		// The Shift+V list is a snapshot of live combat state. Drop it as soon as
+		// initiative advances so armor, fatigue, morale and effects cannot go stale.
+		::UnseenBanner.TileCursor.closeInspectMenu(false);
 
 		if (_entity != null && _entity.isPlayerControlled() && _entity.isAlive())
 		{

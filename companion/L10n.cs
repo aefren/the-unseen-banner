@@ -194,6 +194,7 @@ namespace TheUnseenBanner.Companion
             ["tile.enemy"] = "enemy {0}",
             ["tile.object"] = "{0}",
             ["tile.health"] = "health {0} of {1}",
+            ["tile.corpse"] = "Corpse: {0}",
             ["tile.edge"] = "Edge of the battlefield.",
             ["tile.position"] = "{0} tiles, {1} o'clock",
             ["tile.position.one"] = "1 tile, {0} o'clock",
@@ -260,6 +261,19 @@ namespace TheUnseenBanner.Companion
             ["combat.inspect.empty"] = "Nothing there.",
             ["combat.inspect.hidden"] = "Hidden opponent.",
             ["combat.inspect.object"] = "{0}.",
+            ["combat.inspect.object_corpse"] = "{0}. Corpse: {1}.",
+            ["combat.inspect.corpse"] = "Corpse: {0}.",
+            // Shift+V presents the same unit readout as a navigable list. Effect
+            // names remain game-owned text and V resolves their native tooltips.
+            ["combat.inspect.menu.screen"] = "Combatant details for {0}. Use Up and Down to review; Home and End jump to the beginning and end; V reads the focused effect tooltip. Press Shift plus V or Escape to close.",
+            ["combat.inspect.menu.health"] = "Health {1} of {2}.",
+            ["combat.inspect.menu.armor.head"] = "Head armor {1} of {2}.",
+            ["combat.inspect.menu.armor.body"] = "Body armor {1} of {2}.",
+            ["combat.inspect.menu.fatigue"] = "Fatigue {1} of {2}.",
+            ["combat.inspect.menu.morale"] = "Morale: {0}.",
+            ["combat.inspect.menu.effect"] = "Effect: {0}.",
+            ["combat.inspect.menu.effects.none"] = "No effects.",
+            ["combat.inspect.menu.closed"] = "Combatant details closed.",
             // Character sheet as a navigable list for the C/I screen. Up/Down walk
             // these entries one at a time for the shown brother.
             ["combat.sheet.brother"] = "{0}. {1}",
