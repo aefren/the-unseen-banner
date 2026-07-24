@@ -140,18 +140,22 @@ accident.
 | T | Active brother's status (health, action points, fatigue, morale) |
 | Tab | Turn order for the round |
 | B | Visible enemies sorted by distance, with range |
-| Shift+B | Enemies adjacent to the cursor tile (would I be surrounded if I moved there?) |
+| Shift+B | Enemies adjacent to the cursor tile, each with its clock direction (would I be surrounded if I moved there?) |
 | K | Active brother's usable skills (the numbered bar, read aloud) |
 | Number row / numpad | Use skill 1-10 (the game's native shortcut) |
-| C / I | Open the character sheet (navigable with arrows / Home / End) |
+| C / I | Open the character sheet; Up/Down review attributes and backpack slots, Home/End jump, V opens native details, Enter equips a backpack item, and A/D or Tab switch brothers |
 | R | End round (opens the confirmation dialog, now accessible) |
 
 With a **targeted skill armed**, the tile cursor adds "valid target, N% to hit" /
 "not a valid target" for the focused tile, and G uses it there.
 
 On the **in-combat character sheet**: Up/Down arrows walk the attributes, Home/End
-jump to the ends, and A/D (or arrows/Tab, as in vanilla) switch brothers while
-keeping your position, to compare quickly.
+jump to the ends, V opens the focused row's native tooltip details, and A/D (or
+arrows/Tab, as in vanilla) switch brothers while keeping your position, to
+compare quickly. Rows with several details turn them into a navigable sub-list;
+press V again to return to the sheet. Backpack slots follow the equipment row.
+On an occupied slot, Enter opens its available actions and a second Enter equips
+the item through the game's normal combat rules, including Action Point cost.
 
 ### Post-combat result screen
 
@@ -205,9 +209,10 @@ in the real game.
     enemy and ally cycling (Z / Shift+Z and H / Shift+H).
   - Skills with valid targets and hit chance before confirming.
   - On-demand readouts: status, turn order, enemies, skills, inspection.
-  - Enemies adjacent to a tile (Shift+B).
+  - Enemies adjacent to a tile, with clock directions (Shift+B).
   - Turn-start and round announcements.
-  - Navigable character sheet.
+  - Navigable character sheet with V-key native tooltip details and combat
+    equipment changes from backpack slots.
   - Result screen and loot as a navigable list.
   - Confirmation dialog (end round / quit battle) made accessible.
 - **Phase 4 — World map (partial).**

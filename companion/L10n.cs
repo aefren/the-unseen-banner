@@ -234,6 +234,7 @@ namespace TheUnseenBanner.Companion
             ["combat.enemies.empty"] = "No enemies in sight.",
             ["combat.engaged"] = "{0} enemies around. ({1})",
             ["combat.engaged.one"] = "1 enemy around. ({0})",
+            ["combat.engaged.entry"] = "{0} at {1} o'clock",
             ["combat.engaged.none"] = "No enemies around.",
             // Active man's usable skills, the numbered action bar (the k key).
             ["combat.skills"] = "{0} skills. {1}.",
@@ -345,6 +346,7 @@ namespace TheUnseenBanner.Companion
             ["world.inventory.action.standalone"] = "{0}.",
             ["world.inventory.action.position"] = "Action {0} of {1}.",
             ["world.inventory.action.opened"] = "Actions. {0} Press Enter to perform; V to go back.",
+            ["combat.inventory.action.cost"] = "{0} Cost: {1} Action Points.",
             ["world.inventory.actions.one"] = "Press Enter for one action.",
             ["world.inventory.actions.many"] = "Press Enter for {0} actions.",
             ["world.inventory.actions.none"] = "No inventory actions are available for {0}.",
@@ -361,6 +363,7 @@ namespace TheUnseenBanner.Companion
             ["world.inventory.result.filter_armor"] = "Showing armor.",
             ["world.inventory.result.filter_misc"] = "Showing miscellaneous items.",
             ["world.inventory.result.filter_usable"] = "Showing usable items.",
+            ["combat.inventory.result.equip"] = "{0} equipped. {1} action points remaining.",
             ["world.inventory.error.0"] = "Inventory action failed.",
             ["world.inventory.error.1"] = "The selected brother is no longer available.",
             ["world.inventory.error.2"] = "The selected inventory is unavailable.",

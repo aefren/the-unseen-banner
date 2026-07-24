@@ -4063,31 +4063,35 @@
 		// on the active man (its default / X-recentre position) it answers the same
 		// question for where he stands right now. Reuses the b readout's hostile
 		// set (getAllHostilesAsArray, honouring fog of war) filtered to hex distance
-		// 1 from the cursor tile; the message carries just the names, newline-
-		// separated, and the count.
+		// 1 from the cursor tile. Each line carries "name\tdirection", where direction
+		// is the same 0-5 hex bearing used by the tactical cursor; the companion turns
+		// it into the shared 12/2/4/6/8/10 clock vocabulary.
 		local tile = ::UnseenBanner.TileCursor.getTile(_active);
-		local names = [];
+		local enemies = [];
 		foreach( e in _entities.getAllHostilesAsArray() )
 		{
 			if (e == null || !e.isAlive() || e.isHiddenToPlayer() || e.getTile() == null) continue;
 			if (tile.getDistanceTo(e.getTile()) != 1) continue;
-			names.push(e.getName());
+			enemies.push({
+				name = e.getName(),
+				dir = tile.getDirectionTo(e.getTile())
+			});
 		}
 
-		if (names.len() == 0)
+		if (enemies.len() == 0)
 		{
 			::UnseenBanner.sendMessage("interrupt", "", "combat.engaged.none");
 			return;
 		}
 
 		local text = "";
-		for (local i = 0; i < names.len(); i += 1)
+		for (local i = 0; i < enemies.len(); i += 1)
 		{
 			if (i > 0) text += "\n";
-			text += names[i];
+			text += enemies[i].name + "\t" + enemies[i].dir;
 		}
 
-		::UnseenBanner.sendMessage("interrupt", text, "combat.engaged", "" + names.len());
+		::UnseenBanner.sendMessage("interrupt", text, "combat.engaged", "" + enemies.len());
 	},
 	// The active man's usable skills — the numbered action bar read aloud (the k
 	// key). queryActives() is the exact list, in the exact order, that the number
@@ -4187,10 +4191,11 @@
 	},
 	function handles(_code)
 	{
-		return (_code == this.InspectKey && this.m.WorldMode)
-			|| (_code == this.ActionKey && this.m.WorldMode
-				&& (this.m.ActionMode || this.isInventorySection()
-					|| this.isIdentityRow() || this.isFormationSection()))
+		return _code == this.InspectKey
+			|| (_code == this.ActionKey
+				&& (this.m.ActionMode || this.isTacticalBagRow()
+					|| (this.m.WorldMode && (this.isInventorySection()
+						|| this.isIdentityRow() || this.isFormationSection()))))
 			|| (_code == this.CancelKey && this.m.FormationMoveMode)
 			|| (this.m.WorldMode && _code in this.SectionKeys)
 			|| (_code in this.NextKeys)
@@ -4485,6 +4490,13 @@
 		local section = this.currentSection();
 		if (section == null || section.id != "sheet") return false;
 		return this.m.Items[this.m.ItemIndex].cat == "combat.sheet.identity";
+	},
+	function isTacticalBagRow()
+	{
+		if (this.m.WorldMode || this.m.Items == null || this.m.Items.len() == 0)
+			return false;
+		local row = this.m.Items[this.m.ItemIndex];
+		return "payload" in row && row.payload != null && row.payload.source == "bag";
 	},
 	function onNameEdited(_name)
 	{
@@ -4796,15 +4808,27 @@
 
 		this.announceItem();
 	},
-	function action(_execute, _label, _result, _name, _payload)
+	function action(_execute, _label, _result, _name, _payload, _cost = "")
 	{
 		return {
 			execute = _execute,
 			label = _label,
 			result = _result,
 			name = _name,
-			payload = _payload
+			payload = _payload,
+			cost = _cost
 		};
+	},
+	function tacticalEquipCost(_item)
+	{
+		local bro = this.current();
+		if (this.m.WorldMode || bro == null || _item == null) return "";
+		local inventory = bro.getItems();
+		return "" + inventory.getActionCost([
+			_item,
+			inventory.getItemAtSlot(_item.getSlotType()),
+			inventory.getItemAtSlot(_item.getBlockedSlotType())
+		]);
 	},
 	function buildActions(_row)
 	{
@@ -4848,8 +4872,10 @@
 			else if (payload.source == "bag")
 			{
 				if (equipable)
-					actions.push(this.action("equip_bag", "equip", "equip", name, payload));
-				actions.push(this.action("bag_to_stash", "move_stash", "move_stash", name, payload));
+					actions.push(this.action("equip_bag", "equip", "equip", name, payload,
+						this.tacticalEquipCost(item)));
+				if (this.m.WorldMode)
+					actions.push(this.action("bag_to_stash", "move_stash", "move_stash", name, payload));
 			}
 			else if (payload.source == "equipment")
 			{
@@ -4865,8 +4891,10 @@
 	// deliberate second Enter. V returns to the parent item without changing state.
 	function openActions()
 	{
-		if (!this.m.WorldMode || !this.isInventorySection()
-			|| this.m.Items == null || this.m.Items.len() == 0) return;
+		local canOpen = this.m.WorldMode
+			? this.isInventorySection()
+			: this.isTacticalBagRow();
+		if (!canOpen || this.m.Items == null || this.m.Items.len() == 0) return;
 
 		this.leaveDetails();
 		::UnseenBanner.TooltipNav.hide();
@@ -4901,7 +4929,7 @@
 		if (!this.m.ActionMode || this.m.Actions == null || this.m.Actions.len() == 0) return;
 		local action = this.m.Actions[this.m.ActionIndex];
 		local detail = (this.m.ActionIndex + 1) + "|" + this.m.Actions.len()
-			+ "|" + (_opened ? "1" : "0");
+			+ "|" + (_opened ? "1" : "0") + "|" + action.cost;
 		::UnseenBanner.sendMessage("interrupt", action.name, "world.inventory.action",
 			action.label, detail);
 	},
@@ -4927,8 +4955,9 @@
 		local action = this.m.Actions[this.m.ActionIndex];
 		local payload = action.payload;
 		local bro = this.current();
-		local saved = this.captureSectionPositions();
+		local saved = this.m.WorldMode ? this.captureSectionPositions() : null;
 		local oldSection = this.m.SectionIndex;
+		local oldItemIndex = this.m.ItemIndex;
 		local result = null;
 		local success = false;
 
@@ -5030,10 +5059,24 @@
 		}
 
 		_screen.loadData();
-		this.buildWorldSections(saved);
-		this.activateSection(oldSection, false, false);
-		::UnseenBanner.sendMessage("interrupt", action.name,
-			"world.inventory.result." + action.result);
+		if (this.m.WorldMode)
+		{
+			this.buildWorldSections(saved);
+			this.activateSection(oldSection, false, false);
+			::UnseenBanner.sendMessage("interrupt", action.name,
+				"world.inventory.result." + action.result);
+		}
+		else
+		{
+			this.buildItems();
+			this.m.ItemIndex = oldItemIndex;
+			if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+			if (this.m.Items.len() > 0 && this.m.ItemIndex >= this.m.Items.len())
+				this.m.ItemIndex = this.m.Items.len() - 1;
+			::UnseenBanner.sendMessage("interrupt", action.name,
+				"combat.inventory.result." + action.result,
+				bro != null ? "" + bro.getActionPoints() : "");
+		}
 	},
 	function announceItem(_includeBrother = false, _includeSection = false)
 	{
@@ -5057,11 +5100,11 @@
 		local name = bro != null ? bro.getName() : null;
 		// While choosing a destination V cancels the move; do not advertise the
 		// ordinary V-for-details action on an occupied target.
-		local detailCount = this.m.WorldMode && !this.m.FormationMoveMode
+		local detailCount = !this.m.FormationMoveMode
 			? it.details.len()
 			: 0;
 		local actionCount = 0;
-		if (this.m.WorldMode && this.isInventorySection())
+		if ((this.m.WorldMode && this.isInventorySection()) || this.isTacticalBagRow())
 			actionCount = this.buildActions(it).len();
 		else if (this.isIdentityRow())
 			actionCount = 1;
@@ -5126,6 +5169,8 @@
 		local section = this.currentSection();
 		if (this.m.WorldMode && section != null && section.detailGroup != "")
 			group = section.detailGroup;
+		else if (this.isTacticalBagRow())
+			group = "world.character.bag";
 		::UnseenBanner.TooltipNav.show(it.details[this.m.DetailIndex],
 			this.m.DetailIndex + 1, it.details.len(), group);
 	},
@@ -5216,9 +5261,9 @@
 		return result;
 	},
 	// Phase 2.4 world CharacterScreen sections, extended by phase 2.3 inventory
-	// actions and the keyboard formation editor. Tactical keeps its already-verified
-	// flat sheet. Perks remain read-only; equipment, backpack and stash expose an
-	// explicit Enter menu.
+	// actions and the keyboard formation editor. Tactical keeps its flat sheet but
+	// now shares the same V-driven native-tooltip funnel. Perks remain read-only;
+	// equipment, backpack and stash expose an explicit Enter menu in world mode.
 	function buildWorldSections(_saved = null)
 	{
 		this.buildItems();
@@ -5405,6 +5450,8 @@
 	// armor"...) stay on that side, this only supplies the numbers and the already
 	// localized game names. Attributes come first (what the user asked to read one
 	// by one), then injuries, traits, perks and worn equipment as list entries.
+	// Tactical mode appends the individual backpack slots so an item can be equipped
+	// through CharacterScreen's native AP-charging endpoint.
 	// Player-only facts (background, mood, XP, perks, traits) are gated by class so
 	// a non-brother player-faction unit still gets a valid, reduced sheet.
 	function buildItems()
@@ -5487,6 +5534,13 @@
 		}
 
 		items.push(this.equipEntry(bro));
+		if (!this.m.WorldMode)
+		{
+			foreach( bagRow in this.buildBagRows() )
+			{
+				items.push(bagRow);
+			}
+		}
 
 		this.m.Items = items;
 	},

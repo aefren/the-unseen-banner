@@ -305,8 +305,9 @@ namespace TheUnseenBanner.Companion
         }
 
         /// <summary>Compose one row in the explicit inventory action sub-list.
-        /// Squirrel sends detail as "index|total|opened"; the longer keyboard hint
-        /// is included only when Enter first opens the list.</summary>
+        /// Squirrel sends detail as "index|total|opened|cost"; the longer keyboard
+        /// hint is included only when Enter first opens the list. Cost is populated
+        /// only for tactical equipment changes.</summary>
         private static string ComposeInventoryAction(string itemName, string action, string detail)
         {
             string label = L10n.T("world.inventory.action." + action);
@@ -318,6 +319,9 @@ namespace TheUnseenBanner.Companion
             string index = parts.Length > 0 ? parts[0] : "1";
             string total = parts.Length > 1 ? parts[1] : "1";
             result += " " + L10n.F("world.inventory.action.position", index, total);
+            string cost = parts.Length > 3 ? parts[3] : "";
+            if (cost.Length > 0)
+                result = L10n.F("combat.inventory.action.cost", result, cost);
 
             bool opened = parts.Length > 2 && parts[2] == "1";
             return opened ? L10n.F("world.inventory.action.opened", result) : result;
@@ -972,17 +976,32 @@ namespace TheUnseenBanner.Companion
         /// Squirrel side counts the hostiles hex-adjacent to the cursor tile, so the
         /// player can tell before moving there whether the tile is ringed by foes
         /// (adjacency means a free hit when he later steps off). text is newline-
-        /// separated enemy names; valor is the count.</summary>
+        /// separated "name\tdirection" rows, where direction is the same 0-5 hex
+        /// bearing used by the tactical cursor; valor is the count.</summary>
         private static string ComposeEngaged(string text, string countText)
         {
-            var names = new System.Collections.Generic.List<string>();
+            var entries = new System.Collections.Generic.List<string>();
             foreach (string line in text.Split('\n'))
             {
                 if (line.Length == 0) continue;
-                names.Add(line);
+                string[] fields = line.Split('\t');
+                string name = fields[0];
+                if (fields.Length > 1
+                    && int.TryParse(fields[1], out int dir)
+                    && dir >= 0
+                    && dir < ClockHours.Length)
+                {
+                    entries.Add(L10n.F("combat.engaged.entry", name, ClockHours[dir]));
+                }
+                else
+                {
+                    // Keep old messages readable if the mod and companion are
+                    // momentarily on different versions during development.
+                    entries.Add(name);
+                }
             }
 
-            string list = string.Join(", ", names);
+            string list = string.Join(", ", entries);
             return countText == "1"
                 ? L10n.F("combat.engaged.one", list)
                 : L10n.F("combat.engaged", countText, list);
