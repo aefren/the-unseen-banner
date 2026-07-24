@@ -573,19 +573,15 @@ namespace TheUnseenBanner.Companion
             ["world.status.objectives.current"] = "Current objectives: {0}.",
             ["world.status.objectives.updated.one"] = "Objective updated: {0}.",
             ["world.status.objectives.updated"] = "Objectives updated: {0}.",
-            // World-map "what's in view" survey (phase 4.3, B then Up/Down). A
-            // navigable list of visible parties and known settlements/locations, each
-            // with its kind, distance and clock bearing. Distance/bearing reuse the
-            // tactical tile.position phrases.
-            ["world.survey.screen"] = "In view: {0}. Use Up and Down to review, V for details, and Enter to interact. Press B to close.",
-            ["world.survey.empty"] = "Nothing in view.",
+            // World explorer (phase 4.3). B owns static places, split into settlements
+            // and locations with Page Up/Down. Shift+B owns currently visible parties.
+            // Both lists retain the same item/detail/interaction controls.
+            ["world.survey.places.screen"] = "{0}: {1}. Use Up and Down to review; Page Up and Page Down switch between settlements and locations; V reads details; Enter travels to the selected place. Press B to close.",
+            ["world.survey.parties.screen"] = "Parties in sight: {0}. Use Up and Down to review, V for details, and Enter to engage. Press Shift plus B to close.",
+            ["world.survey.parties.empty"] = "No parties in sight.",
+            ["world.survey.section.settlements"] = "Settlements",
+            ["world.survey.section.locations"] = "Locations",
             ["world.survey.closed"] = "Survey closed.",
-            ["world.survey.count.parties"] = "{0} parties",
-            ["world.survey.count.parties.one"] = "1 party",
-            ["world.survey.count.settlements"] = "{0} settlements",
-            ["world.survey.count.settlements.one"] = "1 settlement",
-            ["world.survey.count.locations"] = "{0} locations",
-            ["world.survey.count.locations.one"] = "1 location",
             ["world.survey.item.enemy"] = "Enemy party, {0}",
             ["world.survey.item.ally"] = "Allied party, {0}",
             ["world.survey.item.neutral"] = "Party, {0}",

@@ -195,7 +195,8 @@ namespace TheUnseenBanner.Companion
                     "combat.result.stat" => ComposeResultStat(texto, valor, detalle),
                     "menu.campaign" => ComposeCampaignEntry(texto, valor, detalle),
                     "menu.campaign.screen" => ComposeCampaignScreen(texto, valor),
-                    "world.survey.screen" => ComposeSurveyScreen(detalle),
+                    "world.survey.places.screen" => ComposeSurveyPlacesScreen(valor, detalle),
+                    "world.survey.parties.screen" => ComposeSurveyPartiesScreen(detalle),
                     "world.survey.item" => ComposeSurveyItem(texto, valor, detalle),
                     "world.obituary.entry" => ComposeObituaryEntry(texto, detalle),
                     "world.retinue.slot.follower" => ComposeRetinueSlot(texto, valor, detalle),
@@ -778,32 +779,19 @@ namespace TheUnseenBanner.Companion
             return L10n.F("menu.campaign.screen", title, count);
         }
 
-        /// <summary>Compose the world-map survey header (phase 4.3, the B key). detalle
-        /// packs the three counts as "parties|settlements|locations"; the header names
-        /// how many of each are in view, or "Nothing in view" when all are zero. The
-        /// per-category phrasing is singular/zero aware so it never reads "1 parties".
-        /// </summary>
-        private static string ComposeSurveyScreen(string detail)
+        /// <summary>Compose the static-place explorer header. B starts on settlements;
+        /// Page Up/Down changes <paramref name="section"/> to locations and back.</summary>
+        private static string ComposeSurveyPlacesScreen(string section, string countText)
         {
-            string[] p = detail.Split('|');
-            int At(int i) => i < p.Length && int.TryParse(p[i], out int n) ? n : 0;
-            int parties = At(0), settlements = At(1), locations = At(2);
+            string label = L10n.T("world.survey.section." + section);
+            return L10n.F("world.survey.places.screen", label, countText);
+        }
 
-            if (parties == 0 && settlements == 0 && locations == 0)
-                return L10n.T("world.survey.empty");
-
-            var groups = new System.Collections.Generic.List<string>();
-            if (parties > 0)
-                groups.Add(parties == 1 ? L10n.T("world.survey.count.parties.one")
-                                        : L10n.F("world.survey.count.parties", parties));
-            if (settlements > 0)
-                groups.Add(settlements == 1 ? L10n.T("world.survey.count.settlements.one")
-                                            : L10n.F("world.survey.count.settlements", settlements));
-            if (locations > 0)
-                groups.Add(locations == 1 ? L10n.T("world.survey.count.locations.one")
-                                          : L10n.F("world.survey.count.locations", locations));
-
-            return L10n.F("world.survey.screen", string.Join(", ", groups));
+        /// <summary>Compose the visible-party explorer header opened with Shift+B.
+        /// The empty case is announced directly by Squirrel and never opens a list.</summary>
+        private static string ComposeSurveyPartiesScreen(string countText)
+        {
+            return L10n.F("world.survey.parties.screen", countText);
         }
 
         /// <summary>Compose one survey entry (phase 4.3). texto is the entity's already-

@@ -590,28 +590,26 @@
 	}
 };
 
-// World-map perception readout (phase 4.3, "what's in view"). The text precursor to
-// the sonar (4.1): a navigable list of everything the player can perceive on the map
-// — visible parties (threats, caravans, allies), known settlements and known
-// locations (camps, ruins, sites) — each with its kind, distance in hex tiles and a
-// clock bearing from the party. Pull, not push: B opens/closes the list and Up/Down
-// read one entry at a time, exactly like WorldStatus (a navigable list, never a single
-// Tolk dump). Fog of war is honoured (roadmap 4.2): parties must be currently in sight
-// (the same isHiddenToPlayer / visibility test the mouse click uses), settlements and
-// locations must have their tile discovered. Producing this typed classification here
-// is precisely what the sonar will later reuse to pick a sound per category, which is
-// why the world is done by text first.
+// World-map perception readout (phase 4.3). Static places and moving parties are two
+// separate tools: B opens known settlements by default and Page Up/Down alternates
+// between settlements and locations; Shift+B opens only the parties currently in
+// sight. Up/Down reads one entry at a time in either window. Fog of war is honoured:
+// parties use the same hidden/visibility test as mouse interaction, while settlements
+// and locations use the game's per-entity discovered flag.
 //
 // Key: b (code 12), free on the world map in vanilla (the map claims c/f/i/o/p/r/t and
 // G is our company status). Mutually exclusive with WorldStatus so Up/Down never has
-// two owners: opening one closes the other (done in the world_state hook). Enter acts
-// on the focused row: it pursues an enemy party, or approaches/enters a settlement or
-// location through the same AutoAttack/AutoEnterLocation funnels as a mouse click.
+// two owners. Enter acts on the focused row through the same AutoAttack /
+// AutoEnterLocation funnels as a mouse click.
 ::UnseenBanner.WorldSurvey <- {
 	m = {
 		Items = null,
 		ItemIndex = 0,
 		Active = false,
+		Mode = null, // "places" (B) or "parties" (Shift+B)
+		Section = "settlements", // places mode: "settlements" or "locations"
+		ToggleHeld = false,
+		ToggleShift = false,
 		// Detail mode: when non-null, V has drilled into the focused entity and Detail
 		// holds its flattened tooltip as its own navigable sub-list. The survey list and
 		// its index are kept underneath so V again restores exactly where the player was.
@@ -627,6 +625,10 @@
 		[45] = "home",
 		[44] = "end"
 	},
+	SectionKeys = {
+		[46] = true, // Page Up
+		[47] = true  // Page Down
+	},
 	// Radius of the party scan, in world units. 400 is the wide sweep the event and
 	// ambition managers use to find nearby parties (event_manager.nut), comfortably
 	// past the player's own vision radius; the isHiddenToPlayer filter below is what
@@ -636,19 +638,50 @@
 	{
 		return this.m.Active;
 	},
+	function isToggleHeld()
+	{
+		return this.m.ToggleHeld;
+	},
 	function handles(_code)
 	{
 		return _code == this.ToggleKey
 			|| (this.m.Active && (_code == this.InspectKey
-				|| _code == this.InteractKey || _code in this.MoveKeys));
+				|| _code == this.InteractKey || _code in this.MoveKeys
+				|| (this.m.Mode == "places" && _code in this.SectionKeys)));
+	},
+	function handlesOnPress(_code)
+	{
+		return this.m.Active && (_code in this.MoveKeys
+			|| (this.m.Mode == "places" && _code in this.SectionKeys));
 	},
 	function reset()
 	{
 		this.m.Items = null;
 		this.m.ItemIndex = 0;
 		this.m.Active = false;
+		this.m.Mode = null;
+		this.m.Section = "settlements";
+		this.m.ToggleHeld = false;
+		this.m.ToggleShift = false;
 		this.m.Detail = null;
 		this.m.DetailIndex = 0;
+	},
+	// Capture Shift on B press and act on B release. The engine reports modifiers on
+	// each key event independently, so remembering the press prevents releasing Shift
+	// first from turning an intended Shift+B into plain B.
+	function captureToggle(_shift)
+	{
+		if (this.m.ToggleHeld) return;
+		this.m.ToggleHeld = true;
+		this.m.ToggleShift = _shift;
+	},
+	function consumeToggleRelease()
+	{
+		if (!this.m.ToggleHeld) return null;
+		local shift = this.m.ToggleShift;
+		this.m.ToggleHeld = false;
+		this.m.ToggleShift = false;
+		return shift;
 	},
 	function inDetail()
 	{
@@ -677,26 +710,25 @@
 			return 0;
 		});
 	},
-	function open()
+	function collectParties(_player)
 	{
-		local player = ::World.State.getPlayer();
-		local playerTile = player.getTile();
-		local playerID = player.getID();
-		local playerPos = player.getPos();
-
 		// Visible parties: everything the mouse click would let you interact with —
 		// in sight (not hidden by fog), with non-zero visibility. Kind splits into
 		// ally / enemy (attackable and not allied) / neutral (a caravan, say).
 		local parties = [];
-		foreach( e in ::World.getAllEntitiesAtPos(playerPos, this.ScanRadius) )
+		foreach( e in ::World.getAllEntitiesAtPos(_player.getPos(), this.ScanRadius) )
 		{
-			if (e == null || !e.isParty() || e.getID() == playerID) continue;
+			if (e == null || !e.isParty() || e.getID() == _player.getID()) continue;
 			if (e.isHiddenToPlayer() || e.getVisibilityMult() <= 0.0) continue;
 			if (e.getTile() == null) continue;
-			parties.push({ e = e, d = playerTile.getDistanceTo(e.getTile()) });
+			parties.push({ e = e, d = _player.getTile().getDistanceTo(e.getTile()) });
 		}
 		this.sortByDistance(parties);
+		return parties;
+	},
 
+	function collectSettlements(_playerTile)
+	{
 		// Known settlements: static, so "discovered" (the game's own per-entity fog
 		// flag, isDiscovered — the one it gates onEnter and discovery events on) is the
 		// useful set for navigation. NB: the tile's IsDiscovered flag is a different
@@ -707,10 +739,14 @@
 		{
 			if (s == null || !s.isAlive() || s.getTile() == null) continue;
 			if (!s.isDiscovered()) continue;
-			settlements.push({ e = s, d = playerTile.getDistanceTo(s.getTile()) });
+			settlements.push({ e = s, d = _playerTile.getDistanceTo(s.getTile()) });
 		}
 		this.sortByDistance(settlements);
+		return settlements;
+	},
 
+	function collectLocations(_playerTile)
+	{
 		// Known, active locations (camps, ruins, legendary sites); undiscovered or
 		// inactive ones are left out for the same fog-of-war parity (roadmap 4.2).
 		local locations = [];
@@ -718,38 +754,83 @@
 		{
 			if (l == null || !l.isAlive() || !l.isActive() || l.getTile() == null) continue;
 			if (!l.isDiscovered()) continue;
-			locations.push({ e = l, d = playerTile.getDistanceTo(l.getTile()) });
+			locations.push({ e = l, d = _playerTile.getDistanceTo(l.getTile()) });
 		}
 		this.sortByDistance(locations);
+		return locations;
+	},
 
+	function openPlaces(_section = "settlements")
+	{
+		local player = ::World.State.getPlayer();
+		local playerTile = player.getTile();
+		local records = _section == "locations"
+			? this.collectLocations(playerTile)
+			: this.collectSettlements(playerTile);
 		local items = [];
-		// Header first: the three counts, so the player hears the shape of what is
-		// around before walking the list (parties|settlements|locations).
-		items.push(this.item("world.survey.screen", "", "",
-			parties.len() + "|" + settlements.len() + "|" + locations.len()));
-
-		// Parties first (threats matter most, mirroring the sonar hierarchy), then
-		// settlements, then locations; each group already nearest-first. Each row keeps a
-		// reference to its entity so V can pull the live tooltip on demand.
-		foreach( r in parties )
+		items.push(this.item("world.survey.places.screen", "", _section,
+			"" + records.len()));
+		foreach( r in records )
 		{
-			local e = r.e;
-			local kind = e.isAlliedWithPlayer() ? "ally" : (e.isAttackable() ? "enemy" : "neutral");
-			items.push(this.item("world.survey.item", e.getName(), kind, this.posDetail(playerTile, e.getTile()), e));
-		}
-		foreach( r in settlements )
-		{
-			items.push(this.item("world.survey.item", r.e.getName(), "settlement", this.posDetail(playerTile, r.e.getTile()), r.e));
-		}
-		foreach( r in locations )
-		{
-			items.push(this.item("world.survey.item", r.e.getName(), "location", this.posDetail(playerTile, r.e.getTile()), r.e));
+			items.push(this.item("world.survey.item", r.e.getName(),
+				_section == "locations" ? "location" : "settlement",
+				this.posDetail(playerTile, r.e.getTile()), r.e));
 		}
 
 		this.m.Items = items;
 		this.m.ItemIndex = 0;
 		this.m.Active = true;
+		this.m.Mode = "places";
+		this.m.Section = _section;
+		this.m.Detail = null;
+		this.m.DetailIndex = 0;
 		this.announceItem();
+	},
+	function openParties()
+	{
+		local player = ::World.State.getPlayer();
+		local playerTile = player.getTile();
+		local parties = this.collectParties(player);
+		if (parties.len() == 0)
+		{
+			this.reset();
+			::UnseenBanner.sendMessage("interrupt", "", "world.survey.parties.empty");
+			return;
+		}
+
+		local items = [];
+		items.push(this.item("world.survey.parties.screen", "", "",
+			"" + parties.len()));
+		foreach( r in parties )
+		{
+			local e = r.e;
+			local kind = e.isAlliedWithPlayer()
+				? "ally"
+				: (e.isAttackable() ? "enemy" : "neutral");
+			items.push(this.item("world.survey.item", e.getName(), kind,
+				this.posDetail(playerTile, e.getTile()), e));
+		}
+
+		this.m.Items = items;
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.m.Mode = "parties";
+		this.m.Detail = null;
+		this.m.DetailIndex = 0;
+		this.announceItem();
+	},
+	function toggle(_parties)
+	{
+		local mode = _parties ? "parties" : "places";
+		if (this.m.Active && this.m.Mode == mode)
+		{
+			this.close(true);
+			return;
+		}
+
+		this.reset();
+		if (_parties) this.openParties();
+		else this.openPlaces("settlements");
 	},
 	function close(_announce = false)
 	{
@@ -758,14 +839,18 @@
 	},
 	function onKey(_code, _state = null)
 	{
-		if (_code == this.ToggleKey)
+		if (!this.m.Active) return;
+
+		// Page Up/Down alternates the static-place window between its two categories.
+		// Either key is a toggle because there are exactly two; switching also exits an
+		// entity detail so the new category header is always the first announcement.
+		if (this.m.Mode == "places" && _code in this.SectionKeys)
 		{
-			if (this.m.Active) this.close(true);
-			else this.open();
+			this.openPlaces(this.m.Section == "settlements"
+				? "locations"
+				: "settlements");
 			return;
 		}
-
-		if (!this.m.Active) return;
 
 		// V drills into the focused entity, or backs out of the detail sub-list.
 		if (_code == this.InspectKey)
@@ -964,7 +1049,8 @@
 		Continuous = false, // Shift-latched march: ignore the key release, walk on
 		Pending = false,   // a step path is in flight (we set it, not yet arrived)
 		Blocked = false,   // the current heading hit a wall; hold intent but stop trying
-		LastTerrain = -1,  // last terrain type announced, so only changes are spoken
+		LastTileID = -1,   // global player-tile observer, including native/autowalk paths
+		LastTerrain = -1,  // last terrain type observed, so only changes are spoken
 		SelfUnpause = false // set while WE unpause to move, so the pause hook stays quiet
 	},
 	// Engine key code -> hex direction (Const.Direction: N=0, NE=1, SE=2, S=3, SW=4,
@@ -1005,6 +1091,7 @@
 		this.m.Continuous = false;
 		this.m.Pending = false;
 		this.m.Blocked = false;
+		this.m.LastTileID = -1;
 		this.m.LastTerrain = -1;
 		this.m.SelfUnpause = false;
 	},
@@ -1014,6 +1101,12 @@
 		this.m.HeadingKey = -1;
 		this.m.Continuous = false;
 		this.m.Blocked = false;
+	},
+	function primeTerrain(_player)
+	{
+		if (_player == null || _player.getTile() == null) return;
+		this.m.LastTileID = _player.getTile().ID;
+		this.m.LastTerrain = _player.getTile().Type;
 	},
 	// Start one hex step in _dir via the navigator, mirroring the mouse click's own
 	// settings. Returns true if a step is now in flight; false (with an announcement)
@@ -1065,9 +1158,8 @@
 	// step is already in flight, start one now. The key auto-repeats while held (that
 	// is how the vanilla camera pans): a repeat of the same key must not start a second
 	// step nor re-announce a wall, so it is a no-op while a step is pending or the way
-	// is already known blocked. LastTerrain being -1 marks "idle", so the origin tile
-	// is captured once at the start of a fresh move and only later terrain changes are
-	// spoken.
+	// is already known blocked. A fresh world state primes the global terrain observer
+	// here if its first update has not done so yet.
 	function onDirKey(_code, _shift)
 	{
 		local isRepeat = (_code == this.m.HeadingKey);
@@ -1081,7 +1173,7 @@
 		if (this.m.LastTerrain == -1)
 		{
 			local player = ::World.State.getPlayer();
-			if (player != null) this.m.LastTerrain = player.getTile().Type;
+			this.primeTerrain(player);
 		}
 		this.m.Blocked = !this.issueStep(this.m.Heading);
 	},
@@ -1090,7 +1182,8 @@
 	// the key that owns the current heading clears it, so releasing an older key does
 	// not cancel a newer heading. If nothing is in flight (idle, or stuck at a wall
 	// already announced), just go quiet — the completion cue only fires for a step that
-	// was actually travelling (handled in onArrived).
+	// was actually travelling (handled in onArrived). Terrain observation remains
+	// primed while idle so a later native/autowalk order starts from the right baseline.
 	function onRelease(_code)
 	{
 		if (_code == this.m.HeadingKey && !this.m.Continuous)
@@ -1098,7 +1191,6 @@
 			this.m.Heading = -1;
 			this.m.HeadingKey = -1;
 			this.m.Blocked = false;
-			if (!this.m.Pending) this.m.LastTerrain = -1;
 		}
 	},
 	// Space (and the other pause keys): stop the march at once. Silent on purpose — the
@@ -1118,21 +1210,42 @@
 		}
 		this.clearHeading();
 		this.m.Pending = false;
-		this.m.LastTerrain = -1;
+		this.primeTerrain(player);
 		return true;
 	},
-	// Polled from world_state.onUpdate every frame, but only while a step is in flight.
-	// The party clears its path on arrival, so !hasPath() is the "step landed" signal.
+	// Polled from world_state.onUpdate every frame. Terrain observation is global, not
+	// conditional on Pending: paths started with B+Enter, mouse clicks, contracts or
+	// native pursuit all move the same player party and must announce transitions too.
+	// The second half still handles completion/chaining only for our directional steps.
 	function tick()
 	{
-		if (!this.m.Pending) return;
-
 		local player = ::World.State.getPlayer();
 		if (player == null)
 		{
 			this.m.Pending = false;
 			return;
 		}
+
+		local tile = player.getTile();
+		if (tile != null)
+		{
+			if (this.m.LastTileID == -1)
+			{
+				this.primeTerrain(player);
+			}
+			else if (tile.ID != this.m.LastTileID)
+			{
+				this.m.LastTileID = tile.ID;
+				if (tile.Type != this.m.LastTerrain)
+				{
+					this.m.LastTerrain = tile.Type;
+					::UnseenBanner.sendMessage("interrupt", "",
+						"world.move.step", "" + tile.Type);
+				}
+			}
+		}
+
+		if (!this.m.Pending) return;
 		if (player.hasPath()) return; // still walking to the step tile
 
 		this.m.Pending = false;
@@ -1142,14 +1255,8 @@
 	{
 		if (this.m.Heading != -1)
 		{
-			// Still walking: announce the tile only when the terrain changes (so a long
-			// march does not read the same word every tile), then take the next step.
-			local t = _player.getTile().Type;
-			if (t != this.m.LastTerrain)
-			{
-				this.m.LastTerrain = t;
-				::UnseenBanner.sendMessage("interrupt", "", "world.move.step", "" + t);
-			}
+			// Still walking: the global tile observer above has already announced any
+			// terrain transition, so only issue the next directional step here.
 			// Hit a wall while still holding the heading: issueStep already said
 			// "blocked"; mark it so the held key does not retry every frame, and keep the
 			// intent so a change of direction (or release) resolves it. No "stopped" cue —
@@ -1161,7 +1268,7 @@
 			// Order complete (a single tap, or the key was released): the distinct cue
 			// that tells the player the order finished.
 			this.announceStopped(_player);
-			this.m.LastTerrain = -1;
+			this.primeTerrain(_player);
 		}
 	},
 	function announceStopped(_player)
@@ -1198,6 +1305,9 @@
 	{
 		// Keyboard travel is an executable order, like WorldMove's directional step:
 		// unpause it so "Approaching/Pursuing" never leaves the party silently parked.
+		// stopCurrentOrder resets movement bookkeeping first, so prime the terrain
+		// observer at the origin before the native route advances.
+		::UnseenBanner.WorldMove.primeTerrain(_state.m.Player);
 		if (_state.isPaused())
 		{
 			::UnseenBanner.WorldMove.m.SelfUnpause = true;
@@ -7480,15 +7590,11 @@
 			return true;
 		}
 
-		// Map readouts, only on the plain map: G toggles the company status list (4.4),
-		// B toggles the "what's in view" survey list (4.3); Up/Down move through the
-		// open one, all on release. Consume both key states so vanilla camera movement
-		// never competes with list navigation. The two lists are mutually exclusive —
-		// opening or acting on one closes the other — so Up/Down always has a single
-		// owner. Any unrelated map action closes both before passing through, so arrows
-		// cannot remain captured after the player resumes normal play. "Map free" also
-		// requires the character, town and Retinue screens to be down, so map keys
-		// never fire inside any of those modal surfaces.
+		// Map readouts, only on the plain map: G toggles company status; B opens
+		// settlements/locations and Shift+B opens visible parties. Up/Down move through
+		// the open list. The readouts are mutually exclusive, so navigation always has a
+		// single owner. "Map free" also requires character, town and Retinue screens to
+		// be down, so these keys never fire inside modal surfaces.
 		local mapFree = !::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive()
 			&& !::UnseenBanner.WorldCombatDialogNav.isActive()
 			&& !this.isInCharacterScreen()
@@ -7541,12 +7647,53 @@
 			return true;
 		}
 
+		// Remember Shift on B press, then toggle the requested explorer on release.
+		// This survives the common release order B-after-Shift without opening the
+		// wrong window. Both states are consumed so vanilla never sees half a B press.
+		if (code == ::UnseenBanner.WorldSurvey.ToggleKey
+			&& (mapFree || ::UnseenBanner.WorldSurvey.isToggleHeld()))
+		{
+			if (_key.getState() == 1 && mapFree)
+			{
+				::UnseenBanner.WorldSurvey.captureToggle(
+					(_key.getModifier() & 1) != 0);
+			}
+			else if (_key.getState() == 0)
+			{
+				local parties = ::UnseenBanner.WorldSurvey.consumeToggleRelease();
+				if (parties != null && mapFree)
+				{
+					::UnseenBanner.WorldStatus.reset();
+					::UnseenBanner.WorldSurvey.toggle(parties);
+				}
+			}
+			return true;
+		}
+
 		if (mapFree && ::UnseenBanner.WorldSurvey.handles(code))
 		{
-			if (_key.getState() == 0)
+			local onPress = ::UnseenBanner.WorldSurvey.handlesOnPress(code);
+			if (_key.getState() == 1 && onPress)
 			{
-				::UnseenBanner.WorldStatus.reset();
-				::UnseenBanner.WorldSurvey.onKey(code, this);
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldStatus.reset();
+					::UnseenBanner.WorldSurvey.onKey(code, this);
+				}
+			}
+			else if (_key.getState() == 0)
+			{
+				if (onPress)
+				{
+					::UnseenBanner.KeyGate.release(code);
+				}
+				else
+				{
+					// V and Enter remain release-driven: both can change modal/action
+					// state, so their press must never immediately leak into that state.
+					::UnseenBanner.WorldStatus.reset();
+					::UnseenBanner.WorldSurvey.onKey(code, this);
+				}
 			}
 
 			return true;
