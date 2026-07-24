@@ -537,6 +537,7 @@ namespace TheUnseenBanner.Companion
             ["combat.dialog.button.confirm"] = "Yes, button.",
             ["combat.dialog.button.confirm.mono"] = "Ok, button.",
             ["combat.dialog.button.cancel"] = "No, button.",
+            ["combat.tactical.dialog.button"] = "{0}, button.",
             // World-map company/campaign list (phase 4.4, G then Up/Down).
             ["world.status.screen"] = "Company status. Use Up and Down to review. Press G to close.",
             ["world.status.closed"] = "Company status closed.",

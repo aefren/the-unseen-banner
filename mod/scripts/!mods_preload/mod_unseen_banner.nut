@@ -18,6 +18,7 @@
 	SheetNav = null,
 	WorldCombatDialogNav = null,
 	DialogNav = null,
+	TacticalDialogNav = null,
 	TooltipNav = null
 };
 
@@ -2041,10 +2042,13 @@
 		this.m.Screen = _screen;
 		this.m.Module = _module;
 		this.m.Brothers = [];
-		local formation = ::World.Assets.getFormation();
-		if (formation != null)
+		// Comparison only needs the live company roster. Formation is unrelated
+		// to trading and getFormation() throws while a new brother still has the
+		// sentinel position 255 instead of a slot in its 27-entry result.
+		local roster = ::World.getPlayerRoster().getAll();
+		if (roster != null)
 		{
-			foreach( bro in formation )
+			foreach( bro in roster )
 			{
 				if (bro != null) this.m.Brothers.push(bro);
 			}
@@ -6233,6 +6237,139 @@
 	}
 };
 
+// Tactical choice dialog. This is a separate screen from the generic dialog_screen:
+// it presents the player's retreat confirmation and the mid-battle "The Enemy
+// Retreats" decision. Both are mouse-only in vanilla and park a MenuStack backstep,
+// so flatten the live title/body/button labels into a keyboard list. Enter invokes
+// the focused native callback; Escape chooses the secondary action (or the sole
+// primary action when no secondary callback exists).
+::UnseenBanner.TacticalDialogNav = {
+	m = {
+		Screen = null,
+		Items = null,
+		ItemIndex = 0,
+		Title = "",
+		Subtitle = "",
+		Text = "",
+		YesLabel = "",
+		NoLabel = "",
+		HasNo = false,
+		Active = false
+	},
+	Keys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end",
+		[39] = "activate",
+		[41] = "cancel"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function handles(_code)
+	{
+		return this.m.Active && _code in this.Keys;
+	},
+	function reset()
+	{
+		this.m.Screen = null;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Title = "";
+		this.m.Subtitle = "";
+		this.m.Text = "";
+		this.m.YesLabel = "";
+		this.m.NoLabel = "";
+		this.m.HasNo = false;
+		this.m.Active = false;
+	},
+	function item(_cat, _texto = "", _valor = "", _action = null)
+	{
+		return { cat = _cat, texto = _texto, valor = _valor, action = _action };
+	},
+	function prime(_screen, _title, _subtitle, _text, _yesLabel, _noLabel, _hasNo)
+	{
+		this.reset();
+		this.m.Screen = _screen;
+		this.m.Title = _title == null ? "" : _title;
+		this.m.Subtitle = _subtitle == null ? "" : _subtitle;
+		this.m.Text = _text == null ? "" : _text;
+		this.m.YesLabel = _yesLabel == null ? "" : _yesLabel;
+		this.m.NoLabel = _noLabel == null ? "" : _noLabel;
+		this.m.HasNo = _hasNo;
+	},
+	function open()
+	{
+		if (this.m.Screen == null) return;
+		local heading = this.m.Title;
+		if (this.m.Subtitle != "")
+		{
+			heading += (heading == "" ? "" : ". ") + this.m.Subtitle;
+		}
+		this.m.Items = [
+			this.item("combat.dialog.screen", this.m.Text, heading),
+			this.item("combat.tactical.dialog.button", this.m.YesLabel, "", "yes")
+		];
+		if (this.m.HasNo)
+		{
+			this.m.Items.push(
+				this.item("combat.tactical.dialog.button", this.m.NoLabel, "", "no"));
+		}
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.announceItem();
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function onKey(_code)
+	{
+		local what = this.Keys[_code];
+		if (what == "up" || what == "down" || what == "home" || what == "end")
+			this.move(what);
+		else if (what == "activate")
+			this.activate();
+		else if (what == "cancel")
+			this.cancel();
+	},
+	function move(_direction)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		if (_direction == "up") this.m.ItemIndex -= 1;
+		else if (_direction == "down") this.m.ItemIndex += 1;
+		else if (_direction == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function activate()
+	{
+		if (this.m.Screen == null || this.m.Items == null || this.m.Items.len() == 0)
+			return;
+		local action = this.m.Items[this.m.ItemIndex].action;
+		if (action == "yes") this.m.Screen.onYesPressed();
+		else if (action == "no") this.m.Screen.onNoPressed();
+		else this.announceItem();
+	},
+	function cancel()
+	{
+		if (this.m.Screen == null) return;
+		if (this.m.HasNo) this.m.Screen.onNoPressed();
+		else this.m.Screen.onYesPressed();
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor);
+	}
+};
+
 // Key-repeat gate for our tactical hotkeys. During active combat the engine
 // swallows the RELEASE event (state 0) of any key that still carries a native
 // binding — camera pan (Q/W/E/A/S/D), overlay toggles (T/B), brother switch
@@ -6566,6 +6703,32 @@
 	{
 		__original();
 		::UnseenBanner.CombatResult.close();
+	}
+});
+
+// TacticalDialogScreen is distinct from the shared DialogScreen and carries its
+// own live button labels. Capture them at show(), announce only after the opening
+// animation completes, and clear the cursor when either native callback hides it.
+::UnseenBanner.Mod.hook("scripts/ui/screens/tactical/tactical_dialog_screen", function(q) {
+	q.show = @(__original) function( _title, _subTitle, _text, _yesButton,
+		_noButton, _yesCallback, _noCallback = null )
+	{
+		::UnseenBanner.TacticalDialogNav.prime(this, _title, _subTitle, _text,
+			_yesButton, _noButton, _noCallback != null);
+		__original(_title, _subTitle, _text, _yesButton, _noButton,
+			_yesCallback, _noCallback);
+	}
+
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.TacticalDialogNav.open();
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.TacticalDialogNav.close();
 	}
 });
 
@@ -7075,6 +7238,7 @@
 		::UnseenBanner.SheetNav.reset();
 		::UnseenBanner.CombatResult.reset();
 		::UnseenBanner.DialogNav.reset();
+		::UnseenBanner.TacticalDialogNav.reset();
 		::UnseenBanner.KeyGate.reset();
 		// A battle starting clears the party's world path, so drop any in-flight world
 		// march here — otherwise Pending would be left stale and fire a spurious
@@ -7087,6 +7251,7 @@
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.CombatResult.reset();
 		::UnseenBanner.DialogNav.reset();
+		::UnseenBanner.TacticalDialogNav.reset();
 		__original();
 	}
 
@@ -7105,6 +7270,22 @@
 			if (_key.getState() == 0)
 			{
 				::UnseenBanner.CombatResult.onKey(code, this);
+			}
+			return true;
+		}
+
+		// Tactical choice dialog (player retreat and enemy-retreat decision). This
+		// screen is independent from DialogScreen, hides the tactical UI and leaves
+		// a MenuStack backstep, so intercept it before every ordinary combat cursor.
+		// Releases reach this outer hook while vanilla considers the modal active.
+		if (this.m.TacticalDialogScreen != null
+			&& this.m.TacticalDialogScreen.isVisible()
+			&& !this.m.TacticalDialogScreen.isAnimating()
+			&& ::UnseenBanner.TacticalDialogNav.handles(code))
+		{
+			if (_key.getState() == 0)
+			{
+				::UnseenBanner.TacticalDialogNav.onKey(code);
 			}
 			return true;
 		}
