@@ -3588,6 +3588,9 @@
 		InspectItems = null,
 		InspectIndex = 0,
 		InspectMenuActive = false,
+		// Engine code of the key that closed the inspect list on its press, so its
+		// own release can be swallowed instead of leaking into vanilla (-1 = none).
+		PendingRelease = -1,
 		// Skill armed on the active man while the cursor is being moved, so the
 		// readout can add "valid target, N% to hit" for the tile under it. Set
 		// afresh from tactical_state on every key, null when nothing is armed.
@@ -3657,8 +3660,24 @@
 	{
 		return this.m.InspectMenuActive;
 	},
+	// The inspect list closes on the key PRESS (KeyGate cadence), so by the time the
+	// matching release arrives the list is already down and the "consume every key"
+	// branch that shielded it is gone. Vanilla then acts on that release: Escape's
+	// opened the tactical pause menu right after our list closed. Remember the
+	// closing key and swallow exactly its release, nothing else.
+	function armReleaseSwallow(_code)
+	{
+		this.m.PendingRelease = _code;
+	},
+	function consumeReleaseSwallow(_code)
+	{
+		if (this.m.PendingRelease != _code) return false;
+		this.m.PendingRelease = -1;
+		return true;
+	},
 	function reset()
 	{
+		this.m.PendingRelease = -1;
 		this.closeInspectMenu(false);
 		this.m.CursorTile = null;
 		this.m.LastActiveID = -1;
@@ -4184,6 +4203,7 @@
 			|| (_shift && (_code in this.InspectKeys)))
 		{
 			this.closeInspectMenu(true);
+			this.armReleaseSwallow(_code);
 			return;
 		}
 
@@ -6870,6 +6890,18 @@
 	[51] = "down"
 };
 
+// Bare modifiers. The engine delivers them as ordinary key events of their own,
+// so a Shift+key combination reaches a state's onKeyInput as four events, the
+// last of them the Shift release — after the combination has already done its
+// work. Anything that closes/resets on an unrecognized key must skip these, or a
+// Shift-armed action tears down what it just opened (Shift+B's party explorer
+// vanished on the Shift release, before Up/Down could reach it).
+::UnseenBanner.ModifierKeys <- {
+	[95] = true, // ctrl
+	[96] = true, // shift
+	[97] = true  // alt
+};
+
 // Left / Right are adjustment keys only inside Options. Keeping them out of the
 // shared KeyCodes table prevents the event cursor and New Campaign flow from
 // stealing native horizontal input they do not handle.
@@ -7736,8 +7768,16 @@
 			if (::UnseenBanner.WorldEnter.tryEnter(this)) return true;
 		}
 
-		if (::UnseenBanner.WorldStatus.isActive()) ::UnseenBanner.WorldStatus.reset();
-		if (::UnseenBanner.WorldSurvey.isActive()) ::UnseenBanner.WorldSurvey.reset();
+		// Any other key closes an open readout — the player moved on to something
+		// else. A bare modifier is not "something else": it is half of the very
+		// combination that opened the list (Shift+B), and its release lands after the
+		// list is up, so acting on it would close the explorer the player just asked
+		// for and leave Up/Down with no owner.
+		if (!(code in ::UnseenBanner.ModifierKeys))
+		{
+			if (::UnseenBanner.WorldStatus.isActive()) ::UnseenBanner.WorldStatus.reset();
+			if (::UnseenBanner.WorldSurvey.isActive()) ::UnseenBanner.WorldSurvey.reset();
+		}
 
 		return __original(_key);
 	}
@@ -7913,6 +7953,16 @@
 			// Consume every key while the list is open. Unrelated bindings must
 			// never pan the camera, arm a skill or silently destroy the menu state;
 			// Shift+V and Escape are its explicit exits.
+			return true;
+		}
+
+		// The list is already closed here, but the key that closed it (on its press)
+		// still owes a release. Swallow that one so it cannot reach vanilla: Escape's
+		// release opens the pause menu, right on top of the battlefield we returned to.
+		if (_key.getState() == 0
+			&& ::UnseenBanner.TileCursor.consumeReleaseSwallow(code))
+		{
+			::UnseenBanner.KeyGate.release(code);
 			return true;
 		}
 
