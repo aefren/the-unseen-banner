@@ -623,6 +623,14 @@ namespace TheUnseenBanner.Companion
             // Pause state, announced from the setPause funnel (Space, pause button...).
             ["world.pause.on"] = "Paused.",
             ["world.pause.off"] = "Unpaused.",
+            // Camping state. T changes it; Shift+T reports the state and explains
+            // the trade-offs without changing anything.
+            ["world.camp.on"] = "Encamped.",
+            ["world.camp.off"] = "Camp broken.",
+            ["world.camp.unavailable"] = "Camping is unavailable while travelling with another party.",
+            ["world.camp.info.on"] = "Camping is active. Time passes at triple speed, and brothers heal and repair equipment fifty percent faster. The company has reduced vision, is easier to spot, and may be caught without a chance to rearrange its formation. Press T to break camp.",
+            ["world.camp.info.off"] = "Camping is inactive. While encamped, time passes at triple speed, and brothers heal and repair equipment fifty percent faster. The company has reduced vision, is easier to spot, and may be caught without a chance to rearrange its formation. Press T to make camp.",
+            ["world.camp.info.unavailable"] = "Camping is inactive and unavailable while travelling with another party.",
             // Obituary (phase 5.2, O). The visual table becomes a navigable list:
             // one header plus one complete spoken row per fallen brother.
             ["world.obituary.screen.empty"] = "Obituary. No one has fallen since you took command. Press O or Escape to close.",

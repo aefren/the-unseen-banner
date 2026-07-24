@@ -881,6 +881,60 @@
 	}
 };
 
+// Camping is a world-map state, not a modal screen. Vanilla T and the topbar
+// button both funnel through world_state.onCamp(), but their only feedback is
+// visual: the party turns into a camp and the shared PAUSED label becomes
+// ENCAMPED. Announce every genuine state change from that funnel. Shift+T is an
+// on-demand explanation that never changes the state; DetailsHeld consumes its
+// eventual T release even if Shift itself is released first, so the release
+// cannot leak into vanilla and accidentally make or break camp.
+::UnseenBanner.WorldCamp <- {
+	Key = 30, // t
+	m = {
+		DetailsHeld = false
+	},
+	function reset()
+	{
+		this.m.DetailsHeld = false;
+	},
+	function handles(_code)
+	{
+		return _code == this.Key;
+	},
+	function onDetailsPress(_state)
+	{
+		if (this.m.DetailsHeld) return;
+		this.m.DetailsHeld = true;
+		this.announceDetails(_state);
+	},
+	function consumeDetailsRelease()
+	{
+		if (!this.m.DetailsHeld) return false;
+		this.m.DetailsHeld = false;
+		return true;
+	},
+	function announceDetails(_state)
+	{
+		local category;
+		if (_state.World.Assets.isCamping())
+			category = "world.camp.info.on";
+		else if (!_state.isCampingAllowed())
+			category = "world.camp.info.unavailable";
+		else
+			category = "world.camp.info.off";
+		::UnseenBanner.sendMessage("interrupt", "", category);
+	},
+	function announceUnavailable()
+	{
+		::UnseenBanner.sendMessage("interrupt", "", "world.camp.unavailable");
+	},
+	function announceChanged(_isCamping)
+	{
+		::UnseenBanner.sendMessage("interrupt", "",
+			_isCamping ? "world.camp.on" : "world.camp.off");
+	}
+};
+
 // World-map directional movement (phase 4.0). The overworld is hexagonal like the
 // battlefield (6 neighbours), so the party is walked with the same Q/W/E/A/S/D
 // cluster the tactical tile cursor uses (W=N, E=NE, D=SE, S=S, A=SW, Q=NW). Each
@@ -990,6 +1044,10 @@
 			return false;
 		}
 
+		// A native map click breaks camp before assigning its path. Our keyboard
+		// navigator bypasses onMouseInput, so mirror that transition explicitly;
+		// world_state.onCamp remains the single state-change and speech funnel.
+		if (::World.Assets.isCamping()) ::World.State.onCamp();
 		player.setPath(path);
 		this.m.Pending = true;
 
@@ -7078,6 +7136,7 @@
 		::UnseenBanner.WorldStatus.reset();
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
+		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
@@ -7094,6 +7153,7 @@
 		::UnseenBanner.WorldStatus.reset();
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
+		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
@@ -7110,6 +7170,7 @@
 		::UnseenBanner.WorldStatus.reset();
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
+		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
@@ -7141,6 +7202,18 @@
 	{
 		__original();
 		::UnseenBanner.WorldMove.tick();
+	}
+
+	// Both T and the clickable topbar button reach this funnel; native movement
+	// also uses it to leave camp. Compare around the original so only a real
+	// transition is announced, never a rejected or redundant request.
+	q.onCamp = @(__original) function()
+	{
+		local wasCamping = this.World.Assets.isCamping();
+		__original();
+		local isCamping = this.World.Assets.isCamping();
+		if (isCamping != wasCamping)
+			::UnseenBanner.WorldCamp.announceChanged(isCamping);
 	}
 
 	// Announce pause/unpause (phase 4.0 companion request). setPause is the one funnel
@@ -7421,6 +7494,41 @@
 			&& !this.isInCharacterScreen()
 			&& !this.m.WorldTownScreen.isVisible()
 			&& (this.m.CampfireScreen == null || !this.m.CampfireScreen.isVisible());
+
+		// T keeps its native make/break-camp behavior. Shift+T is a read-only
+		// explanation; consume both states so vanilla never sees its release.
+		// Vanilla filters a disallowed T before onCamp(), so report that rejected
+		// keyboard request here instead of relying on the state-change hook.
+		if (mapFree && ::UnseenBanner.WorldCamp.handles(code))
+		{
+			local shift = (_key.getModifier() & 1) != 0;
+			if (_key.getState() == 1 && shift)
+			{
+				::UnseenBanner.WorldStatus.reset();
+				::UnseenBanner.WorldSurvey.reset();
+				::UnseenBanner.WorldCamp.onDetailsPress(this);
+				return true;
+			}
+			else if (_key.getState() == 0
+				&& ::UnseenBanner.WorldCamp.consumeDetailsRelease())
+			{
+				return true;
+			}
+			else if (_key.getState() == 0 && shift)
+			{
+				::UnseenBanner.WorldStatus.reset();
+				::UnseenBanner.WorldSurvey.reset();
+				::UnseenBanner.WorldCamp.announceDetails(this);
+				return true;
+			}
+			else if (_key.getState() == 0 && !this.isCampingAllowed())
+			{
+				::UnseenBanner.WorldStatus.reset();
+				::UnseenBanner.WorldSurvey.reset();
+				::UnseenBanner.WorldCamp.announceUnavailable();
+				return true;
+			}
+		}
 
 		if (mapFree && ::UnseenBanner.WorldStatus.handles(code))
 		{
