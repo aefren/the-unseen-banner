@@ -4727,7 +4727,8 @@
 			|| (_code == this.ActionKey
 				&& (this.m.ActionMode || this.isTacticalBagRow()
 					|| (this.m.WorldMode && (this.isInventorySection()
-						|| this.isIdentityRow() || this.isFormationSection()))))
+						|| this.isIdentityRow() || this.isFormationSection()
+						|| this.isPerksSection()))))
 			|| (_code == this.CancelKey && this.m.FormationMoveMode)
 			|| (this.m.WorldMode && _code in this.SectionKeys)
 			|| (_code in this.NextKeys)
@@ -5014,6 +5015,11 @@
 	{
 		local section = this.currentSection();
 		return this.m.WorldMode && section != null && section.id == "formation";
+	},
+	function isPerksSection()
+	{
+		local section = this.currentSection();
+		return this.m.WorldMode && section != null && section.id == "perks";
 	},
 	function isIdentityRow()
 	{
@@ -5367,6 +5373,19 @@
 		local payload = _row != null ? _row.payload : null;
 		local actions = [];
 
+		// A perk is offered only when it can actually be taken. Every other state
+		// (already acquired, tier still locked, no points left) is reported by the
+		// row itself, so there is nothing to put in a menu.
+		if (payload != null && payload.source == "perk")
+		{
+			if (payload.state == "available")
+			{
+				actions.push(this.action("unlock_perk", "unlock_perk", "unlock_perk",
+					payload.perkName, payload));
+			}
+			return actions;
+		}
+
 		if (payload != null && payload.source == "commands")
 		{
 			actions.push(this.action("sort", "sort", "sort", "", payload));
@@ -5424,7 +5443,7 @@
 	function openActions()
 	{
 		local canOpen = this.m.WorldMode
-			? this.isInventorySection()
+			? (this.isInventorySection() || this.isPerksSection())
 			: this.isTacticalBagRow();
 		if (!canOpen || this.m.Items == null || this.m.Items.len() == 0) return;
 
@@ -5434,7 +5453,28 @@
 		local actions = this.buildActions(row);
 		if (actions.len() == 0)
 		{
-			::UnseenBanner.sendMessage("interrupt", row.texto, "world.inventory.actions.none");
+			// Say why Enter did nothing in the vocabulary of what is under the
+			// cursor: for a perk that is its own state, and the points summary is
+			// a readout, not something that can be acted on at all.
+			// Sheet rows are built by a different helper and carry no payload field
+			// at all, so this must test for the field before reading it.
+			local source = ("payload" in row) && row.payload != null
+				? row.payload.source : "";
+			if (source == "perk")
+			{
+				::UnseenBanner.sendMessage("interrupt", row.texto,
+					"world.character.perk.actions.none", row.valor);
+			}
+			else if (source == "perk_summary")
+			{
+				::UnseenBanner.sendMessage("interrupt", "",
+					"world.character.perks.summary.no_action");
+			}
+			else
+			{
+				::UnseenBanner.sendMessage("interrupt", row.texto,
+					"world.inventory.actions.none");
+			}
 			return;
 		}
 
@@ -5502,6 +5542,14 @@
 
 		switch(action.execute)
 		{
+		// The screen's own endpoint, not entity.unlockPerk directly: it is the
+		// funnel that validates the entity, spends the point and rolls back on
+		// failure, exactly as clicking the perk in the tree would.
+		case "unlock_perk":
+			result = _screen.onUnlockPerk([bro.getID(), payload.perkID]);
+			success = this.mutationSucceeded(result);
+			break;
+
 		case "equip_stash":
 		case "use_stash":
 			result = _screen.onEquipInventoryItem([
@@ -5595,8 +5643,20 @@
 		{
 			this.buildWorldSections(saved);
 			this.activateSection(oldSection, false, false);
-			::UnseenBanner.sendMessage("interrupt", action.name,
-				"world.inventory.result." + action.result);
+			if (payload != null && payload.source == "perk")
+			{
+				// Read back the points that are left, from live state after the
+				// rebuild: how many remain is the next thing the player needs to
+				// decide whether to keep spending.
+				::UnseenBanner.sendMessage("interrupt", action.name,
+					"world.character.perk.result." + action.result,
+					bro != null ? "" + bro.getPerkPoints() : "");
+			}
+			else
+			{
+				::UnseenBanner.sendMessage("interrupt", action.name,
+					"world.inventory.result." + action.result);
+			}
 		}
 		else
 		{
@@ -5926,6 +5986,11 @@
 		if (bro == null || !::isKindOf(bro, "player")) return rows;
 		local spent = bro.getPerkPointsSpent();
 		local points = bro.getPerkPoints();
+		// Unspent perk points lead the section: they decide whether walking the
+		// tree is worth anything at all, and the native screen only shows them as
+		// a number floating next to the trees, where nothing can reach it.
+		rows.push(this.row("perk:summary", "world.character.perks.summary",
+			"", "" + points, "" + spent, [], { source = "perk_summary" }));
 		foreach( rowIndex, perkRow in ::Const.Perks.Perks )
 		{
 			foreach( perk in perkRow )
@@ -5934,7 +5999,13 @@
 				if (bro.hasPerk(perk.ID)) state = "acquired";
 				else if (spent >= perk.Unlocks) state = points > 0 ? "available" : "no_points";
 				rows.push(this.row("perk:" + perk.ID, "world.character.perk",
-					perk.Name, state, "" + (rowIndex + 1), [this.perkDetail(bro, perk)]));
+					perk.Name, state, "" + (rowIndex + 1), [this.perkDetail(bro, perk)],
+					{
+						source = "perk",
+						perkID = perk.ID,
+						perkName = perk.Name,
+						state = state
+					}));
 			}
 		}
 		return rows;

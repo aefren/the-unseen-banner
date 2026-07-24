@@ -171,6 +171,12 @@ namespace TheUnseenBanner.Companion
                     string key when key.StartsWith("world.recruit.result.", StringComparison.Ordinal)
                         => L10n.F(key, texto, valor, detalle),
                     "world.character.perk" => ComposeWorldPerk(texto, valor, detalle),
+                    "world.character.perks.summary" => L10n.F(categoria, valor, detalle),
+                    "world.character.perks.summary.no_action" => L10n.T(categoria),
+                    "world.character.perk.actions.none" => L10n.F(categoria, texto,
+                        L10n.T("world.character.perk.state." + valor)),
+                    string key when key.StartsWith("world.character.perk.result.",
+                        StringComparison.Ordinal) => L10n.F(key, texto, valor),
                     "world.character.formation.summary" => ComposeFormationSummary(valor, detalle),
                     "world.character.formation.slot" => ComposeFormationSlot(texto, valor, detalle),
                     "world.character.formation.target" => ComposeFormationTarget(texto, valor, detalle),
