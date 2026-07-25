@@ -505,6 +505,26 @@ namespace TheUnseenBanner.Companion
             ["world.character.formation.error.stale"] = "The formation changed. The pending move was cancelled; review the updated slots.",
             ["world.character.formation.error.unavailable"] = "The formation move could not be completed. Review the updated slots and try again.",
             ["world.character.formation.details"] = "Brother details",
+            // Dismissing a brother (Delete on the identity row). Vanilla speaks of
+            // dismissing a man and paying him compensation, and of freeing a man and
+            // paying reparations when he draws no wage; both wordings are kept.
+            ["world.character.dismiss.hint"] = "Press Delete to dismiss from the company.",
+            ["world.character.dismiss.opened"] = "Really dismiss {0}? {0} leaves permanently and their equipment goes to the stash. {1}",
+            ["world.character.dismiss.opened.free"] = "Really free {0}? {0} leaves permanently and their equipment goes to the stash. {1}",
+            ["world.character.dismiss.option.cancel"] = "Cancel, keep {0}.",
+            ["world.character.dismiss.option.plain"] = "Dismiss {0} without paying anything.",
+            ["world.character.dismiss.option.plain.free"] = "Free {0} without paying anything.",
+            ["world.character.dismiss.option.paid"] = "Dismiss {0} and pay {1} crowns in compensation, sparing the company the loss of mood. You have {2} crowns.",
+            ["world.character.dismiss.option.paid.free"] = "Free {0} and pay {1} crowns in reparations. You have {2} crowns.",
+            ["world.character.dismiss.position"] = "Choice {0} of {1}.",
+            ["world.character.dismiss.cancelled"] = "{0} stays in the company.",
+            ["world.character.dismiss.done"] = "{0} has been dismissed. {1} brothers left in the company.",
+            ["world.character.dismiss.done.paid"] = "{0} has been dismissed and paid {1} crowns. {2} brothers left in the company, {3} crowns.",
+            ["world.character.dismiss.failed"] = "{0} could not be dismissed. Nothing changed.",
+            ["world.character.dismiss.blocked.last"] = "{0} is your last brother; the company cannot be left without anyone.",
+            ["world.character.dismiss.blocked.player"] = "{0} is you, and cannot be dismissed.",
+            ["world.character.dismiss.blocked.tactical"] = "Nobody can be dismissed during a battle.",
+            ["world.character.dismiss.blocked.none"] = "There is no brother to dismiss here.",
             // Mood states (config/character.nut Const.MoodStateName).
             ["combat.mood.0"] = "Angry",
             ["combat.mood.1"] = "Disgruntled",

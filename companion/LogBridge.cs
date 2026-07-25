@@ -184,6 +184,15 @@ namespace TheUnseenBanner.Companion
                         L10n.T("world.character.perk.state." + valor)),
                     string key when key.StartsWith("world.character.perk.result.",
                         StringComparison.Ordinal) => L10n.F(key, texto, valor),
+                    "world.character.dismiss.blocked"
+                        => L10n.F("world.character.dismiss.blocked." + valor, texto),
+                    "world.character.dismiss.cancelled"
+                        or "world.character.dismiss.failed" => L10n.F(categoria, texto),
+                    "world.character.dismiss.done" => ComposeDismissResult(texto, "", detalle),
+                    "world.character.dismiss.done.paid"
+                        => ComposeDismissResult(texto, valor, detalle),
+                    string key when key.StartsWith("world.character.dismiss.option.",
+                        StringComparison.Ordinal) => ComposeDismissOption(key, texto, valor, detalle),
                     "world.character.formation.summary" => ComposeFormationSummary(valor, detalle),
                     "world.character.formation.slot" => ComposeFormationSlot(texto, valor, detalle),
                     "world.character.formation.target" => ComposeFormationTarget(texto, valor, detalle),
@@ -231,6 +240,7 @@ namespace TheUnseenBanner.Companion
                 };
                 spoken = AppendDetailsHint(spoken, detalles);
                 spoken = AppendActionsHint(spoken, acciones);
+                spoken = AppendDismissHint(spoken, categoria, detalle);
                 spoken = ComposeCharacterContext(spoken, contexto);
                 // When changing the brother shown on the tactical character sheet,
                 // keep his name and the retained attribute in one utterance. Two
@@ -277,6 +287,54 @@ namespace TheUnseenBanner.Companion
                 ? L10n.T("world.inventory.actions.one")
                 : L10n.F("world.inventory.actions.many", count);
             return spoken.Length > 0 ? spoken + " " + hint : hint;
+        }
+
+        /// <summary>The Delete hint rides on the identity row, and only when Squirrel
+        /// says this man can really be dismissed (world map, more than one brother,
+        /// not the player character). It lands after the Enter hint and before the
+        /// position, so the row reads: who he is, what Enter does, what Delete does,
+        /// where you are in the list.</summary>
+        private static string AppendDismissHint(string spoken, string categoria, string detalle)
+        {
+            if (categoria != "combat.sheet.identity" || detalle != "dismiss") return spoken;
+            string hint = L10n.T("world.character.dismiss.hint");
+            return spoken.Length > 0 ? spoken + " " + hint : hint;
+        }
+
+        /// <summary>One row of the dismissal confirmation. Squirrel packs
+        /// "index|total|opened|free|crowns"; "free" is vanilla's own distinction
+        /// between dismissing a man who draws a wage and freeing one who does not.
+        /// On opening, the warning about what dismissal costs is spoken first, so a
+        /// player who pressed Delete by mistake hears it before anything else.</summary>
+        private static string ComposeDismissOption(string key, string name, string cost, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string index = parts.Length > 0 ? parts[0] : "1";
+            string total = parts.Length > 1 ? parts[1] : "3";
+            bool opened = parts.Length > 2 && parts[2] == "1";
+            bool free = parts.Length > 3 && parts[3] == "1";
+            string money = parts.Length > 4 ? parts[4] : "";
+
+            string option = key.EndsWith(".cancel", StringComparison.Ordinal)
+                ? L10n.F(key, name)
+                : L10n.F(free ? key + ".free" : key, name, cost, money);
+            string result = option + " " + L10n.F("world.character.dismiss.position", index, total);
+            if (!opened) return result;
+
+            return L10n.F(free ? "world.character.dismiss.opened.free"
+                : "world.character.dismiss.opened", name, result);
+        }
+
+        /// <summary>The outcome, from live state after the roster shrank: Squirrel
+        /// packs "brothers-left|crowns".</summary>
+        private static string ComposeDismissResult(string name, string cost, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string left = parts.Length > 0 ? parts[0] : "";
+            string money = parts.Length > 1 ? parts[1] : "";
+            return cost.Length > 0
+                ? L10n.F("world.character.dismiss.done.paid", name, cost, left, money)
+                : L10n.F("world.character.dismiss.done", name, left);
         }
 
         /// <summary>Append a world CharacterScreen row's position after its detail

@@ -5,7 +5,7 @@
 ::UnseenBanner <- {
 	ID = "mod_unseen_banner",
 	Name = "The Unseen Banner",
-	Version = "0.1.0",
+	Version = "0.7.0",
 	Mod = null,
 	JSConnection = null,
 	MenuNav = null,
@@ -6196,6 +6196,19 @@
 		FormationSourceID = null,
 		FormationSourceSlot = -1,
 		FormationSourceName = "",
+		// Dismissal confirmation: the brother Delete was pressed on, plus the
+		// options list. Held apart from ActionMode on purpose — this is the one
+		// operation on this screen that permanently removes a man from the roster,
+		// and it should not share a code path with equipping a helmet.
+		DismissMode = false,
+		DismissItems = null,
+		DismissIndex = 0,
+		// The man the confirmation is about, captured by ID and name the way the
+		// native popup does, so nothing depends on a live actor reference that the
+		// dismissal itself is about to invalidate.
+		DismissTargetID = null,
+		DismissTargetName = "",
+		DismissFree = "0",
 		Screen = null,
 		WorldMode = false,
 		Active = false
@@ -6203,6 +6216,7 @@
 	InspectKey = 32, // v -> open/close the focused entry's native tooltip details
 	ActionKey = 39, // Enter -> rename, open/confirm an action or place a brother
 	CancelKey = 41, // Escape -> cancel an armed formation move
+	DismissKey = 54, // delete -> dismiss the shown brother (identity row, world map)
 	// d / right / Tab -> next brother; a / left -> previous. Same keys the vanilla
 	// character screen already uses, so muscle memory carries over.
 	NextKeys = {
@@ -6234,11 +6248,21 @@
 	{
 		return _code == this.InspectKey
 			|| (_code == this.ActionKey
-				&& (this.m.ActionMode || this.isTacticalBagRow()
+				&& (this.m.ActionMode || this.m.DismissMode || this.isTacticalBagRow()
 					|| (this.m.WorldMode && (this.isInventorySection()
 						|| this.isIdentityRow() || this.isFormationSection()
 						|| this.isPerksSection()))))
-			|| (_code == this.CancelKey && this.m.FormationMoveMode)
+			|| (_code == this.CancelKey
+				&& (this.m.FormationMoveMode || this.m.DismissMode))
+			// Delete is answered on every identity row in world mode, including the
+			// rows where dismissing is not allowed: vanilla simply hides its button
+			// there, and a key that does nothing at all is indistinguishable from a
+			// broken mod when there is no button to see. The one exception is the
+			// native name editor: while it is up Delete belongs to the text field
+			// the player is typing in, not to us.
+			|| (_code == this.DismissKey
+				&& !::UnseenBanner.CharacterEdit.isActive()
+				&& (this.m.DismissMode || (this.m.WorldMode && this.isIdentityRow())))
 			|| (this.m.WorldMode && _code in this.SectionKeys)
 			|| (_code in this.NextKeys)
 			|| (_code in this.PrevKeys)
@@ -6256,11 +6280,15 @@
 	{
 		return (_code == this.ActionKey
 				&& (this.isIdentityRow() || this.isFormationSection()))
-			|| (_code == this.CancelKey && this.m.FormationMoveMode);
+			|| (_code == this.CancelKey
+				&& (this.m.FormationMoveMode || this.m.DismissMode));
 	},
 	function onReleaseHandledKey(_code, _screen)
 	{
-		if (_code == this.ActionKey && this.isIdentityRow())
+		// Inside the dismissal confirmation the identity row is still the focused
+		// row, but Enter there means "carry out the chosen option", never "open the
+		// rename editor" — so the editor guards below must not intercept it.
+		if (_code == this.ActionKey && this.isIdentityRow() && !this.m.DismissMode)
 		{
 			if (::UnseenBanner.CharacterEdit.consumeSuppressedEnterRelease()) return;
 			if (::UnseenBanner.CharacterEdit.isActive()) return;
@@ -6286,6 +6314,7 @@
 		this.m.Actions = null;
 		this.m.ActionIndex = 0;
 		this.resetFormationMove();
+		this.resetDismiss();
 		this.m.Screen = null;
 		this.m.WorldMode = false;
 		::UnseenBanner.TooltipNav.hide();
@@ -6366,6 +6395,36 @@
 	// and this semantic cursor remain in lockstep.
 	function onKey(_code, _screen)
 	{
+		// The dismissal confirmation owns the keyboard while it is up: it is modal
+		// by intent, because the action behind it cannot be undone.
+		if (this.m.DismissMode)
+		{
+			// The engine repeats a held key as a stream of fresh presses, and the
+			// press that opened this list is still down. Swallow those repeats.
+			if (_code == this.DismissKey) return;
+
+			if (_code == this.CancelKey || _code == this.InspectKey)
+			{
+				this.cancelDismiss(true);
+				return;
+			}
+			if (_code == this.ActionKey)
+			{
+				this.executeDismiss(_screen);
+				return;
+			}
+			if (_code in this.MoveKeys)
+			{
+				this.moveDismiss(_code);
+				return;
+			}
+
+			// Changing brother or section abandons the confirmation and then runs
+			// its ordinary course, the same way the action sub-list behaves. The
+			// man it named is no longer the man in front of the player.
+			this.cancelDismiss(false);
+		}
+
 		if (this.m.FormationMoveMode)
 		{
 			if (_code == this.InspectKey || _code == this.CancelKey)
@@ -6414,6 +6473,12 @@
 		if (_code == this.InspectKey)
 		{
 			this.toggleDetails();
+			return;
+		}
+
+		if (_code == this.DismissKey)
+		{
+			this.openDismiss();
 			return;
 		}
 
@@ -7179,6 +7244,177 @@
 				bro != null ? "" + bro.getActionPoints() : "");
 		}
 	},
+	// --- Dismissing a brother (Delete on the identity row) ----------------------
+	//
+	// Vanilla puts this behind a small portrait button that opens a popup with an
+	// OK/Cancel pair and a "pay compensation" checkbox — all mouse-only, so a blind
+	// player could hire and equip a company but never let anyone go, and kept paying
+	// wages for men they could not use. The button is shown only when the roster
+	// holds more than one man, the screen is not the tactical one and the man is not
+	// the player character (character_screen_left_panel_header_module.js, "update
+	// dismiss button"). Those three rules are mirrored here rather than reinvented.
+	function dismissBlockReason()
+	{
+		if (!this.m.WorldMode) return "tactical";
+		local bro = this.current();
+		if (bro == null) return "none";
+		if (bro.getFlags().get("IsPlayerCharacter")) return "player";
+		if (::World.getPlayerRoster().getSize() <= 1) return "last";
+		return null;
+	},
+	function canDismiss()
+	{
+		return this.isIdentityRow() && this.dismissBlockReason() == null;
+	},
+	// What vanilla's checkbox offers: 10 crowns per day served, at least one day's
+	// worth. Paying it skips every mood penalty and news entry the dismissal would
+	// otherwise cause (character_screen.onDismissCharacter), which is exactly why it
+	// is offered as its own option instead of being decided for the player.
+	function dismissCost(_bro)
+	{
+		return 10 * ::Math.max(1, _bro.getDaysWithCompany());
+	},
+	function resetDismiss()
+	{
+		this.m.DismissMode = false;
+		this.m.DismissItems = null;
+		this.m.DismissIndex = 0;
+		this.m.DismissTargetID = null;
+		this.m.DismissTargetName = "";
+		this.m.DismissFree = "0";
+	},
+	function openDismiss()
+	{
+		local reason = this.dismissBlockReason();
+		local bro = this.current();
+		if (reason != null || bro == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", bro != null ? bro.getName() : "",
+				"world.character.dismiss.blocked", reason != null ? reason : "none");
+			return;
+		}
+
+		this.leaveActions(false);
+		this.leaveDetails();
+		::UnseenBanner.TooltipNav.hide();
+
+		this.m.DismissTargetID = bro.getID();
+		this.m.DismissTargetName = bro.getName();
+		// Vanilla words it as freeing a man and paying reparations when he draws no
+		// daily wage (the indebted of the Manhunters origin), and as dismissing and
+		// compensating otherwise. Same distinction, same words.
+		this.m.DismissFree = bro.getDailyCost() == 0 ? "1" : "0";
+		this.m.DismissItems = [
+			{ action = "cancel", cost = 0 },
+			{ action = "plain", cost = 0 },
+			{ action = "paid", cost = this.dismissCost(bro) }
+		];
+		// Cancel first, and focused: the same safe default the market uses before
+		// selling something irreplaceable. A mistaken Enter here must cost nothing.
+		this.m.DismissIndex = 0;
+		this.m.DismissMode = true;
+		this.announceDismiss(true);
+	},
+	function moveDismiss(_code)
+	{
+		if (!this.m.DismissMode || this.m.DismissItems == null) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.DismissIndex -= 1;
+		else if (dir == "down") this.m.DismissIndex += 1;
+		else if (dir == "home") this.m.DismissIndex = 0;
+		else this.m.DismissIndex = this.m.DismissItems.len() - 1;
+
+		if (this.m.DismissIndex < 0) this.m.DismissIndex = 0;
+		if (this.m.DismissIndex >= this.m.DismissItems.len())
+			this.m.DismissIndex = this.m.DismissItems.len() - 1;
+		this.announceDismiss();
+	},
+	function announceDismiss(_opened = false)
+	{
+		if (!this.m.DismissMode || this.m.DismissItems == null) return;
+		local it = this.m.DismissItems[this.m.DismissIndex];
+		local detail = (this.m.DismissIndex + 1) + "|" + this.m.DismissItems.len()
+			+ "|" + (_opened ? "1" : "0") + "|" + this.m.DismissFree
+			+ "|" + ::World.Assets.getMoney();
+		::UnseenBanner.sendMessage("interrupt", this.m.DismissTargetName,
+			"world.character.dismiss.option." + it.action, "" + it.cost, detail);
+	},
+	function cancelDismiss(_announce)
+	{
+		if (!this.m.DismissMode) return;
+		local name = this.m.DismissTargetName;
+		this.resetDismiss();
+		if (_announce)
+		{
+			::UnseenBanner.sendMessage("interrupt", name,
+				"world.character.dismiss.cancelled");
+		}
+	},
+	function executeDismiss(_screen)
+	{
+		if (!this.m.DismissMode || this.m.DismissItems == null || _screen == null) return;
+
+		local it = this.m.DismissItems[this.m.DismissIndex];
+		if (it.action == "cancel")
+		{
+			this.cancelDismiss(true);
+			return;
+		}
+
+		local name = this.m.DismissTargetName;
+		local id = this.m.DismissTargetID;
+		local paid = it.action == "paid";
+		local cost = it.cost;
+		local before = ::World.getPlayerRoster().getSize();
+		this.resetDismiss();
+
+		// The screen's own endpoint — the one the popup's OK button calls. It moves
+		// the man's equipment to the stash, charges the compensation, applies the
+		// mood changes or the news entry, removes him from the roster and refreshes
+		// both the visible screen and the topbar. Nothing is duplicated here.
+		_screen.onDismissCharacter([id, paid]);
+
+		// Judge success by the roster actually shrinking rather than by a return
+		// value: the endpoint has none, and it silently does nothing if the ID no
+		// longer resolves. Announcing a dismissal that did not happen would be
+		// worse than the missing feature.
+		local after = ::World.getPlayerRoster().getSize();
+		if (after >= before)
+		{
+			::UnseenBanner.sendMessage("interrupt", name, "world.character.dismiss.failed");
+			return;
+		}
+
+		this.reopenAfterDismiss();
+		::UnseenBanner.sendMessage("interrupt", name,
+			paid ? "world.character.dismiss.done.paid" : "world.character.dismiss.done",
+			"" + cost, after + "|" + ::World.Assets.getMoney());
+	},
+	// The endpoint's loadData() reselects the FIRST brother in the visible screen:
+	// no world brother carries the isSelected flag (data_helper.addFlagsToUIData
+	// marks only the tactical active entity), so its JS falls back to the first
+	// non-null entry. Land this cursor on that same man, or the spoken sheet and the
+	// drawn one would describe two different people. Silent on purpose — the result
+	// message that follows is what the player needs to hear.
+	function reopenAfterDismiss()
+	{
+		local list = [];
+		local raw = ::World.Assets.getFormation();
+		if (raw != null)
+		{
+			foreach( b in raw )
+			{
+				if (b != null) list.push(b);
+			}
+		}
+		this.m.Brothers = list;
+		this.m.BroIndex = 0;
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
+		this.resetFormationMove();
+		this.buildWorldSections();
+		this.activateSection(this.m.SectionIndex, false, false);
+	},
 	function announceItem(_includeBrother = false, _includeSection = false)
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
@@ -7194,6 +7430,13 @@
 			value = it.payload.line;
 			detail = it.payload.position + "|" + this.m.FormationSourceName
 				+ "|" + (it.payload.slot == this.m.FormationSourceSlot ? "1" : "0");
+		}
+		// The identity row is where Delete acts, so its hint travels with that row —
+		// and only when the man can actually be dismissed. Advertising a key that
+		// will refuse is worse than not advertising it at all.
+		else if (category == "combat.sheet.identity" && this.canDismiss())
+		{
+			detail = "dismiss";
 		}
 		// Identity already contains the brother's name, so do not say it twice when
 		// that is the retained item.
