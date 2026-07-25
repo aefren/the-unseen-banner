@@ -621,9 +621,24 @@
 	}
 };
 
+// An attached location: the farms, mines, workshops and harbours the map builds around
+// every settlement. attached_location.nut's create() hardwires them non-attackable and
+// its isEnterable() returns false unconditionally — and none of the 30-odd concrete
+// scripts overrides either — so nothing of this kind can ever be entered or fought. For
+// a sighted player they are scenery. They still register in EntityManager's location
+// list, which is why they need naming in one place: the survey gives them their own
+// orientation-only category and WorldEnter refuses to travel to them.
+::UnseenBanner.isLandmark <- function(_entity)
+{
+	// isLocationType lives on location.nut only, so a party would throw on it; the
+	// isLocation() guard short-circuits before that can happen.
+	return _entity != null && _entity.isLocation()
+		&& _entity.isLocationType(::Const.World.LocationType.AttachedLocation);
+};
+
 // World-map perception readout (phase 4.3). Static places and moving parties are two
-// separate tools: B opens known settlements by default and Page Up/Down alternates
-// between settlements and locations; Shift+B opens only the parties currently in
+// separate tools: B opens known settlements by default and Page Up/Down cycle through
+// settlements, locations and landmarks; Shift+B opens only the parties currently in
 // sight. Up/Down reads one entry at a time in either window. Fog of war is honoured:
 // parties use the same hidden/visibility test as mouse interaction, while settlements
 // and locations use the game's per-entity discovered flag.
@@ -638,7 +653,7 @@
 		ItemIndex = 0,
 		Active = false,
 		Mode = null, // "places" (B) or "parties" (Shift+B)
-		Section = "settlements", // places mode: "settlements" or "locations"
+		Section = "settlements", // places mode: one of Sections below
 		ToggleHeld = false,
 		ToggleShift = false,
 		// Detail mode: when non-null, V has drilled into the focused entity and Detail
@@ -656,9 +671,12 @@
 		[45] = "home",
 		[44] = "end"
 	},
+	// The static-place window's categories, cycled by Page Up/Down. With three of them
+	// the direction matters, so each key carries its own step instead of toggling.
+	Sections = ["settlements", "locations", "landmarks"],
 	SectionKeys = {
-		[46] = true, // Page Up
-		[47] = true  // Page Down
+		[46] = -1, // Page Up
+		[47] = 1   // Page Down
 	},
 	// Radius of the party scan, in world units. 400 is the wide sweep the event and
 	// ambition managers use to find nearby parties (event_manager.nut), comfortably
@@ -780,10 +798,15 @@
 	{
 		// Known, active locations (camps, ruins, legendary sites); undiscovered or
 		// inactive ones are left out for the same fog-of-war parity (roadmap 4.2).
+		// EntityManager's list also holds every settlement's attached farms, mines and
+		// workshops, which swamped this category — 69 entries on day 3, the handful of
+		// real camps buried among scenery, and the nearest rows always unusable. They
+		// move to their own landmark category below.
 		local locations = [];
 		foreach( l in ::World.EntityManager.getLocations() )
 		{
 			if (l == null || !l.isAlive() || !l.isActive() || l.getTile() == null) continue;
+			if (::UnseenBanner.isLandmark(l)) continue;
 			if (!l.isDiscovered()) continue;
 			locations.push({ e = l, d = _playerTile.getDistanceTo(l.getTile()) });
 		}
@@ -791,20 +814,70 @@
 		return locations;
 	},
 
+	function collectLandmarks(_playerTile)
+	{
+		// Attached locations, same discovery gate as the other two categories. Unlike
+		// collectLocations this keeps the inactive ones: a burned-down farm still stands
+		// on the map (getName() turns it into "Ruins") and orients just as well as an
+		// intact one, which is all this category is for.
+		local landmarks = [];
+		foreach( l in ::World.EntityManager.getLocations() )
+		{
+			if (l == null || !l.isAlive() || l.getTile() == null) continue;
+			if (!::UnseenBanner.isLandmark(l)) continue;
+			if (!l.isDiscovered()) continue;
+			landmarks.push({ e = l, d = _playerTile.getDistanceTo(l.getTile()) });
+		}
+		this.sortByDistance(landmarks);
+		return landmarks;
+	},
+
+	// Step through Sections, wrapping both ways: Page Down past the last category
+	// returns to the first, Page Up from the first reaches the last. Squirrel's % keeps
+	// the sign of the dividend, hence the double modulo for the -1 step.
+	function nextSection(_step)
+	{
+		local at = 0;
+		foreach( i, s in this.Sections )
+		{
+			if (s == this.m.Section)
+			{
+				at = i;
+				break;
+			}
+		}
+		local n = this.Sections.len();
+		return this.Sections[((at + _step) % n + n) % n];
+	},
+
 	function openPlaces(_section = "settlements")
 	{
 		local player = ::World.State.getPlayer();
 		local playerTile = player.getTile();
-		local records = _section == "locations"
-			? this.collectLocations(playerTile)
-			: this.collectSettlements(playerTile);
+		local records;
+		local kind;
+		if (_section == "locations")
+		{
+			records = this.collectLocations(playerTile);
+			kind = "location";
+		}
+		else if (_section == "landmarks")
+		{
+			records = this.collectLandmarks(playerTile);
+			kind = "landmark";
+		}
+		else
+		{
+			records = this.collectSettlements(playerTile);
+			kind = "settlement";
+		}
+
 		local items = [];
 		items.push(this.item("world.survey.places.screen", "", _section,
 			"" + records.len()));
 		foreach( r in records )
 		{
-			items.push(this.item("world.survey.item", r.e.getName(),
-				_section == "locations" ? "location" : "settlement",
+			items.push(this.item("world.survey.item", r.e.getName(), kind,
 				this.posDetail(playerTile, r.e.getTile()), r.e));
 		}
 
@@ -872,14 +945,12 @@
 	{
 		if (!this.m.Active) return;
 
-		// Page Up/Down alternates the static-place window between its two categories.
-		// Either key is a toggle because there are exactly two; switching also exits an
-		// entity detail so the new category header is always the first announcement.
+		// Page Up/Down cycle the static-place window through its categories, Page Down
+		// forwards and Page Up backwards. Switching also exits an entity detail so the
+		// new category header is always the first announcement.
 		if (this.m.Mode == "places" && _code in this.SectionKeys)
 		{
-			this.openPlaces(this.m.Section == "settlements"
-				? "locations"
-				: "settlements");
+			this.openPlaces(this.nextSection(this.SectionKeys[_code]));
 			return;
 		}
 
@@ -1082,6 +1153,7 @@
 		Blocked = false,   // the current heading hit a wall; hold intent but stop trying
 		LastTileID = -1,   // global player-tile observer, including native/autowalk paths
 		LastTerrain = -1,  // last terrain type observed, so only changes are spoken
+		DestinationID = null, // entity the party is travelling to, sampled each frame
 		SelfUnpause = false // set while WE unpause to move, so the pause hook stays quiet
 	},
 	// Engine key code -> hex direction (Const.Direction: N=0, NE=1, SE=2, S=3, SW=4,
@@ -1124,6 +1196,7 @@
 		this.m.Blocked = false;
 		this.m.LastTileID = -1;
 		this.m.LastTerrain = -1;
+		this.m.DestinationID = null;
 		this.m.SelfUnpause = false;
 	},
 	function clearHeading()
@@ -1244,6 +1317,58 @@
 		this.primeTerrain(player);
 		return true;
 	},
+	// Sampled from world_state.onUpdate BEFORE its original runs, which is the one
+	// moment the current travel destination is still readable: an arrival is what
+	// consumes AutoEnterLocation, and the original clears it on the very frame the
+	// party steps onto the tile. Holding the id from the start of the frame lets the
+	// tile observer below recognise the destination it has just reached and stay quiet.
+	function observeDestination(_state)
+	{
+		local pending = _state != null ? _state.m.AutoEnterLocation : null;
+		this.m.DestinationID = (pending != null && !pending.isNull())
+			? pending.getID()
+			: null;
+	},
+	// The static place standing on _tile, or null. A sighted player watches the farm or
+	// the camp slide under the banner; without this the map between two explicit B
+	// surveys is featureless. Every location marks its tile IsOccupied when it spawns
+	// (location.nut's onInit) and nothing else on the world map sets that flag, so it
+	// is a free prefilter — an ordinary step costs one boolean and never looks an
+	// entity up.
+	function findPlace(_player, _tile)
+	{
+		if (_tile == null || !_tile.IsOccupied) return null;
+
+		// The same lookup the mouse hover and Enter use; "AndOneLocation" already caps
+		// the result at a single location, so the first match is the only one. The
+		// player party is in the list too and fails isLocation().
+		foreach( e in ::World.getAllEntitiesAndOneLocationAtPos(_player.getPos(), 1.0) )
+		{
+			if (e == null || !e.isAlive() || !e.isLocation()) continue;
+			if (e.getTile() == null || !e.getTile().isSameTileAs(_tile)) continue;
+			if (!e.isDiscovered()) continue;
+			// Reaching what we were travelling to: the entry flow either opens a screen
+			// that announces itself or reports the arrival, so naming it here as well
+			// would say it twice in a row.
+			if (this.m.DestinationID != null && e.getID() == this.m.DestinationID) return null;
+			return e;
+		}
+		return null;
+	},
+	// Pack a found place into the two trailing message fields, so terrain and place
+	// always travel as ONE utterance. Sending them as two messages does not work at any
+	// setting: two interrupts in a frame cut the first off mid-word, and a queued second
+	// is discarded outright by the next interrupt — the "Stopped" cue that ends a tapped
+	// step lands a few frames later and would erase it. The character sheet solved the
+	// same race the same way (see combat.sheet.brother).
+	function placeName(_place)
+	{
+		return _place != null ? _place.getName() : "";
+	},
+	function placeKind(_place)
+	{
+		return _place != null && ::UnseenBanner.isLandmark(_place) ? "landmark" : "";
+	},
 	// Polled from world_state.onUpdate every frame. Terrain observation is global, not
 	// conditional on Pending: paths started with B+Enter, mouse clicks, contracts or
 	// native pursuit all move the same player party and must announce transitions too.
@@ -1267,11 +1392,20 @@
 			else if (tile.ID != this.m.LastTileID)
 			{
 				this.m.LastTileID = tile.ID;
+				// Terrain is still only spoken when it actually changes; a place is
+				// spoken on every tile it occupies. Either alone is worth a message,
+				// and when both land on the same step they go out together.
+				local terrain = "";
 				if (tile.Type != this.m.LastTerrain)
 				{
 					this.m.LastTerrain = tile.Type;
-					::UnseenBanner.sendMessage("interrupt", "",
-						"world.move.step", "" + tile.Type);
+					terrain = "" + tile.Type;
+				}
+				local place = this.findPlace(player, tile);
+				if (terrain != "" || place != null)
+				{
+					::UnseenBanner.sendMessage("interrupt", this.placeName(place),
+						"world.move.step", terrain, this.placeKind(place));
 				}
 			}
 		}
@@ -1302,9 +1436,16 @@
 			this.primeTerrain(_player);
 		}
 	},
+	// Ending an order on top of a place names it here too. This cue interrupts, and it
+	// lands a few frames after the tile observer's own message, so it must repeat what
+	// that one said or the player loses it: it already re-states the terrain for exactly
+	// that reason.
 	function announceStopped(_player)
 	{
-		::UnseenBanner.sendMessage("interrupt", "", "world.move.stopped", "" + _player.getTile().Type);
+		local tile = _player.getTile();
+		local place = this.findPlace(_player, tile);
+		::UnseenBanner.sendMessage("interrupt", this.placeName(place),
+			"world.move.stopped", "" + tile.Type, this.placeKind(place));
 	}
 };
 
@@ -1435,6 +1576,19 @@
 		if (player == null || !_location.isDiscovered())
 		{
 			this.announceUnavailable("world.interact.gone");
+			return false;
+		}
+
+		// Landmarks are refused outright, ahead of the mouse's eligibility test below,
+		// which lets an attached location through on its first visit purely because
+		// isVisited() is still false. That is how travelling to a "Blast Furnace" ended
+		// in a walk across the map, a silent arrival that opened nothing, and a second
+		// attempt that finally said "cannot be interacted with" — the flag had been set
+		// by the pointless first entry. Nothing of this kind is ever enterable, so say
+		// so before spending the journey.
+		if (::UnseenBanner.isLandmark(_location))
+		{
+			this.announceUnavailable();
 			return false;
 		}
 
@@ -7460,6 +7614,29 @@
 		__original();
 	}
 
+	// Arrival at a location. Entering opens the town screen, an event or the encounter
+	// dialog, and each of those announces itself on arrival — but when none of them
+	// opens, vanilla merely marks the place visited and leaves the map exactly as it
+	// was. A sighted player sees the party stop; for a blind one that silence is
+	// indistinguishable from a travel order that never finished, which is what made
+	// walking to a non-interactable location feel like nothing had happened at all.
+	//
+	// All three of those screens push a MenuStack backstep synchronously from inside
+	// enterLocation, so an empty stack once it returns is the reliable "nothing opened"
+	// test — no polling and no guessing at which screen was due. Only a successful entry
+	// is announced: a refused one returns false with AutoEnterLocation still armed, so
+	// world_state.onUpdate retries it every frame and the cue would repeat endlessly.
+	q.enterLocation = @(__original) function( _location )
+	{
+		local entered = __original(_location);
+		if (entered && _location != null && !this.m.MenuStack.hasBacksteps())
+		{
+			::UnseenBanner.sendMessage("interrupt", _location.getName(),
+				"world.interact.arrived.empty");
+		}
+		return entered;
+	}
+
 	// A CharacterScreen opened from the encounter dialog is a temporary overlay,
 	// not a new MenuStack level. Its native close button and C/I/Escape all reach
 	// this same funnel, so return to the still-visible dialog without popping the
@@ -7476,9 +7653,12 @@
 
 	// Arrival polling for directional movement (phase 4.0). onUpdate runs every frame;
 	// WorldMove.tick short-circuits immediately unless a step is in flight, so the
-	// common idle case costs one boolean check.
+	// common idle case costs one boolean check. The destination is sampled around the
+	// original rather than inside tick, because entering a location is exactly what the
+	// original does with it — see observeDestination.
 	q.onUpdate = @(__original) function()
 	{
+		::UnseenBanner.WorldMove.observeDestination(this);
 		__original();
 		::UnseenBanner.WorldMove.tick();
 	}

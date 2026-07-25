@@ -207,8 +207,8 @@ namespace TheUnseenBanner.Companion
                     "world.obituary.entry" => ComposeObituaryEntry(texto, detalle),
                     "world.retinue.slot.follower" => ComposeRetinueSlot(texto, valor, detalle),
                     "world.retinue.hire.follower" => ComposeRetinueFollower(texto, valor, detalle),
-                    "world.move.step" => L10n.F("world.move.step", L10n.T("world.terrain." + valor)),
-                    "world.move.stopped" => L10n.F("world.move.stopped", L10n.T("world.terrain." + valor)),
+                    "world.move.step" => ComposeMoveStep(texto, valor, detalle),
+                    "world.move.stopped" => ComposeMoveStopped(texto, valor, detalle),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
@@ -785,12 +785,51 @@ namespace TheUnseenBanner.Companion
             return L10n.F("menu.campaign.screen", title, count);
         }
 
+        /// <summary>Compose the world-map step cue. <paramref name="terrain"/> is the
+        /// tile type, sent only when it actually changed, and <paramref name="place"/>
+        /// the settlement, camp or ruin standing on the tile, sent whenever there is
+        /// one. They arrive together and are spoken as one utterance on purpose: as two
+        /// messages the second would either cut the first off or be discarded by the
+        /// next interrupt.</summary>
+        private static string ComposeMoveStep(string place, string terrain, string kind)
+        {
+            string spoken = terrain.Length > 0
+                ? L10n.F("world.move.step", L10n.T("world.terrain." + terrain))
+                : string.Empty;
+            return AppendPlace(spoken, place, kind);
+        }
+
+        /// <summary>As <see cref="ComposeMoveStep"/> for the cue that ends a movement
+        /// order. The terrain is always present here; it deliberately repeats what the
+        /// step cue just said, since this one interrupts it.</summary>
+        private static string ComposeMoveStopped(string place, string terrain, string kind)
+        {
+            string spoken = L10n.F("world.move.stopped", L10n.T("world.terrain." + terrain));
+            return AppendPlace(spoken, place, kind);
+        }
+
+        /// <summary>Append the name of the place occupying the tile, if any. Landmarks
+        /// say so, because standing on one is not an opportunity to do anything.</summary>
+        private static string AppendPlace(string spoken, string place, string kind)
+        {
+            if (place.Length == 0) return spoken;
+            string named = kind == "landmark"
+                ? L10n.F("world.move.passing.landmark", place)
+                : L10n.F("world.move.passing", place);
+            return spoken.Length > 0 ? spoken + " " + named : named;
+        }
+
         /// <summary>Compose the static-place explorer header. B starts on settlements;
-        /// Page Up/Down changes <paramref name="section"/> to locations and back.</summary>
+        /// Page Up/Down cycle <paramref name="section"/> through locations and landmarks.
+        /// The landmark category carries an extra warning, since none of its entries can
+        /// be entered — saying it once here keeps the rows themselves short.</summary>
         private static string ComposeSurveyPlacesScreen(string section, string countText)
         {
             string label = L10n.T("world.survey.section." + section);
-            return L10n.F("world.survey.places.screen", label, countText);
+            string spoken = L10n.F("world.survey.places.screen", label, countText);
+            if (section == "landmarks")
+                spoken += " " + L10n.T("world.survey.section.landmarks.note");
+            return spoken;
         }
 
         /// <summary>Compose the visible-party explorer header opened with Shift+B.
@@ -802,9 +841,10 @@ namespace TheUnseenBanner.Companion
 
         /// <summary>Compose one survey entry (phase 4.3). texto is the entity's already-
         /// localized game name; valor is the kind (ally/enemy/neutral party, settlement,
-        /// location); detalle is the "dist|dir" pair shared with the tactical tile
-        /// readout, so <see cref="ComposePosition"/> is reused for "3 tiles, 2 o'clock".
-        /// </summary>
+        /// location, landmark); detalle is the "dist|dir" pair shared with the tactical
+        /// tile readout, so <see cref="ComposePosition"/> is reused for "3 tiles, 2
+        /// o'clock". Landmarks deliberately get no action hint: the category header
+        /// already says the whole list is unreachable.</summary>
         private static string ComposeSurveyItem(string name, string kind, string detail)
         {
             string[] p = detail.Split('|');
@@ -817,6 +857,7 @@ namespace TheUnseenBanner.Companion
                 "ally" => L10n.F("world.survey.item.ally", name),
                 "neutral" => L10n.F("world.survey.item.neutral", name),
                 "settlement" => L10n.F("world.survey.item.settlement", name),
+                "landmark" => L10n.F("world.survey.item.landmark", name),
                 _ => L10n.F("world.survey.item.location", name),
             };
 

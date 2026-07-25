@@ -578,20 +578,26 @@ namespace TheUnseenBanner.Companion
             ["world.status.objectives.current"] = "Current objectives: {0}.",
             ["world.status.objectives.updated.one"] = "Objective updated: {0}.",
             ["world.status.objectives.updated"] = "Objectives updated: {0}.",
-            // World explorer (phase 4.3). B owns static places, split into settlements
-            // and locations with Page Up/Down. Shift+B owns currently visible parties.
-            // Both lists retain the same item/detail/interaction controls.
-            ["world.survey.places.screen"] = "{0}: {1}. Use Up and Down to review; Page Up and Page Down switch between settlements and locations; V reads details; Enter travels to the selected place. Press B to close.",
+            // World explorer (phase 4.3). B owns static places, split into settlements,
+            // locations and landmarks with Page Up/Down. Shift+B owns currently visible
+            // parties. Both lists retain the same item/detail/interaction controls.
+            ["world.survey.places.screen"] = "{0}: {1}. Use Up and Down to review; Page Up and Page Down cycle between settlements, locations and landmarks; V reads details; Enter travels to the selected place. Press B to close.",
             ["world.survey.parties.screen"] = "Parties in sight: {0}. Use Up and Down to review, V for details, and Enter to engage. Press Shift plus B to close.",
             ["world.survey.parties.empty"] = "No parties in sight.",
             ["world.survey.section.settlements"] = "Settlements",
             ["world.survey.section.locations"] = "Locations",
+            ["world.survey.section.landmarks"] = "Landmarks",
+            // Appended to the landmark category header only: the whole list is scenery,
+            // so say once at the top that Enter will get you nowhere, rather than
+            // repeating a refusal on every row the player walks through.
+            ["world.survey.section.landmarks.note"] = "Nothing in this list can be entered or attacked; these are the farms, mines and workshops around a settlement, listed only to orient by.",
             ["world.survey.closed"] = "Survey closed.",
             ["world.survey.item.enemy"] = "Enemy party, {0}",
             ["world.survey.item.ally"] = "Allied party, {0}",
             ["world.survey.item.neutral"] = "Party, {0}",
             ["world.survey.item.settlement"] = "Settlement, {0}",
             ["world.survey.item.location"] = "Location, {0}",
+            ["world.survey.item.landmark"] = "Landmark, {0}",
             ["world.survey.here"] = "At your position",
             ["world.survey.action.enemy"] = "Press Enter to engage or pursue.",
             ["world.survey.action.place"] = "Press Enter to approach or enter.",
@@ -607,6 +613,10 @@ namespace TheUnseenBanner.Companion
             ["world.interact.unavailable"] = "That target cannot be interacted with.",
             ["world.interact.escorting"] = "You cannot do that while escorting another party.",
             ["world.interact.no_route"] = "No route to {0}.",
+            // Arriving somewhere that opens no screen at all. Anywhere that does opens
+            // the town screen, an event or the encounter dialog, each of which announces
+            // itself; this covers the case vanilla leaves completely silent.
+            ["world.interact.arrived.empty"] = "Arrived at {0}. That target cannot be interacted with.",
             // Detail inspection of the focused survey entity (V), a navigable sub-list of
             // the entity's tooltip lines. The lines are already-localized game text, spoken
             // as-is (cleaned centrally); only the header and the empty cases live here.
@@ -621,6 +631,13 @@ namespace TheUnseenBanner.Companion
             ["world.move.blocked"] = "Blocked that way.",
             ["world.move.step"] = "{0}.",
             ["world.move.stopped"] = "Stopped. {0}.",
+            // Stepping onto the tile of a settlement, camp or ruin: the running
+            // commentary a sighted player gets from watching the map. Appended to the
+            // step and stopped cues above rather than spoken on its own, so a tile that
+            // changes terrain AND holds a place is one utterance. Landmarks say so,
+            // because standing on one is not an opportunity to do anything.
+            ["world.move.passing"] = "{0}.",
+            ["world.move.passing.landmark"] = "Landmark, {0}.",
             // Pause state, announced from the setPause funnel (Space, pause button...).
             ["world.pause.on"] = "Paused.",
             ["world.pause.off"] = "Unpaused.",
