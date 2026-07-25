@@ -23,6 +23,10 @@ cd companion/bin/Debug/net8.0 && ./TheUnseenBanner.Companion.exe
 
 # Lanzar juego + app compañera en desarrollo (ver docs/desarrollo-copia-local.md)
 ./play.bat
+
+# Construir la release distribuible en dist/ (reempaqueta el mod, publica la
+# compañera self-contained y arma la carpeta que instala install.bat)
+./build-release.bat
 ```
 
 No hay tests todavía. `dotnet build` con 0 warnings es el listón mínimo, pero
@@ -66,7 +70,9 @@ pensado para que cambiar de puente no obligue a tocar los hooks.
   del motor en `KeyMapSQ` de MSU) y se reenvían al JS vía `asyncCall`.
 - 1.2 parcial: cursor de teclado sobre el menú principal funcionando y
   verificado (flechas + Enter, canal interrupt).
-- 0.6: falta solo el empaquetado para Nexus (→ 5.3).
+- 0.6: hecho, y 5.3 con él: `build-release.bat` + `packaging/build-release.ps1`
+  arman `dist/TheUnseenBanner-<version>.zip` (mod + Modern Hooks + MSU +
+  compañera self-contained + instalador). Falta publicarlo en Nexus (5.4).
 
 El log verificado está en `C:\Users\alfre\OneDrive\Documentos\Battle Brothers\log.html`.
 
@@ -94,6 +100,12 @@ es **documentación interna, gitignorada**: existe solo en local, no en GitHub.
   las copia al output. Las DLL son de **64 bits**: valen para la compañera
   (proceso aparte), pero la vía 3 del puente (DLL inyectada en el juego, que es
   de 32 bits) necesitaría las variantes de 32.
+- `installer/` — PowerShell de `install.bat` / `uninstall.bat` (la instalación
+  del jugador: detección de Steam, manifiesto, desinstalación reversible).
+- `packaging/` — `build-release.ps1`, que arma la release en `dist/`
+  (gitignorada). La versión se lee de `::UnseenBanner.Version`: ese es el único
+  sitio donde se sube, y el script avisa si `Program.cs` o el `.csproj` no la
+  acompañan.
 - `docs/` — arquitectura, lecciones previas, recetas de desarrollo.
   **Gitignorada** (documentación interna, solo local).
 - `Battle Brothers/` — copia local del juego. **Gitignorada** (copyright), igual que
@@ -124,12 +136,16 @@ Estas reglas salieron de bugs reales en F&H1 y GK. No reinventarlas:
 - **La carpeta del juego (`Battle Brothers/`) no se toca a mano NUNCA.** Todo
   lo instalable (nuestro zip, Modern Hooks, MSU, UI Inspector) vive y se
   desarrolla en `plugin/` en la raíz del repo. El único camino hacia el juego
-  son dos scripts (tarea 0.6): `dev_install.bat` copia lo de `plugin/` a la
-  carpeta desde donde el juego carga mods (`Battle Brothers/data/`), y
-  `dev_uninstall_mod.bat` lo retira dejando el juego como vino. Así la
-  instalación es siempre reversible y auditable. Y dentro del mod, la regla de
-  siempre: solo añadir vía Modern Hooks/MSU, jamás sobrescribir `.cnut` del
-  juego.
+  son scripts, nunca la mano: en desarrollo `dev_install.bat` copia lo de
+  `plugin/` a la carpeta desde donde el juego carga mods
+  (`Battle Brothers/data/`) y `dev_uninstall_mod.bat` lo retira dejando el juego
+  como vino (tarea 0.6); para la release, `install.bat` / `uninstall.bat` hacen
+  lo mismo contra la copia de Steam del jugador (detección por el registro y las
+  librerías de Steam, ruta a mano si falla; lógica en `installer/*.ps1`, y un
+  manifiesto en `%LOCALAPPDATA%\TheUnseenBanner` para no borrar un Modern
+  Hooks/MSU que ya tuviera). Así la instalación es siempre reversible y
+  auditable. Y dentro del mod, la regla de siempre: solo añadir vía Modern
+  Hooks/MSU, jamás sobrescribir `.cnut` del juego.
 - **Toda constante afinable va a config** (rangos, cadencias, volúmenes, teclas).
 - **JS inyectado en ES3**: Chromium 48, sin `let/const`, arrows ni template literals.
 - **Tecla de mod que coincide con un binding nativo → actuar en la pulsación

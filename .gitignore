@@ -13,6 +13,9 @@ docs/
 # Artefactos de build
 build/
 dist/
+
+# Lanzador que genera install.bat con la ruta resuelta de esta máquina
+play-unseen-banner.bat
 *.zip
 *.7z
 

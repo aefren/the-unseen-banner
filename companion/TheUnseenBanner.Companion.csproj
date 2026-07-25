@@ -8,6 +8,9 @@
     <!-- nvdaControllerClient64.dll is 64-bit; Tolk.dll must match the process. -->
     <PlatformTarget>x64</PlatformTarget>
     <RootNamespace>TheUnseenBanner.Companion</RootNamespace>
+    <!-- Kept in step with ::UnseenBanner.Version in the mod and ModVersion in
+         Program.cs: the three are the same release. -->
+    <Version>0.7.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
