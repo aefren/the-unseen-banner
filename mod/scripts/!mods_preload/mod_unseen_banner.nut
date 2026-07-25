@@ -619,10 +619,38 @@
 		// roster) so it gets a meaningful row without dividing by zero.
 		local foodDays = dailyFood > 0 ? (food / dailyFood).tointeger() : -1;
 		local brothers = ::World.getPlayerRoster().getSize();
+		local brothersMax = assets.getBrothersMax();
 
 		local time = ::World.getTime();
 		local day = time.Days;
 		local timeCat = time.IsDaytime ? "world.status.time.day" : "world.status.time.night";
+		// The topbar clock paints exactly this table (the topbar datasource module
+		// does `Const.Strings.World.TimeOfDay[currentTime.TimeOfDay]`), so speaking it
+		// is reading what is on screen, not rebuilding the hour from raw seconds. The
+		// bounds check keeps a future eighth-of-day from throwing and aborting the
+		// whole list — the failure mode contract.getTitle() already taught us.
+		local timeOfDay = time.TimeOfDay;
+		local timeName = timeOfDay >= 0 && timeOfDay < ::Const.Strings.World.TimeOfDay.len()
+			? ::Const.Strings.World.TimeOfDay[timeOfDay] : "";
+
+		// The topbar banner, otherwise unreadable: getUIText() is the very string it
+		// paints, progress counter included ("Defeat packs of roving beasts (3/5)").
+		// Every ambition rebuilds it from live world state, so it gets the same
+		// treatment as game-written text elsewhere — a throw in here would abort the
+		// list half-built and leave G mute.
+		local ambition = "";
+		if ("Ambitions" in ::World && ::World.Ambitions != null
+			&& ::World.Ambitions.hasActiveAmbition())
+		{
+			try
+			{
+				ambition = ::World.Ambitions.getActiveAmbition().getUIText();
+			}
+			catch (error)
+			{
+				::logError("UnseenBanner: could not read the active ambition: " + error);
+			}
+		}
 
 		// Contract titles carry BBCode/colour markup, so they ride in `texto`, the
 		// field the companion runs through clean() before speaking.
@@ -631,13 +659,20 @@
 
 		local items = [];
 		items.push(this.item("world.status.screen"));
-		items.push(this.item(timeCat, "", "" + day));
-		items.push(this.item(brothers == 1 ? "world.status.brothers.one" : "world.status.brothers", "", "" + brothers));
+		items.push(this.item(timeCat, timeName, "" + day));
+		items.push(this.item(brothers == 1 ? "world.status.brothers.one" : "world.status.brothers", "", "" + brothers, "" + brothersMax));
 		items.push(this.item("world.status.money", "", "" + money));
 		items.push(this.item("world.status.wages", "", "" + dailyMoney));
 		items.push(this.item("world.status.food", "", "" + food));
 		if (foodDays < 0) items.push(this.item("world.status.food.none"));
 		else items.push(this.item(foodDays == 1 ? "world.status.food.day" : "world.status.food.days", "", "" + foodDays));
+		// The three consumables the topbar shows next to crowns and food. Vanilla's own
+		// UI data names armor parts "Supplies" (data_helper.convertAssetsInformationToUIData),
+		// so the spoken name follows the screen rather than the internal getter.
+		items.push(this.item("world.status.supplies", "", "" + assets.getArmorParts()));
+		items.push(this.item("world.status.ammo", "", "" + assets.getAmmo()));
+		items.push(this.item("world.status.medicine", "", "" + assets.getMedicine()));
+		items.push(this.item(ambition != "" ? "world.status.ambition" : "world.status.ambition.none", ambition));
 		items.push(this.item(contract != null ? "world.status.contract" : "world.status.contract.none", title));
 		if (contract != null)
 		{
@@ -684,6 +719,77 @@
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local it = this.m.Items[this.m.ItemIndex];
 		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
+	}
+};
+
+// Passage of time. The clock is the only thing on the world map that moves on its
+// own, and it moves in silence: night falls, most buildings shut and the recruit
+// board empties with nothing to mark it. G already reports the hour on demand
+// (WorldStatus); this announces the change itself.
+//
+// Funnel: world_state.updateDayTime, the single call that refreshes the visible
+// clock — it is what feeds Const.Strings.World.TimeOfDay to the topbar datasource.
+// It runs from onUpdate on every frame the map is live, so the common path here is
+// two comparisons and a return; only a real change ever speaks.
+//
+// Channel: the FIFO queue, never interrupt. Dusk arrives while the player is halfway
+// down a survey list or a contract briefing, and cutting that off to say "Evening"
+// is exactly the bug that made F&H1 unusable.
+::UnseenBanner.WorldClock <- {
+	m = {
+		LastDay = -1,
+		LastTimeName = null
+	},
+	function reset()
+	{
+		this.m.LastDay = -1;
+		this.m.LastTimeName = null;
+	},
+	// The spoken name decides what counts as a change, not the enum index: the
+	// strings table holds "Dawn" at both ends (index 0, and 7 for EarlyMorning), so
+	// tracking the index would announce "Dawn" a second time across the rollover.
+	function timeName(_time)
+	{
+		local names = ::Const.Strings.World.TimeOfDay;
+		local i = _time.TimeOfDay;
+		return i >= 0 && i < names.len() ? names[i] : "";
+	},
+	function update()
+	{
+		local time = ::World.getTime();
+		local day = time.Days;
+		local name = this.timeName(time);
+
+		// First look after entering the map or loading a save: seed and stay quiet, or
+		// every load would open by reading out a clock nobody asked for.
+		if (this.m.LastTimeName == null)
+		{
+			this.m.LastDay = day;
+			this.m.LastTimeName = name;
+			return;
+		}
+
+		local dayChanged = day != this.m.LastDay;
+		local timeChanged = name != this.m.LastTimeName;
+		if (!dayChanged && !timeChanged) return;
+
+		this.m.LastDay = day;
+		this.m.LastTimeName = name;
+
+		// A new day always brings a new time of day with it, so the two travel as one
+		// message instead of two queued utterances treading on each other.
+		if (dayChanged)
+		{
+			::UnseenBanner.sendMessage("queue", name, "world.clock.day", "" + day);
+			return;
+		}
+
+		// Camping runs the clock at speed, and every day crosses seven of these. The
+		// day rollover above still lands — it is the one a camping player waits for —
+		// but the hours in between would be a message every few seconds of real time.
+		if (::World.Assets.isCamping()) return;
+
+		::UnseenBanner.sendMessage("queue", name, "world.clock.time");
 	}
 };
 
@@ -8772,6 +8878,7 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
+		::UnseenBanner.WorldClock.reset();
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldCamp.reset();
@@ -8793,6 +8900,7 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
+		::UnseenBanner.WorldClock.reset();
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldCamp.reset();
@@ -8814,6 +8922,7 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.WorldStatus.reset();
+		::UnseenBanner.WorldClock.reset();
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldCamp.reset();
@@ -8890,6 +8999,15 @@
 		local isCamping = this.World.Assets.isCamping();
 		if (isCamping != wasCamping)
 			::UnseenBanner.WorldCamp.announceChanged(isCamping);
+	}
+
+	// The single call that refreshes the visible clock, reached from onUpdate on every
+	// frame the map is live. WorldClock returns immediately unless the hour or the day
+	// actually moved, so the cost here is two comparisons per frame.
+	q.updateDayTime = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.WorldClock.update();
 	}
 
 	// Announce pause/unpause (phase 4.0 companion request). setPause is the one funnel

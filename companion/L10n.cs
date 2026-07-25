@@ -560,16 +560,29 @@ namespace TheUnseenBanner.Companion
             // World-map company/campaign list (phase 4.4, G then Up/Down).
             ["world.status.screen"] = "Company status. Use Up and Down to review. Press G to close.",
             ["world.status.closed"] = "Company status closed.",
-            ["world.status.time.day"] = "Day {1}, daytime.",
-            ["world.status.time.night"] = "Day {1}, night.",
-            ["world.status.brothers"] = "{1} brothers.",
-            ["world.status.brothers.one"] = "1 brother.",
+            ["world.status.time.day"] = "Day {1}, {0}.",
+            // Most buildings shut at night (building.nut defaults IsClosedAtNight to
+            // true; only the port and the tavern stay open), so the hour is worth more
+            // than a label here: it tells the player whether entering a town is useful.
+            ["world.status.time.night"] = "Day {1}, {0}. Most buildings are closed at night.",
+            ["world.status.brothers"] = "{1} of {2} brothers.",
+            ["world.status.brothers.one"] = "1 of {2} brothers.",
             ["world.status.money"] = "Crowns: {1}.",
             ["world.status.wages"] = "Daily wages: {1} crowns.",
             ["world.status.food"] = "Food: {1}.",
             ["world.status.food.days"] = "{1} days of food left.",
             ["world.status.food.day"] = "1 day of food left.",
             ["world.status.food.none"] = "No food upkeep.",
+            ["world.status.supplies"] = "Supplies: {1}.",
+            ["world.status.ammo"] = "Ammunition: {1}.",
+            ["world.status.medicine"] = "Medicine: {1}.",
+            ["world.status.ambition"] = "Ambition: {0}.",
+            ["world.status.ambition.none"] = "No ambition chosen.",
+            // Passage of time, spoken on the queue as the clock moves. Terse on
+            // purpose: these arrive unbidden, several times a day, and the player is
+            // usually in the middle of something else.
+            ["world.clock.time"] = "{0}.",
+            ["world.clock.day"] = "Day {1}, {0}.",
             ["world.status.contract"] = "Contract: {0}.",
             ["world.status.contract.none"] = "No active contract.",
             ["world.status.objective"] = "Objective: {0}.",
