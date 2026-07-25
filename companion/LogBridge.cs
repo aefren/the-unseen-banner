@@ -209,6 +209,13 @@ namespace TheUnseenBanner.Companion
                     "world.retinue.hire.follower" => ComposeRetinueFollower(texto, valor, detalle),
                     "world.move.step" => ComposeMoveStep(texto, valor, detalle),
                     "world.move.stopped" => ComposeMoveStopped(texto, valor, detalle),
+                    "world.cursor.tile" => ComposeCursorTile(texto, valor, detalle, recentered: false),
+                    "world.cursor.recentered" => ComposeCursorTile(texto, valor, detalle, recentered: true),
+                    "world.cursor.bearing" => L10n.F(categoria, PackedPosition(detalle)),
+                    "world.cursor.travel" => ComposeCursorTravel(texto, valor, detalle),
+                    "world.cursor.list.screen" => ComposeCursorListScreen(valor, detalle),
+                    "world.cursor.list.terrain" => ComposeCursorTerrainRow(valor, detalle),
+                    "world.cursor.list.tracks" => ComposeCursorTracksRow(valor, detalle),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
@@ -817,6 +824,183 @@ namespace TheUnseenBanner.Companion
                 ? L10n.F("world.move.passing.landmark", place)
                 : L10n.F("world.move.passing", place);
             return spoken.Length > 0 ? spoken + " " + named : named;
+        }
+
+        /// <summary>Split a packed "dist|dir" pair and word it as a position, so the
+        /// clock vocabulary of the tactical readout serves the map cursor too.</summary>
+        private static string PackedPosition(string detail)
+        {
+            string[] p = detail.Split('|');
+            return ComposePosition(p.Length > 0 ? p[0] : "0", p.Length > 1 ? p[1] : "-1");
+        }
+
+        /// <summary>Name a world tile's terrain, marking a tile the company has never
+        /// come near. The flag is not decoration: vanilla refuses to route through
+        /// unexplored ground and marches in a straight line instead, so knowing a tile
+        /// is still dark tells the player how travelling there will behave.</summary>
+        private static string TerrainWord(string terrain, bool fog)
+        {
+            string name = L10n.T("world.terrain." + terrain);
+            return fog ? L10n.F("world.terrain.unexplored", name) : name;
+        }
+
+        /// <summary>Name a place the way the B survey names it, without the trailing
+        /// stop, so the same wording can end a sentence or sit inside one.</summary>
+        private static string ComposeCursorPlace(string name, string kind)
+        {
+            return kind switch
+            {
+                "settlement" => L10n.F("world.survey.item.settlement", name),
+                "landmark" => L10n.F("world.survey.item.landmark", name),
+                _ => L10n.F("world.survey.item.location", name),
+            };
+        }
+
+        /// <summary>Name a kind of footprint. With a Lookout hired the game itself puts
+        /// the exact party type in words, and only then; without him a sighted player
+        /// still reads the sprite, of which there are only four — men, greenskins, beasts
+        /// and undead — so that is exactly what the family table holds.</summary>
+        private static string TrackName(string type, bool lookout)
+        {
+            return L10n.T((lookout ? "world.footprints.exact." : "world.footprints.family.")
+                + type);
+        }
+
+        /// <summary>Join names as "a", "a and b", "a, b and c".</summary>
+        private static string JoinWithAnd(List<string> names)
+        {
+            if (names.Count == 0) return "";
+            if (names.Count == 1) return names[0];
+            return L10n.F("list.and",
+                string.Join(", ", names.GetRange(0, names.Count - 1)), names[^1]);
+        }
+
+        /// <summary>Word the footprints crossing a tile. Several exact types share one
+        /// family word (brigands and nomads are both simply men on the map), so the
+        /// collapsed names are de-duplicated or the same word would be said twice.
+        /// </summary>
+        private static string ComposeCursorTracks(string packed, bool lookout)
+        {
+            if (packed.Length == 0) return "";
+
+            var names = new List<string>();
+            foreach (string t in packed.Split(','))
+            {
+                if (t.Length == 0) continue;
+                string name = TrackName(t, lookout);
+                if (!names.Contains(name)) names.Add(name);
+            }
+
+            return names.Count == 0 ? "" : L10n.F("world.cursor.tracks", JoinWithAnd(names));
+        }
+
+        /// <summary>Word the parties standing on the cursor tile: the nearest one by
+        /// name and kind, and a count for the rest. Squirrel packs "count,kind,name"
+        /// with the name last, so a comma inside a party name is harmless.</summary>
+        private static string ComposeCursorParties(string packed)
+        {
+            if (packed.Length == 0) return "";
+
+            string[] p = packed.Split(',', 3);
+            if (p.Length < 3 || !int.TryParse(p[0], out int count) || count <= 0) return "";
+
+            string head = p[1] switch
+            {
+                "enemy" => L10n.F("world.survey.item.enemy", p[2]),
+                "ally" => L10n.F("world.survey.item.ally", p[2]),
+                _ => L10n.F("world.survey.item.neutral", p[2]),
+            };
+            if (count == 1) return head + ".";
+
+            string more = count == 2
+                ? L10n.T("world.cursor.parties.more.one")
+                : L10n.F("world.cursor.parties.more", count - 1);
+            return head + ". " + more;
+        }
+
+        /// <summary>Compose a map-explorer cursor readout (phase 4.6): everything the
+        /// tile holds, as one utterance. Squirrel packs
+        /// "fog|placeKind|self|parties|tracks|lookout" and sends the place name as its
+        /// own field; only clauses with something to say are spoken, so an ordinary hex
+        /// is just its terrain. The bearing is deliberately absent — Shift+X answers
+        /// that on demand, and repeating it on every hex of a sweep is noise.</summary>
+        private static string ComposeCursorTile(string place, string terrain, string detail,
+            bool recentered)
+        {
+            string[] p = detail.Split('|');
+            string At(int i) => i < p.Length ? p[i] : "";
+
+            var parts = new List<string>();
+            if (recentered) parts.Add(L10n.T("world.cursor.recentered"));
+            parts.Add(TerrainWord(terrain, At(0) == "1") + ".");
+            if (At(2) == "1") parts.Add(L10n.T("world.cursor.list.self"));
+            if (place.Length > 0) parts.Add(ComposeCursorPlace(place, At(1)) + ".");
+
+            string parties = ComposeCursorParties(At(3));
+            if (parties.Length > 0) parts.Add(parties);
+
+            string tracks = ComposeCursorTracks(At(4), At(5) == "1");
+            if (tracks.Length > 0) parts.Add(tracks);
+
+            return string.Join(" ", parts);
+        }
+
+        /// <summary>Compose the confirmation for G, which sends the company to the
+        /// cursor. detail packs "placeKind|dist|dir|fog"; the target is named by the
+        /// place standing there when there is one, and by its terrain otherwise.
+        /// </summary>
+        private static string ComposeCursorTravel(string place, string terrain, string detail)
+        {
+            string[] p = detail.Split('|');
+            string At(int i) => i < p.Length ? p[i] : "";
+
+            string target = place.Length > 0
+                ? ComposeCursorPlace(place, At(0))
+                : TerrainWord(terrain, At(3) == "1");
+
+            string spoken = L10n.F("world.cursor.travel", target);
+            string position = ComposePosition(At(1), At(2));
+            return position.Length > 0 ? spoken + " " + position + "." : spoken;
+        }
+
+        /// <summary>Compose the cursor tile list header: where the tile is relative to
+        /// the company, how many rows it has, and the controls.</summary>
+        private static string ComposeCursorListScreen(string countText, string detail)
+        {
+            string position = PackedPosition(detail);
+            string where = position.Length > 0
+                ? L10n.F("world.cursor.list.where", position)
+                : L10n.T("world.cursor.list.where.here");
+            return L10n.F("world.cursor.list.screen", where, countText);
+        }
+
+        private static string ComposeCursorTerrainRow(string terrain, string fog)
+        {
+            return L10n.F("world.cursor.list.terrain", TerrainWord(terrain, fog == "1"));
+        }
+
+        /// <summary>Compose one footprint row of the cursor tile list: the kind of
+        /// prints and, reconstructed from the neighbouring tiles, where the trail runs.
+        /// detail packs "dirs|lookout", dirs being hex directions read as clock hours.
+        /// This is what makes a trail followable: two of them usually answer where it
+        /// came from and where it went.</summary>
+        private static string ComposeCursorTracksRow(string type, string detail)
+        {
+            string[] p = detail.Split('|');
+            string dirs = p.Length > 0 ? p[0] : "";
+            string spoken = L10n.F("world.cursor.tracks",
+                TrackName(type, p.Length > 1 && p[1] == "1"));
+
+            var hours = new List<string>();
+            foreach (string d in dirs.Split(','))
+            {
+                if (int.TryParse(d, out int dir) && dir >= 0 && dir < ClockHours.Length)
+                    hours.Add(L10n.F("world.cursor.trail.hour", ClockHours[dir]));
+            }
+
+            return hours.Count == 0
+                ? spoken + " " + L10n.T("world.cursor.trail.none")
+                : spoken + " " + L10n.F("world.cursor.trail", JoinWithAnd(hours));
         }
 
         /// <summary>Compose the static-place explorer header. B starts on settlements;

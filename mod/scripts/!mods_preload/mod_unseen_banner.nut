@@ -1150,6 +1150,10 @@
 		HeadingKey = -1,   // engine code that set Heading, to match its own release
 		Continuous = false, // Shift-latched march: ignore the key release, walk on
 		Pending = false,   // a step path is in flight (we set it, not yet arrived)
+		// A straight-line march is in flight instead of a path: the map explorer's G uses
+		// one for a very close or still unexplored target, exactly as a map click does. It
+		// needs its own flag because there is no path to watch — see tick().
+		PendingDirect = false,
 		Blocked = false,   // the current heading hit a wall; hold intent but stop trying
 		LastTileID = -1,   // global player-tile observer, including native/autowalk paths
 		LastTerrain = -1,  // last terrain type observed, so only changes are spoken
@@ -1183,7 +1187,7 @@
 	},
 	function isMoving()
 	{
-		return this.m.Heading != -1 || this.m.Pending;
+		return this.m.Heading != -1 || this.m.Pending || this.m.PendingDirect;
 	},
 	// Clears only our own bookkeeping; does NOT touch the party (which may not exist
 	// yet at state init). Used on entering/leaving the world state.
@@ -1193,6 +1197,7 @@
 		this.m.HeadingKey = -1;
 		this.m.Continuous = false;
 		this.m.Pending = false;
+		this.m.PendingDirect = false;
 		this.m.Blocked = false;
 		this.m.LastTileID = -1;
 		this.m.LastTerrain = -1;
@@ -1314,6 +1319,7 @@
 		}
 		this.clearHeading();
 		this.m.Pending = false;
+		this.m.PendingDirect = false;
 		this.primeTerrain(player);
 		return true;
 	},
@@ -1408,6 +1414,20 @@
 						"world.move.step", terrain, this.placeKind(place));
 				}
 			}
+		}
+
+		// A straight-line march has no path to watch: the engine drives it from the party's
+		// Destination and clears that field itself the moment it arrives or gives up
+		// (party.onUpdate), which is therefore the completion signal. Without this, G onto a
+		// close or unexplored tile would end in the same silence that made a finished order
+		// indistinguishable from one that never started.
+		if (this.m.PendingDirect)
+		{
+			if (player.hasPath() || player.m.Destination != null) return;
+			this.m.PendingDirect = false;
+			this.announceStopped(player);
+			this.primeTerrain(player);
+			return;
 		}
 
 		if (!this.m.Pending) return;
@@ -1677,6 +1697,591 @@
 			return this.tryEnterLocation(_state, e);
 		}
 		return false;
+	}
+};
+
+// Map explorer (phase 4.6). The B and Shift+B surveys answer "what is near me, nearest
+// first"; this answers "what is THERE" — a keyboard cursor over the world map, the same
+// instrument the tile cursor is on a battlefield. M toggles the mode: while it is on, the
+// Q/W/E/A/S/D cluster walks the cursor over the hexes instead of walking the company, and
+// each step reports its tile in one utterance (terrain, the place standing on it, the
+// parties in sight on it, the footprints crossing it). V opens that same tile as a
+// navigable list, one row per fact, and Enter acts on a place or party through the very
+// funnels the B survey uses; V works with the mode off too, on the company's own tile, as
+// an on-the-spot "what am I standing on". X recentres the cursor on the company, Shift+X
+// reports its bearing, and G sends the company to it.
+//
+// Keys: m (23) is free on the plain map — vanilla reaches it only from the developer-mode
+// handler. x (34) is vanilla's camera lock and g (17) is our own company readout, so both
+// are consumed here while the mode is on and handed straight back when it is off.
+//
+// Footprints are the one fact vanilla gates behind a follower: the prints are drawn on the
+// map for everyone, but only a hired Lookout turns them into words, and only then names the
+// exact party type (tooltip_events.strategic_queryTileTooltipData). Since a sighted player
+// without him still reads the sprite — and there are only four sprite sets, men, greenskins,
+// beasts and undead — the readout keeps exactly that asymmetry: the family always, the exact
+// type only with the Lookout. That way this hands a blind player what the screen already
+// shows, and hiring the Lookout still buys something.
+::UnseenBanner.WorldCursor <- {
+	m = {
+		Active = false,
+		// The hex the cursor stands on. Null while the mode is off; re-anchored on the
+		// company every time the mode is switched on, so it always starts from a known
+		// reference instead of wherever it was left before a battle or a load.
+		Tile = null,
+		Items = null,
+		ItemIndex = 0,
+		ListActive = false,
+		// Codes whose press has already been acted on, cleared by their own release. The
+		// engine auto-repeats a held key as a stream of fresh presses, so a toggle (M, V)
+		// held for longer than a moment would open and immediately close again — the bug
+		// the tactical cursor's own InspectKeyHeld latch exists for. Directional and list
+		// keys are deliberately excluded: holding those to sweep the map must repeat.
+		Held = {}
+	},
+	ToggleKey = 23,    // m -> mode on/off
+	RecenterKey = 34,  // x -> cursor back to the company; Shift+x reports its bearing
+	InspectKey = 32,   // v -> the cursor tile as a navigable list
+	TravelKey = 17,    // g -> send the company to the cursor tile
+	InteractKey = 39,  // enter -> act on the focused place or party in that list
+	// Same cluster and same hex directions as the tactical tile cursor and the company's
+	// own steps (Const.Direction: N=0, NE=1, SE=2, S=3, SW=4, NW=5), so the muscle memory
+	// carries over from the battlefield to the map.
+	DirKeys = {
+		[33] = 0,   // w  -> N
+		[15] = 1,   // e  -> NE
+		[14] = 2,   // d  -> SE
+		[29] = 3,   // s  -> S
+		[11] = 4,   // a  -> SW
+		[27] = 5    // q  -> NW
+	},
+	MoveKeys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end"
+	},
+	// World units around the cursor tile's centre scanned for parties. Correctness comes
+	// from the tile comparison in collectParties, not from this radius: it only has to be
+	// generous enough to reach every party standing on the tile (a party's position drifts
+	// inside its own tile as it walks), and whatever it over-collects the filter drops.
+	// Twice the engine's contact radius (Const.World.CombatSettings.CombatPlayerDistance).
+	ScanRadius = 200.0,
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function isListActive()
+	{
+		return this.m.ListActive;
+	},
+	// The mode key is always ours. With the mode on the cursor owns the letter cluster, X
+	// and G; with it off only V, which reads the company's own tile. The list keys are
+	// claimed solely while the list is up, so plain-map Enter keeps entering whatever the
+	// company is standing on.
+	function handles(_code)
+	{
+		if (_code == this.ToggleKey) return true;
+		if (this.m.Active)
+		{
+			if ((_code in this.DirKeys) || _code == this.RecenterKey
+				|| _code == this.InspectKey || _code == this.TravelKey) return true;
+		}
+		else if (_code == this.InspectKey)
+		{
+			return true;
+		}
+		return this.m.ListActive
+			&& ((_code in this.MoveKeys) || _code == this.InteractKey);
+	},
+	// Directional and list keys repeat while held (KeyGate's cadence); everything else
+	// acts once per physical press, however long it is held, via the Held latch that
+	// its own release clears. X cannot use that latch: it is the one explorer key with
+	// a native binding on this screen (camera lock), which MSU's outer onKeyInput
+	// wrapper re-dispatches on release and consumes — so X's release never reaches
+	// this hook, the latch jammed after the first press, and every later X died
+	// silently (verified in log.html: one recentered cue in a whole session). X goes
+	// through KeyGate instead: a held X re-recentres every 0.2 s, which is harmless,
+	// unlike M or V where a repeat would toggle the mode or the list right back.
+	function repeats(_code)
+	{
+		return (_code in this.DirKeys) || (_code in this.MoveKeys)
+			|| _code == this.RecenterKey;
+	},
+	function shouldFire(_code, _now)
+	{
+		if (this.repeats(_code)) return ::UnseenBanner.KeyGate.shouldFire(_code, _now);
+		if (_code in this.m.Held) return false;
+		this.m.Held[_code] <- true;
+		return true;
+	},
+	function release(_code)
+	{
+		if (this.repeats(_code)) ::UnseenBanner.KeyGate.release(_code);
+		else if (_code in this.m.Held) delete this.m.Held[_code];
+	},
+	function reset()
+	{
+		this.m.Active = false;
+		this.m.Tile = null;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.ListActive = false;
+		this.m.Held = {};
+	},
+	// A battle starts without the world state ever finishing, so a key still physically
+	// held when combat opens would never see its release here and would stay latched —
+	// dead for the rest of the campaign. The mode itself deliberately survives a battle;
+	// only the press bookkeeping is dropped.
+	function clearHeld()
+	{
+		this.m.Held = {};
+	},
+	function item(_cat, _texto = "", _valor = "", _detalle = "", _entity = null)
+	{
+		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle, entity = _entity };
+	},
+	function ensureAnchored()
+	{
+		local player = ::World.State.getPlayer();
+		if (player == null) return false;
+		if (this.m.Tile == null) this.m.Tile = player.getTile();
+		return this.m.Tile != null;
+	},
+	function onKey(_code, _shift, _state)
+	{
+		if (_code == this.ToggleKey)
+		{
+			this.toggle();
+			return;
+		}
+
+		if (this.m.ListActive && (_code in this.MoveKeys))
+		{
+			this.moveList(_code);
+			return;
+		}
+
+		if (this.m.ListActive && _code == this.InteractKey)
+		{
+			this.activate(_state);
+			return;
+		}
+
+		if (_code == this.InspectKey)
+		{
+			if (this.m.ListActive) this.closeList(true);
+			else this.openList();
+			return;
+		}
+
+		// Everything below belongs to the mode itself and cannot be reached with it off.
+		if (!this.m.Active) return;
+
+		if (_code == this.RecenterKey)
+		{
+			if (_shift) this.announceBearing();
+			else this.recenter();
+			return;
+		}
+
+		if (_code == this.TravelKey)
+		{
+			this.travel(_state);
+			return;
+		}
+
+		if (_code in this.DirKeys) this.step(this.DirKeys[_code]);
+	},
+	function toggle()
+	{
+		if (this.m.Active)
+		{
+			this.closeList(false);
+			this.m.Active = false;
+			this.m.Tile = null;
+			::UnseenBanner.sendMessage("interrupt", "", "world.cursor.off");
+			return;
+		}
+
+		this.closeList(false);
+		this.m.Tile = null;
+		if (!this.ensureAnchored())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.cursor.unavailable");
+			return;
+		}
+
+		this.m.Active = true;
+		// The mode cue names where the cursor starts rather than reading the tile out: a
+		// second interrupt in the same frame would cut this one off mid-sentence.
+		::UnseenBanner.sendMessage("interrupt", "", "world.cursor.on");
+	},
+	function step(_dir)
+	{
+		if (!this.ensureAnchored()) return;
+		if (!this.m.Tile.hasNextTile(_dir))
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.cursor.edge");
+			return;
+		}
+
+		// The list described the tile we are leaving, so it goes with it.
+		this.closeList(false);
+		this.m.Tile = this.m.Tile.getNextTile(_dir);
+		this.announceTile("world.cursor.tile");
+	},
+	function recenter()
+	{
+		local player = ::World.State.getPlayer();
+		if (player == null || player.getTile() == null) return;
+		this.closeList(false);
+		this.m.Tile = player.getTile();
+		this.announceTile("world.cursor.recentered");
+	},
+	// Shift+X: how far the cursor has wandered and in which direction, without reading the
+	// tile again. Deliberately absent from every cursor step — a bearing on each hex of a
+	// sweep is noise, and this is the one keystroke that answers "where am I looking?".
+	function announceBearing()
+	{
+		local player = ::World.State.getPlayer();
+		if (player == null || player.getTile() == null || !this.ensureAnchored()) return;
+		local playerTile = player.getTile();
+		if (playerTile.isSameTileAs(this.m.Tile))
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.cursor.bearing.here");
+			return;
+		}
+
+		::UnseenBanner.sendMessage("interrupt", "", "world.cursor.bearing", "",
+			::UnseenBanner.WorldSurvey.posDetail(playerTile, this.m.Tile));
+	},
+	// G: walk the company to the cursor tile, mirroring what a click on that hex does in
+	// world_state.onMouseInput — a straight-line march for anything very close or still
+	// unexplored (the game deliberately refuses to route through ground the player has not
+	// seen), a navigator route otherwise. Arrival is handed to WorldMove, which already owns
+	// the "Stopped" cue and the terrain commentary on the way.
+	function travel(_state)
+	{
+		local state = _state != null ? _state : ::World.State;
+		local player = state.m.Player;
+		if (player == null || !this.ensureAnchored()) return;
+
+		local from = player.getTile();
+		if (from == null) return;
+		if (from.isSameTileAs(this.m.Tile))
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.cursor.travel.here");
+			return;
+		}
+
+		// A tile's world position is its Pos property — the API vanilla itself uses
+		// (uncoverFogOfWar, setPos, the trail builder's _from.Pos). tileToWorld exists
+		// too but vanilla only ever feeds it navigator waypoints; handed tile.Coords it
+		// returned a silently wrong vector, which is how every position query in this
+		// module came back empty while the list-based place lookup kept working.
+		local dest = this.m.Tile.Pos;
+		local dx = dest.X - player.getPos().X;
+		local dy = dest.Y - player.getPos().Y;
+		local direct = ::Const.World.MovementSettings.PlayerDirectMoveRadius;
+		local isDirect = (dx * dx + dy * dy <= direct * direct) || !this.m.Tile.IsDiscovered;
+
+		local path = null;
+		if (!isDirect)
+		{
+			local nav = ::World.getNavigator();
+			local settings = nav.createSettings();
+			settings.ActionPointCosts = ::Const.World.TerrainTypeNavCost;
+			settings.RoadMult = 1.0 / ::Const.World.MovementSettings.RoadMult;
+			path = nav.findPath(from, this.m.Tile, settings, 0);
+			if (path.isEmpty())
+			{
+				::UnseenBanner.sendMessage("interrupt", "", "world.cursor.travel.no_route");
+				return;
+			}
+		}
+
+		// Drop whatever the company was doing first: a pending pursuit or town entry would
+		// otherwise keep steering it. This also clears WorldMove's bookkeeping, so the
+		// arrival flags below have to be set after it, not before.
+		::UnseenBanner.WorldEnter.stopCurrentOrder(state);
+		// A map click breaks camp before assigning its path; keyboard travel bypasses that
+		// mouse funnel, so mirror the transition through onCamp, the one speech funnel.
+		if (::World.Assets.isCamping()) state.onCamp();
+
+		if (isDirect)
+		{
+			player.setPath(null);
+			player.setDestination(dest);
+			// No path to watch in this case, so arrival is detected from the destination
+			// the engine clears on its own (party.onUpdate) — see WorldMove.tick.
+			::UnseenBanner.WorldMove.m.PendingDirect = true;
+		}
+		else
+		{
+			player.setDestination(null);
+			player.setPath(path);
+			::UnseenBanner.WorldMove.m.Pending = true;
+		}
+
+		::UnseenBanner.WorldMove.primeTerrain(player);
+		if (state.isPaused())
+		{
+			::UnseenBanner.WorldMove.m.SelfUnpause = true;
+			state.setPause(false);
+		}
+
+		local place = this.findPlace(this.m.Tile);
+		::UnseenBanner.sendMessage("interrupt", place != null ? place.e.getName() : "",
+			"world.cursor.travel", "" + this.m.Tile.Type,
+			(place != null ? place.kind : "") + "|"
+				+ ::UnseenBanner.WorldSurvey.posDetail(from, this.m.Tile) + "|"
+				+ (this.m.Tile.IsDiscovered ? "0" : "1"));
+	},
+	// The settlement or location standing on _tile as { e, kind }, or null. The
+	// EntityManager lists are walked rather than the position query the company's step
+	// observer uses (getAllEntitiesAndOneLocationAtPos): that one caps locations at a single
+	// result per call, so with a radius wide enough to cover a whole tile the location it
+	// returns can be the one on a NEIGHBOURING tile — which the tile filter then discards,
+	// reporting bare ground where a farm stands. Which list a place came from also settles
+	// its kind without guessing at an entity API. Discovery is honoured exactly as in the B
+	// survey, and inactive landmarks are kept for the same reason it keeps them: a burned
+	// farm still stands there and still orients.
+	function findPlace(_tile)
+	{
+		foreach( s in ::World.EntityManager.getSettlements() )
+		{
+			if (s == null || !s.isAlive() || s.getTile() == null) continue;
+			if (!s.isDiscovered() || !s.getTile().isSameTileAs(_tile)) continue;
+			return { e = s, kind = "settlement" };
+		}
+
+		foreach( l in ::World.EntityManager.getLocations() )
+		{
+			if (l == null || !l.isAlive() || l.getTile() == null) continue;
+			if (!l.isDiscovered() || !l.getTile().isSameTileAs(_tile)) continue;
+			if (::UnseenBanner.isLandmark(l)) return { e = l, kind = "landmark" };
+			if (l.isActive()) return { e = l, kind = "location" };
+		}
+		return null;
+	},
+	function collectParties(_tile, _player)
+	{
+		local out = [];
+		foreach( e in ::World.getAllEntitiesAtPos(_tile.Pos, this.ScanRadius) )
+		{
+			if (e == null || !e.isParty() || !e.isAlive()) continue;
+			if (_player != null && e.getID() == _player.getID()) continue;
+			// Same sight test as the B survey and as mouse interaction: discovered before
+			// is not enough, it has to be visible right now.
+			if (e.isHiddenToPlayer() || e.getVisibilityMult() <= 0.0) continue;
+			if (e.getTile() == null || !e.getTile().isSameTileAs(_tile)) continue;
+			out.push(e);
+		}
+		return out;
+	},
+	function partyKind(_party)
+	{
+		if (_party.isAlliedWithPlayer()) return "ally";
+		return _party.isAttackable() ? "enemy" : "neutral";
+	},
+	// Which party types left prints on _tile, as Const.World.FootprintsType indices. Index 0
+	// is the "None" type, skipped exactly as vanilla's Lookout tooltip skips it: only a party
+	// that set a type is worth naming, and the player's own company leaves no prints at all
+	// (player_party.nut switches them off), so nothing of ours is ever reported back.
+	function readFootprints(_tile)
+	{
+		local found = [];
+		local flags = ::World.getAllFootprintsAtPos(_tile.Pos,
+			::Const.World.FootprintsType.COUNT);
+		if (flags == null) return found;
+		for( local i = 1; i < flags.len(); i += 1 )
+		{
+			if (flags[i]) found.push(i);
+		}
+		return found;
+	},
+	// The six neighbours' footprint flags, read once per list so a trail's heading costs one
+	// pass instead of one per type found.
+	function neighbourFootprints(_tile)
+	{
+		local out = [];
+		for( local d = 0; d < 6; d += 1 )
+		{
+			out.push(_tile.hasNextTile(d)
+				? ::World.getAllFootprintsAtPos(_tile.getNextTile(d).Pos,
+					::Const.World.FootprintsType.COUNT)
+				: null);
+		}
+		return out;
+	},
+	// Where a trail of _type continues, as hex directions. This is the one thing the engine
+	// will not answer: a footprint picks its sprite from the direction its party was walking,
+	// but getAllFootprintsAtPos reports presence only, so the heading is reconstructed from
+	// the neighbouring tiles. A trail crossing a tile normally shows two of them — where it
+	// came from and where it went — which is what makes following one possible at all.
+	function trailDirs(_neighbours, _type)
+	{
+		local dirs = "";
+		foreach( d, flags in _neighbours )
+		{
+			if (flags == null || _type >= flags.len() || !flags[_type]) continue;
+			if (dirs != "") dirs += ",";
+			dirs += d;
+		}
+		return dirs;
+	},
+	function lookoutFlag()
+	{
+		// The Lookout sets this on World.Assets and vanilla reads the raw field for the
+		// same purpose; there is no getter to prefer.
+		return ::World.Assets.m.IsShowingExtendedFootprints ? "1" : "0";
+	},
+	// One utterance per cursor step, never several: two interrupts in the same frame cut
+	// each other off (the lesson behind world.move.step packing terrain and place together),
+	// and a sweep across the map would leave only the last clause audible. Everything the
+	// tile holds is therefore packed into the two trailing fields and worded by the
+	// companion. Party and place names are game text and carry no pipes; the count and kind
+	// precede the name so a comma inside one is harmless.
+	function announceTile(_cat)
+	{
+		if (this.m.Tile == null) return;
+		local tile = this.m.Tile;
+		local player = ::World.State.getPlayer();
+		local playerTile = player != null ? player.getTile() : null;
+
+		local place = this.findPlace(tile);
+		local parties = this.collectParties(tile, player);
+		local partiesSeg = parties.len() > 0
+			? parties.len() + "," + this.partyKind(parties[0]) + "," + parties[0].getName()
+			: "";
+
+		local tracksSeg = "";
+		foreach( t in this.readFootprints(tile) )
+		{
+			if (tracksSeg != "") tracksSeg += ",";
+			tracksSeg += t;
+		}
+
+		local detail = (tile.IsDiscovered ? "0" : "1")
+			+ "|" + (place != null ? place.kind : "")
+			+ "|" + (playerTile != null && playerTile.isSameTileAs(tile) ? "1" : "0")
+			+ "|" + partiesSeg
+			+ "|" + tracksSeg
+			+ "|" + this.lookoutFlag();
+
+		::UnseenBanner.sendMessage("interrupt", place != null ? place.e.getName() : "",
+			_cat, "" + tile.Type, detail);
+	},
+	// V: the same tile as a navigable list, so the facts a step summarises can be taken one
+	// at a time — and so each trail gets its heading, which is too long to repeat on every
+	// hex of a sweep. Place and party rows reuse the B survey's own row category, which
+	// already words them and already offers Enter, so both windows speak the same language.
+	function openList()
+	{
+		// With the mode off this is a readout of the company's own tile, wherever the
+		// cursor may have been left before.
+		if (!this.m.Active) this.m.Tile = null;
+		if (!this.ensureAnchored()) return;
+
+		local tile = this.m.Tile;
+		local player = ::World.State.getPlayer();
+		local playerTile = player != null ? player.getTile() : null;
+		local pos = playerTile != null
+			? ::UnseenBanner.WorldSurvey.posDetail(playerTile, tile)
+			: "0|-1";
+
+		local rows = [];
+		rows.push(this.item("world.cursor.list.terrain", "", "" + tile.Type,
+			tile.IsDiscovered ? "0" : "1"));
+
+		if (playerTile != null && playerTile.isSameTileAs(tile))
+		{
+			rows.push(this.item("world.cursor.list.self"));
+		}
+
+		local place = this.findPlace(tile);
+		if (place != null)
+		{
+			rows.push(this.item("world.survey.item", place.e.getName(), place.kind, pos,
+				place.e));
+		}
+
+		foreach( p in this.collectParties(tile, player) )
+		{
+			rows.push(this.item("world.survey.item", p.getName(), this.partyKind(p), pos, p));
+		}
+
+		local tracks = this.readFootprints(tile);
+		if (tracks.len() > 0)
+		{
+			local lookout = this.lookoutFlag();
+			local neighbours = this.neighbourFootprints(tile);
+			foreach( t in tracks )
+			{
+				rows.push(this.item("world.cursor.list.tracks", "", "" + t,
+					this.trailDirs(neighbours, t) + "|" + lookout));
+			}
+		}
+
+		local items = [this.item("world.cursor.list.screen", "", "" + rows.len(), pos)];
+		foreach( r in rows ) items.push(r);
+
+		this.m.Items = items;
+		this.m.ItemIndex = 0;
+		this.m.ListActive = true;
+		this.announceItem();
+	},
+	function closeList(_announce = false)
+	{
+		if (!this.m.ListActive)
+		{
+			this.m.Items = null;
+			this.m.ItemIndex = 0;
+			return;
+		}
+
+		this.m.ListActive = false;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		if (_announce) ::UnseenBanner.sendMessage("interrupt", "", "world.cursor.list.closed");
+	},
+	function moveList(_code)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local idx = this.m.ItemIndex;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") idx -= 1;
+		else if (dir == "down") idx += 1;
+		else if (dir == "home") idx = 0;
+		else idx = this.m.Items.len() - 1;
+
+		if (idx < 0) idx = 0;
+		if (idx >= this.m.Items.len()) idx = this.m.Items.len() - 1;
+		this.m.ItemIndex = idx;
+		this.announceItem();
+	},
+	// Enter on a place or party row: the same AutoAttack / AutoEnterLocation funnels the B
+	// survey and a mouse click use. A successful order closes the list so map input is free
+	// again; a stale row keeps it open after its explanatory cue.
+	function activate(_state)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		if (it.entity == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.interact.none");
+			return;
+		}
+
+		local state = _state != null ? _state : ::World.State;
+		if (::UnseenBanner.WorldEnter.tryInteract(state, it.entity)) this.closeList(false);
+	},
+	function announceItem()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
 	}
 };
 
@@ -7571,6 +8176,7 @@
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldMove.reset();
+		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
@@ -7588,6 +8194,7 @@
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldMove.reset();
+		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
@@ -7605,6 +8212,7 @@
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldMove.reset();
+		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
@@ -7992,11 +8600,50 @@
 			}
 		}
 
+		// Map explorer (phase 4.6). M toggles the mode; while it is on the cursor owns
+		// Q/W/E/A/S/D, X and G, and while its tile list is up it owns Up/Down/Home/End and
+		// Enter. Every one of those keys is acted on at PRESS and consumed in both states:
+		// three of them carry a native binding on this screen (the letters pan the camera on
+		// press, X toggles the camera lock on release, Enter recentres it), and G is our own
+		// company readout, so letting either state through would fire two actions at once.
+		// Only the keys the cursor SHARES with the other two readouts (V and the list keys)
+		// yield while one of those windows is open, so Up/Down and V never have two owners.
+		// The mode's own keys never yield: M has to be able to leave the mode from anywhere,
+		// and if the letter cluster deferred to an open survey it would silently walk the
+		// company instead of the cursor — the exact opposite of what turning the mode on
+		// announces. Those keys close the other windows on their way through, the same
+		// mutual exclusion the two readouts already apply to each other.
+		local cursorShared = code == ::UnseenBanner.WorldCursor.InspectKey
+			|| code == ::UnseenBanner.WorldCursor.InteractKey
+			|| (code in ::UnseenBanner.WorldCursor.MoveKeys);
+		if (mapFree && ::UnseenBanner.WorldCursor.handles(code)
+			&& (!cursorShared
+				|| (!::UnseenBanner.WorldSurvey.isActive()
+					&& !::UnseenBanner.WorldStatus.isActive())))
+		{
+			if (_key.getState() == 1)
+			{
+				if (::UnseenBanner.WorldCursor.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldStatus.reset();
+					::UnseenBanner.WorldSurvey.reset();
+					::UnseenBanner.WorldCursor.onKey(code,
+						(_key.getModifier() & 1) != 0, this);
+				}
+			}
+			else
+			{
+				::UnseenBanner.WorldCursor.release(code);
+			}
+			return true;
+		}
+
 		if (mapFree && ::UnseenBanner.WorldStatus.handles(code))
 		{
 			if (_key.getState() == 0)
 			{
 				::UnseenBanner.WorldSurvey.reset();
+				::UnseenBanner.WorldCursor.closeList();
 				::UnseenBanner.WorldStatus.onKey(code);
 			}
 
@@ -8020,6 +8667,7 @@
 				if (parties != null && mapFree)
 				{
 					::UnseenBanner.WorldStatus.reset();
+					::UnseenBanner.WorldCursor.closeList();
 					::UnseenBanner.WorldSurvey.toggle(parties);
 				}
 			}
@@ -8065,6 +8713,10 @@
 			{
 				::UnseenBanner.WorldStatus.reset();
 				::UnseenBanner.WorldSurvey.reset();
+				// Only reachable with the explorer off (its cursor owns these keys while it
+				// is on), and then the open tile list describes a tile the company is about
+				// to leave behind.
+				::UnseenBanner.WorldCursor.closeList();
 				::UnseenBanner.WorldMove.onDirKey(code, (_key.getModifier() & 1) != 0);
 			}
 			else if (_key.getState() == 0)
@@ -8153,6 +8805,7 @@
 		// march here — otherwise Pending would be left stale and fire a spurious
 		// "Stopped" (or resume the march) on returning to the map.
 		::UnseenBanner.WorldMove.reset();
+		::UnseenBanner.WorldCursor.clearHeld();
 	}
 
 	q.onFinish = @(__original) function()

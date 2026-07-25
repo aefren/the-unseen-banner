@@ -638,6 +638,96 @@ namespace TheUnseenBanner.Companion
             // because standing on one is not an opportunity to do anything.
             ["world.move.passing"] = "{0}.",
             ["world.move.passing.landmark"] = "Landmark, {0}.",
+            // Map explorer (phase 4.6, M). A keyboard cursor over the map: the letter
+            // cluster walks it, V opens its tile as a list, X anchors it back on the
+            // company and Shift+X gives its bearing, G travels there. The mode cue carries
+            // the controls, so the per-hex readout can stay as short as the tile allows.
+            ["world.cursor.on"] = "Map explorer on. Cursor on your company. Q, W, E, A, S and D move it over the map; V reads the tile under it; X brings it back to your company and Shift plus X gives its bearing; G travels there. Press M to give the letter keys back to your company.",
+            ["world.cursor.off"] = "Map explorer off. Q, W, E, A, S and D move your company again.",
+            ["world.cursor.unavailable"] = "The map explorer is not available right now.",
+            ["world.cursor.edge"] = "Edge of the map.",
+            ["world.cursor.recentered"] = "Cursor on your company.",
+            ["world.cursor.bearing"] = "Cursor {0} from your company.",
+            ["world.cursor.bearing.here"] = "The cursor is on your company's own tile.",
+            ["world.cursor.travel"] = "Travelling to {0}.",
+            ["world.cursor.travel.here"] = "Your company is already on the cursor tile.",
+            ["world.cursor.travel.no_route"] = "No route to the cursor tile.",
+            ["world.cursor.parties.more.one"] = "And one more party.",
+            ["world.cursor.parties.more"] = "And {0} more parties.",
+            ["world.cursor.list.screen"] = "{0}: {1} entries. Use Up and Down to review; Enter acts on a settlement, location or party; V closes.",
+            ["world.cursor.list.where"] = "This tile, {0}",
+            ["world.cursor.list.where.here"] = "Your company's own tile",
+            ["world.cursor.list.closed"] = "Tile details closed.",
+            ["world.cursor.list.terrain"] = "Terrain: {0}.",
+            ["world.cursor.list.self"] = "Your company is here.",
+            // Footprints. Vanilla draws them for everyone but only turns them into words
+            // for a player who has hired the Lookout, and only then names the exact party
+            // type; the family words below are what the four sprite sets tell a sighted
+            // player without him. The trail's heading is reconstructed from the
+            // neighbouring tiles, since the engine reports presence only.
+            ["world.cursor.tracks"] = "Tracks of {0}.",
+            ["world.cursor.trail"] = "The trail continues {0}.",
+            ["world.cursor.trail.hour"] = "{0} o'clock",
+            ["world.cursor.trail.none"] = "The trail does not continue into any neighbouring tile.",
+            // Exact party types, keyed by Const.World.FootprintsType (config/world.nut) and
+            // worded after the game's own Const.Strings.FootprintsType. Spoken only with a
+            // Lookout in the retinue.
+            ["world.footprints.exact.1"] = "northern soldiers",
+            ["world.footprints.exact.2"] = "gilded soldiers",
+            ["world.footprints.exact.3"] = "a caravan",
+            ["world.footprints.exact.4"] = "peasants",
+            ["world.footprints.exact.5"] = "militia",
+            ["world.footprints.exact.6"] = "refugees",
+            ["world.footprints.exact.7"] = "brigands",
+            ["world.footprints.exact.8"] = "the undead",
+            ["world.footprints.exact.9"] = "orcs",
+            ["world.footprints.exact.10"] = "goblins",
+            ["world.footprints.exact.11"] = "barbarians",
+            ["world.footprints.exact.12"] = "nomads",
+            ["world.footprints.exact.13"] = "direwolves",
+            ["world.footprints.exact.14"] = "nachzehrers",
+            ["world.footprints.exact.15"] = "hyenas",
+            ["world.footprints.exact.16"] = "serpents",
+            ["world.footprints.exact.17"] = "webknechts",
+            ["world.footprints.exact.18"] = "unholds",
+            ["world.footprints.exact.19"] = "alps",
+            ["world.footprints.exact.20"] = "hexen",
+            ["world.footprints.exact.21"] = "schrats",
+            ["world.footprints.exact.22"] = "a kraken",
+            ["world.footprints.exact.23"] = "ifrits",
+            ["world.footprints.exact.24"] = "lindwurms",
+            ["world.footprints.exact.25"] = "mercenaries",
+            // The same types collapsed onto the four footprint sprite sets the game
+            // actually draws (Const.GenericFootprints / Orc / Beast / Undead in
+            // config/factions.nut — goblins deliberately share the orc prints). Spoken
+            // without a Lookout, which is why several types map to one word.
+            ["world.footprints.family.1"] = "men",
+            ["world.footprints.family.2"] = "men",
+            ["world.footprints.family.3"] = "men",
+            ["world.footprints.family.4"] = "men",
+            ["world.footprints.family.5"] = "men",
+            ["world.footprints.family.6"] = "men",
+            ["world.footprints.family.7"] = "men",
+            ["world.footprints.family.8"] = "the undead",
+            ["world.footprints.family.9"] = "greenskins",
+            ["world.footprints.family.10"] = "greenskins",
+            ["world.footprints.family.11"] = "men",
+            ["world.footprints.family.12"] = "men",
+            ["world.footprints.family.13"] = "beasts",
+            ["world.footprints.family.14"] = "beasts",
+            ["world.footprints.family.15"] = "beasts",
+            ["world.footprints.family.16"] = "beasts",
+            ["world.footprints.family.17"] = "beasts",
+            ["world.footprints.family.18"] = "beasts",
+            ["world.footprints.family.19"] = "beasts",
+            ["world.footprints.family.20"] = "beasts",
+            ["world.footprints.family.21"] = "beasts",
+            ["world.footprints.family.22"] = "beasts",
+            ["world.footprints.family.23"] = "beasts",
+            ["world.footprints.family.24"] = "beasts",
+            ["world.footprints.family.25"] = "men",
+            // Generic enumeration joiner, used wherever a spoken list ends in a conjunction.
+            ["list.and"] = "{0} and {1}",
             // Pause state, announced from the setPause funnel (Space, pause button...).
             ["world.pause.on"] = "Paused.",
             ["world.pause.off"] = "Unpaused.",
@@ -730,6 +820,8 @@ namespace TheUnseenBanner.Companion
             ["world.terrain.16"] = "Shore",
             ["world.terrain.17"] = "Desert",
             ["world.terrain.18"] = "Oasis",
+            // Appended by the map explorer to a tile the company has never come near.
+            ["world.terrain.unexplored"] = "{0}, unexplored",
         };
     }
 }
