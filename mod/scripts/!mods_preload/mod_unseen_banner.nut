@@ -608,6 +608,34 @@
 	{
 		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle };
 	},
+	// Which of the topbar's four time buttons is lit, named. The test is copied from
+	// world_state.updateTopBarButtonState, exact float comparison included, so the
+	// spoken state and the highlighted button can never drift apart. Camping and
+	// escorting pin the multiplier to values that match none of the three settings
+	// (CampMult 3.0, EscortMult 3.75); they get their own states instead of being
+	// rounded into a lie.
+	function speedState()
+	{
+		if (::World.State.isPaused()) return "paused";
+		if (::World.Assets.isCamping()) return "camp";
+		local mult = ::World.getSpeedMult();
+		if (mult == ::Const.World.SpeedSettings.NormalMult) return "normal";
+		if (mult == ::Const.World.SpeedSettings.FastMult) return "fast";
+		if (mult == ::Const.World.SpeedSettings.VeryFastMult) return "veryfast";
+		return "locked";
+	},
+	// Feedback for a speed change, spoken from the setter hooks below after vanilla
+	// has acted. Always read back rather than echo the request: when a clamp refuses
+	// the change (camping, escorting) this reports what really happened instead of a
+	// lie. Terser than the readout row on purpose — it repeats on every key tap.
+	function announceSpeed(_state)
+	{
+		// Mirror the setters' own guard: with a menu up they are a silent no-op, and
+		// announcing one would invent a change that never happened. Loading screens
+		// get the same silence the setPause hook gives them.
+		if (_state.m.MenuStack.hasBacksteps() || _state.isInLoadingScreen()) return;
+		::UnseenBanner.sendMessage("interrupt", "", "world.speed." + this.speedState());
+	},
 	function open()
 	{
 		local assets = ::World.Assets;
@@ -652,6 +680,19 @@
 			}
 		}
 
+		// Brothers holding an unspent perk point or a pending level-up. isLeveled() is
+		// the exact predicate the roster paints the level-up star from (data_helper
+		// feeds it as `leveledUp`), guests already excluded, so this count and the
+		// stars on screen cannot disagree. They are named one per row rather than
+		// crammed into a sentence — with eight of them a single utterance is a dump.
+		local leveled = [];
+		foreach( bro in ::World.getPlayerRoster().getAll() )
+		{
+			if (bro != null && bro.isLeveled()) leveled.push(bro.getName());
+		}
+
+		local speed = this.speedState();
+
 		// Contract titles carry BBCode/colour markup, so they ride in `texto`, the
 		// field the companion runs through clean() before speaking.
 		local contract = ::World.Contracts.getActiveContract();
@@ -660,7 +701,18 @@
 		local items = [];
 		items.push(this.item("world.status.screen"));
 		items.push(this.item(timeCat, timeName, "" + day));
+		// Read-only: 1, 2 and 3 already switch the speed natively, so this row exists to
+		// answer "what is it now?" without having to change it to find out.
+		items.push(this.item("world.status.speed." + speed));
 		items.push(this.item(brothers == 1 ? "world.status.brothers.one" : "world.status.brothers", "", "" + brothers, "" + brothersMax));
+		if (leveled.len() == 0)
+			items.push(this.item("world.status.levelup.none"));
+		else
+		{
+			items.push(this.item(leveled.len() == 1 ? "world.status.levelup.one" : "world.status.levelup", "", "" + leveled.len()));
+			foreach( name in leveled )
+				items.push(this.item("world.status.levelup.brother", name));
+		}
 		items.push(this.item("world.status.money", "", "" + money));
 		items.push(this.item("world.status.wages", "", "" + dailyMoney));
 		items.push(this.item("world.status.food", "", "" + food));
@@ -9008,6 +9060,36 @@
 	{
 		__original();
 		::UnseenBanner.WorldClock.update();
+	}
+
+	// Game speed. Hooking the 1/2/3 keys was tried first and never fired: MSU
+	// re-registers vanilla's speed keys in its own keybind system
+	// (vanilla_keybinds.nut, world_speedNormal/Fast/VeryFast), and its outer
+	// onKeyInput wrapper returns without calling the wrapped chain once its dispatch
+	// handles a key — an inner hook simply never sees them. The lesson that already
+	// held for setPause holds here: hook the action, not the key. Every route
+	// converges on these three setters — vanilla's own key cases, the topbar's
+	// clickable buttons and MSU's re-dispatch — and the game itself also calls
+	// setNormalTime when an event fires or a location is entered, a real, otherwise
+	// silent speed change a sighted player sees on the button highlight. Those two
+	// automatic calls land right before an event or town announcement, so on the
+	// interrupt channel the readout that follows overwrites them in a beat.
+	q.setNormalTime = @(__original) function( _force = false )
+	{
+		__original(_force);
+		::UnseenBanner.WorldStatus.announceSpeed(this);
+	}
+
+	q.setFastTime = @(__original) function( _force = false )
+	{
+		__original(_force);
+		::UnseenBanner.WorldStatus.announceSpeed(this);
+	}
+
+	q.setVeryFastTime = @(__original) function( _force = false )
+	{
+		__original(_force);
+		::UnseenBanner.WorldStatus.announceSpeed(this);
 	}
 
 	// Announce pause/unpause (phase 4.0 companion request). setPause is the one funnel
