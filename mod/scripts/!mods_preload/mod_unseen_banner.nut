@@ -2539,7 +2539,34 @@
 	EnterableBuildings = {
 		["building.crowd"] = true,
 		["building.tavern"] = true,
-		["building.temple"] = true
+		["building.temple"] = true,
+		["building.arena"] = true
+	},
+	// The arena is the one building whose native onClicked can refuse silently:
+	// it returns without opening anything at night, during its one-day cooldown,
+	// while an unrelated contract is active, or when the stash cannot hold the
+	// prize slots it reserves. A mouse user sees the closed sign; this returns the
+	// reason so the same information is spoken instead of nothing happening.
+	function arenaBlockReason( _building )
+	{
+		if (!::World.getTime().IsDaytime) return "night";
+		if (_building.isClosed()) return "cooldown";
+
+		local active = ::World.Contracts.getActiveContract();
+		local isArena = active != null
+			&& (active.getType() == "contract.arena" || active.getType() == "contract.arena_tournament");
+		if (active != null && !isArena) return "contract";
+		if (isArena) return null;
+
+		// No arena contract yet: vanilla creates one here, and only if the stash has
+		// room for the slots the tournament (5) or the ordinary bout (3) reserves.
+		local faction = ::World.FactionManager.getFactionOfType(::Const.Faction.Arena);
+		if (faction != null && faction.getContracts().len() != 0) return null;
+
+		local town = ::World.State.getCurrentTown();
+		local free = ::World.Assets.getStash().getNumberOfEmptySlots();
+		local needed = (town != null && town.hasSituation("situation.arena_tournament") && free >= 5) ? 5 : 3;
+		return free >= needed ? null : "stash";
 	},
 	function isActive()
 	{
@@ -2674,6 +2701,17 @@
 			}
 			else if (building.getStash() != null)
 			{
+				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
+			}
+			else if (building.getID() == "building.arena")
+			{
+				local reason = ::UnseenBanner.WorldTown.arenaBlockReason(building);
+				if (reason != null)
+				{
+					::UnseenBanner.sendMessage("interrupt", it.texto, "world.town.arena.closed", reason);
+					return;
+				}
+				// Opens the arena contract's own event screen; EventNav takes over.
 				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
 			}
 			else if (building.getID() in ::UnseenBanner.WorldTown.EnterableBuildings)
@@ -7702,8 +7740,11 @@
 // screen is mouse-only in vanilla — unreachable by a blind player. Flatten its
 // Statistics and Loot panels into one semantic list: outcome, each casualty,
 // each survivor's statistics, each loot item, then the real action buttons.
-// Up/Down reads one entry at a time and Enter activates the focused button. The
-// old L/R shortcuts remain available for loot-all and repeating the current row.
+// Up/Down/Home/End reads one entry at a time and Enter activates the focused
+// button — or, on a loot row, takes exactly that item into the stash so a player
+// with limited stash space can pick loot piece by piece. V reads the focused
+// item's full native tooltip (damage, durability, effects). The old L/R
+// shortcuts remain available for loot-all and repeating the current row.
 // The outcome and all names are the game's own text; framing words stay in L10n.
 ::UnseenBanner.CombatResult = {
 	m = {
@@ -7714,7 +7755,10 @@
 	Keys = {
 		[49] = "up",
 		[51] = "down",
-		[39] = "activate", // enter -> activate the focused button
+		[45] = "home",
+		[44] = "end",
+		[39] = "activate", // enter -> activate the focused button or loot the focused item
+		[32] = "inspect",  // v -> read the focused loot item's native tooltip
 		[22] = "lootall",  // l -> retain the direct loot-all shortcut
 		[28] = "repeat"    // r -> repeat the focused row
 	},
@@ -7728,14 +7772,15 @@
 		this.m.ItemIndex = 0;
 		this.m.CanLoot = false;
 	},
-	function item(_cat, _texto = "", _valor = "", _detalle = "", _action = null)
+	function item(_cat, _texto = "", _valor = "", _detalle = "", _action = null, _payload = null)
 	{
 		return {
 			cat = _cat,
 			texto = _texto,
 			valor = _valor,
 			detalle = _detalle,
-			action = _action
+			action = _action,
+			payload = _payload
 		};
 	},
 	function open(_screen)
@@ -7754,8 +7799,9 @@
 		if (screen == null) return;
 
 		local what = this.Keys[_code];
-		if (what == "up" || what == "down") this.move(what);
+		if (what == "up" || what == "down" || what == "home" || what == "end") this.move(what);
 		else if (what == "activate") this.activate(screen);
+		else if (what == "inspect") this.inspect();
 		else if (what == "lootall") this.lootAll(screen);
 		else if (what == "repeat") this.announceItem();
 	},
@@ -7835,12 +7881,28 @@
 		}
 		else
 		{
+			// The heading carries the free-slot count: the stash limit is the whole
+			// reason a player picks items one by one instead of pressing loot-all.
 			local heading = lootCount == 1 ? "combat.result.loot.heading.one" : "combat.result.loot.heading";
-			result.push(this.item(heading, "", "" + lootCount));
+			result.push(this.item(heading, "", "" + lootCount, "" + ::Stash.getNumberOfEmptySlots()));
+
+			// One row per item with everything a take-or-leave decision needs:
+			// name+amount, the game's own category text ("Sword, One-Handed Weapon"),
+			// condition (only for items that degrade), value and list position.
+			// Enter loots exactly this item; V reads its full native tooltip.
+			local index = 0;
 			foreach( item in items )
 			{
 				if (item == null) continue;
-				result.push(this.item("combat.result.loot.item", item.getName()));
+				index += 1;
+				local amount = item.isAmountShown() ? "" + item.getAmountString() : "";
+				local detail = index + "|" + lootCount
+					+ "|" + (item.getConditionMax() > 1 ? item.getCondition() : "")
+					+ "|" + (item.getConditionMax() > 1 ? item.getConditionMax() : "")
+					+ "|" + item.getValue()
+					+ "|" + amount;
+				result.push(this.item("combat.result.loot.item", item.getName(),
+					item.getCategories(), detail, "loot", { itemId = item.getInstanceID() }));
 			}
 		}
 
@@ -7858,25 +7920,92 @@
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		if (_direction == "up") this.m.ItemIndex -= 1;
-		else this.m.ItemIndex += 1;
+		else if (_direction == "down") this.m.ItemIndex += 1;
+		else if (_direction == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
 
 		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
 		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		::UnseenBanner.TooltipNav.hide();
 		this.announceItem();
 	},
 	function announceItem()
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local it = this.m.Items[this.m.ItemIndex];
-		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle);
+		::UnseenBanner.sendMessage("interrupt", it.texto, it.cat, it.valor, it.detalle,
+			null, it.action == "loot" ? "1" : null);
+	},
+	function inspect()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		if (it.action != "loot" || it.payload == null)
+		{
+			::UnseenBanner.TooltipNav.onTooltipUnavailable();
+			return;
+		}
+		// Same owner id vanilla binds on this screen's slots, so the tooltip query
+		// resolves through the exact hover path a sighted player gets.
+		::UnseenBanner.TooltipNav.show({
+			contentType = "ui-item",
+			entityId = null,
+			itemId = it.payload.itemId,
+			itemOwner = "tactical-combat-result-screen.found-loot"
+		}, 1, 1, "combat.result.loot.item");
 	},
 	function activate(_screen)
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local action = this.m.Items[this.m.ItemIndex].action;
 		if (action == "lootall") this.lootAll(_screen);
+		else if (action == "loot") this.lootItem(_screen);
 		else if (action == "continue") _screen.onLeaveButtonPressed();
 		else this.announceItem();
+	},
+	// Take exactly the focused item, mirroring vanilla's right-click pickup path
+	// (onSwapItem found-loot -> stash): Stash.add already fires onAddedToStash.
+	// The loot container is resizable, so removal shifts indexes; the row is
+	// resolved by instance id and the whole list rebuilt afterwards.
+	function lootItem(_screen)
+	{
+		local it = this.m.Items[this.m.ItemIndex];
+		// Defeat (and any other outcome the game marks as loot-less) shows the pile
+		// but forbids taking from it; vanilla enforces this by hiding the button.
+		if (!this.m.CanLoot)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.result.loot.locked");
+			return;
+		}
+		if (!::Stash.hasEmptySlot())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.result.loot.stash_full");
+			return;
+		}
+
+		local found = ::Tactical.CombatResultLoot.getItemByInstanceID(it.payload.itemId);
+		if (found == null)
+		{
+			// Stale row (already taken through another path): resync and re-read.
+			this.rebuildKeepingPosition(_screen);
+			this.announceItem();
+			return;
+		}
+
+		local removed = ::Tactical.CombatResultLoot.removeByIndex(found.index);
+		if (removed == null) return;
+		::Stash.add(removed);
+		removed.playInventorySound(::Const.Items.InventoryEventType.PlacedInBag);
+		this.rebuildKeepingPosition(_screen);
+		::UnseenBanner.sendMessage("interrupt", removed.getName(), "combat.result.loot.taken.one",
+			"" + ::Stash.getNumberOfEmptySlots());
+	},
+	function rebuildKeepingPosition(_screen)
+	{
+		local index = this.m.ItemIndex;
+		_screen.loadItemLists();
+		this.buildItems(_screen);
+		this.m.ItemIndex = index >= this.m.Items.len() ? this.m.Items.len() - 1 : index;
 	},
 	function selectAction(_action)
 	{

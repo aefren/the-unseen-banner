@@ -206,6 +206,8 @@ namespace TheUnseenBanner.Companion
                         texto, valor, detalle),
                     "tooltip.detail" => ComposeTooltipDetail(texto, valor, detalle),
                     "combat.result.stat" => ComposeResultStat(texto, valor, detalle),
+                    "combat.result.loot.item" => ComposeResultLootItem(texto, valor, detalle),
+                    "world.town.arena.closed" => L10n.F("world.town.arena." + valor, texto),
                     "menu.campaign" => ComposeCampaignEntry(texto, valor, detalle),
                     "menu.campaign.screen" => ComposeCampaignScreen(texto, valor),
                     "world.survey.places.screen" => ComposeSurveyPlacesScreen(valor, detalle),
@@ -1442,6 +1444,30 @@ namespace TheUnseenBanner.Companion
             if (p.Length > 1 && p[1] == "1") entry += ", " + L10n.T("combat.result.stats.leveled");
             if (p.Length > 2 && p[2] == "1") entry += ", " + L10n.T("combat.result.stats.wounded");
             return entry + ".";
+        }
+
+        /// <summary>Compose one loot row on the post-combat screen. detail packs
+        /// "index|total|condition|conditionMax|value|amount"; condition is empty for
+        /// items that do not degrade, so durability is only spoken when it exists.
+        /// The category text comes from the game itself and is spoken verbatim.</summary>
+        private static string ComposeResultLootItem(string name, string category, string detail)
+        {
+            string[] p = detail.Split('|');
+            string index = p.Length > 0 ? p[0] : "1";
+            string total = p.Length > 1 ? p[1] : "1";
+            string condition = p.Length > 2 ? p[2] : "";
+            string conditionMax = p.Length > 3 ? p[3] : "";
+            string value = p.Length > 4 ? p[4] : "";
+            string amount = p.Length > 5 ? p[5] : "";
+
+            string result = L10n.F("combat.result.loot.item",
+                WithItemAmount(name, amount), category);
+            if (condition.Length > 0 && conditionMax.Length > 0)
+                result += " " + L10n.F("combat.result.loot.item.condition", condition, conditionMax);
+            if (value.Length > 0 && value != "0")
+                result += " " + L10n.F("combat.result.loot.item.value", value);
+            result += " " + L10n.F("combat.result.loot.item.position", index, total);
+            return result + " " + L10n.T("combat.result.loot.item.take");
         }
     }
 }
