@@ -32,6 +32,7 @@
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/tooltip_nav.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/character_edit_nav.js");
 ::Hooks.registerJS("ui/mods/mod_unseen_banner/world_combat_dialog_nav.js");
+::Hooks.registerJS("ui/mods/mod_unseen_banner/game_finish_nav.js");
 ::Hooks.registerCSS("ui/mods/mod_unseen_banner/menu_nav.css");
 
 // Single choke point for every message sent to the companion app, so the
@@ -420,6 +421,71 @@
 	// Interrupt channel: the event screen is modal, so its narration takes
 	// over from whatever was being said, exactly like the menu screen.
 	function onEventAnnouncement(_data)
+	{
+		::UnseenBanner.sendMessage("interrupt", _data.texto, _data.categoria, _data.valor, _data.detalle);
+	}
+};
+
+// End-of-campaign screen: the defeat card after the last brother falls, and the
+// retirement card after a won campaign. Vanilla leaves it reachable by mouse only
+// — one Quit button, and a MenuStack entry whose backstep returns false, so not
+// even Escape moves — which made a lost campaign end on a silent, inescapable
+// screen. game_finish_nav.js reads it and adds the Up/Down/Enter cursor; keys are
+// stolen from world_state.onKeyInput, which is where the screen lives.
+//
+// Won versus lost is not in the DOM in any form worth parsing, so it is captured
+// from showGameFinishScreen's own argument (hook below) and handed to the JS side
+// when the screen finishes animating in.
+::UnseenBanner.GameFinishNav <- {
+	m = {
+		JSHandle = null,
+		Active = false,
+		GameWon = false
+	},
+	function connect()
+	{
+		this.m.JSHandle = ::UI.connect("UnseenBannerGameFinishNav", this);
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function reset()
+	{
+		this.m.Active = false;
+		this.m.GameWon = false;
+	},
+	function setOutcome( _gameWon )
+	{
+		this.m.GameWon = _gameWon;
+	},
+	function sendKey(_name)
+	{
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("onKeyForwarded", _name);
+		}
+	},
+	function onScreenShown()
+	{
+		this.m.Active = true;
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("onFinishShown", this.m.GameWon ? "victory" : "defeat");
+		}
+	},
+	function onScreenHidden()
+	{
+		this.m.Active = false;
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("onFinishHidden", null);
+		}
+	},
+	// Receives a single table from JS (SQ.call only carries one args value).
+	// Interrupt channel: the screen is modal and terminal, so nothing queued
+	// behind it is worth hearing over the player's own navigation.
+	function onFinishAnnouncement(_data)
 	{
 		::UnseenBanner.sendMessage("interrupt", _data.texto, _data.categoria, _data.valor, _data.detalle);
 	}
@@ -7813,6 +7879,7 @@
 		::UnseenBanner.JSConnection.connect();
 		::UnseenBanner.MenuNav.connect();
 		::UnseenBanner.EventNav.connect();
+		::UnseenBanner.GameFinishNav.connect();
 		::UnseenBanner.TooltipNav.connect();
 		::UnseenBanner.CharacterEdit.connect();
 		::logInfo("UnseenBanner: root_state.onInit hook fired (class hooking alive).");
@@ -7886,6 +7953,23 @@
 	{
 		__original();
 		::UnseenBanner.EventNav.onEventHidden();
+	}
+});
+
+// Same contract as the event screen: onScreenShown is fired by the JS side once
+// the fade-in completes, which is after loadFromData has put the ending text and
+// the score in the DOM, so reading it there is safe.
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/world_game_finish_screen", function(q) {
+	q.onScreenShown = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.GameFinishNav.onScreenShown();
+	}
+
+	q.onScreenHidden = @(__original) function()
+	{
+		__original();
+		::UnseenBanner.GameFinishNav.onScreenHidden();
 	}
 });
 
@@ -8182,6 +8266,7 @@
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
 		::UnseenBanner.WorldCombatDialogNav.reset();
+		::UnseenBanner.GameFinishNav.reset();
 		::UnseenBanner.SheetNav.reset();
 		__original();
 	}
@@ -8200,6 +8285,7 @@
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
 		::UnseenBanner.WorldCombatDialogNav.reset();
+		::UnseenBanner.GameFinishNav.reset();
 		::UnseenBanner.SheetNav.reset();
 		__original();
 	}
@@ -8218,6 +8304,7 @@
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
 		::UnseenBanner.WorldCombatDialogNav.reset();
+		::UnseenBanner.GameFinishNav.reset();
 		::UnseenBanner.SheetNav.reset();
 		__original();
 	}
@@ -8308,8 +8395,38 @@
 		::UnseenBanner.sendMessage("interrupt", "", this.m.IsGamePaused ? "world.pause.on" : "world.pause.off");
 	}
 
+	// The one place that knows whether the campaign was won or lost. It is called
+	// from onUpdate (last brother down), from the ironman quit-to-menu path and
+	// from retirement; capture the outcome before the original shows the screen,
+	// so it is already there when onScreenShown fires.
+	q.showGameFinishScreen = @(__original) function( _gameWon )
+	{
+		::UnseenBanner.GameFinishNav.setOutcome(_gameWon);
+		__original(_gameWon);
+	}
+
 	q.onKeyInput = @(__original) function( _key )
 	{
+		// The end-of-campaign screen is terminal and fully modal: it pushes a
+		// MenuStack entry that refuses to be popped, so Escape does nothing and Quit
+		// is the only action left. Handle its cursor first and let every other key
+		// fall straight through to vanilla, skipping all the map readouts below —
+		// none of them should speak over a campaign that is already over, and the
+		// map they describe is hidden anyway.
+		if (::UnseenBanner.GameFinishNav.isActive())
+		{
+			::UnseenBanner.WorldStatus.reset();
+			::UnseenBanner.WorldSurvey.reset();
+
+			if (_key.getState() == 0 && _key.getKey() in ::UnseenBanner.KeyCodes)
+			{
+				::UnseenBanner.GameFinishNav.sendKey(::UnseenBanner.KeyCodes[_key.getKey()]);
+				return true;
+			}
+
+			return __original(_key);
+		}
+
 		// Ground truth for "a menu or popup is up" is the MenuStack's backsteps, not
 		// MenuNav's module flags. Saving from the in-game pause menu returns to this
 		// same world_state with no onInit and no loading screen (our other reset

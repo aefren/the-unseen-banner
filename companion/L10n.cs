@@ -752,6 +752,14 @@ namespace TheUnseenBanner.Companion
             ["world.obituary.kills.one"] = "1 kill",
             ["world.obituary.kills"] = "{0} kills",
             ["world.obituary.demise"] = "Demise: {0}",
+            // End of campaign. The verdict and the score come first; the ending
+            // itself runs to several paragraphs and waits as the first list entry,
+            // so the player is not held through it before hearing the outcome.
+            ["world.finish.defeat"] = "Defeat. The company is no more, and the campaign is over. {0}. Use Up and Down to review the ending and the score, and Enter on Quit to return to the main menu.",
+            ["world.finish.victory"] = "The campaign is over. {0}. Use Up and Down to review the ending and the score, and Enter on Quit to return to the main menu.",
+            ["world.finish.body"] = "{0}",
+            ["world.finish.score"] = "Final score: {0}.",
+            ["world.finish.button"] = "{0}, button {1} of {2}.",
             // Factions & Relations (phase 5.2, R). The left faction list and right
             // details pane are flattened into a single keyboard-navigable list.
             ["world.relations.screen.empty"] = "Factions and relations. No known factions. Use Up and Down to review renown and reputation; Home and End jump to the beginning and end. Press R or Escape to close.",
