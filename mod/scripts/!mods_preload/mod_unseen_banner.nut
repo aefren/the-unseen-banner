@@ -2375,6 +2375,14 @@
 		[44] = "end",
 		[39] = "activate" // enter
 	},
+	// Buildings without a trade stash that nonetheless have an accessible cursor.
+	// Anything not listed here (and not a shop) is still reported as unreachable
+	// rather than opening a dialog the player could not navigate.
+	EnterableBuildings = {
+		["building.crowd"] = true,
+		["building.tavern"] = true,
+		["building.temple"] = true
+	},
 	function isActive()
 	{
 		return this.m.Active;
@@ -2510,11 +2518,12 @@
 			{
 				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
 			}
-			else if (building.getID() == "building.crowd")
+			else if (building.getID() in ::UnseenBanner.WorldTown.EnterableBuildings)
 			{
-				// The crowd building owns the settlement's recruit roster. Enter
+				// Buildings with no trade stash but an accessible dialog of their
+				// own: the crowd (recruit roster), the tavern and the temple. Enter
 				// through the exact same slot callback as a mouse click; the
-				// showHireDialog hook below installs the accessible cursor.
+				// matching show*Dialog hook below installs the accessible cursor.
 				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
 			}
 			else
@@ -3738,6 +3747,485 @@
 		{
 			this.switchBrother(_code in this.NextKeys);
 		}
+	}
+};
+
+// Tavern. Vanilla lays out two panels — buy the patrons a round for news, buy
+// your own men a round for morale — each with a Pay button and a result area, plus
+// a Leave button. Both actions are pure Squirrel endpoints on tavern_building, so
+// this stays in Squirrel like the shop and recruitment cursors rather than driving
+// the DOM.
+//
+// Up/Down/Home/End walk the two actions, Enter performs the focused one, V re-reads
+// the text it last produced (a rumor can be several sentences and the interrupt
+// channel drops it the moment anything else speaks). Escape at action level is left
+// to the native menu stack, which returns to the town frame.
+//
+// The rumor and the drinking report are game-written prose: they cross the bridge
+// verbatim, BBCode and all, for the central cleaner to handle. Only the row labels
+// and prices are mod speech and live in L10n.
+::UnseenBanner.WorldTavern <- {
+	m = {
+		Screen = null,
+		Module = null,
+		Tavern = null,
+		Items = null,
+		ItemIndex = 0,
+		Active = false
+	},
+	InspectKey = 32, // v
+	ActionKey = 39, // enter
+	MoveKeys = {
+		[44] = "end",
+		[45] = "home",
+		[49] = "up",
+		[51] = "down"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function isCurrent(_screen)
+	{
+		return this.m.Active && _screen != null && this.m.Screen == _screen
+			&& _screen.m.LastActiveModule == this.m.Module;
+	},
+	function handles(_code)
+	{
+		if (!this.m.Active) return false;
+		return _code == this.InspectKey
+			|| _code == this.ActionKey
+			|| _code in this.MoveKeys;
+	},
+	function reset()
+	{
+		this.m.Screen = null;
+		this.m.Module = null;
+		this.m.Tavern = null;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Active = false;
+	},
+	function close()
+	{
+		this.reset();
+	},
+	// The building is handed to the module by tavern_building.onClicked right before
+	// the dialog opens, so read it from there rather than re-deriving it from the
+	// settlement: a town can only have one tavern, but the module's copy is the one
+	// its own endpoints will charge against.
+	function open(_screen, _module)
+	{
+		this.reset();
+		if (_screen == null || _module == null) return;
+
+		this.m.Screen = _screen;
+		this.m.Module = _module;
+		this.m.Tavern = _module.m.Tavern;
+		if (this.m.Tavern == null) return;
+
+		// queryData() is exactly what vanilla calls when the dialog opens, and it is
+		// safe to reach for here: the free-of-charge rumor it returns is cached in
+		// the building's LastRumor, so asking twice in one visit yields the same
+		// string rather than burning a new one.
+		local data = this.m.Module.queryData();
+		local freeRumor = (data != null && "Rumor" in data && data.Rumor != null)
+			? data.Rumor : "";
+
+		this.m.Items = [
+			{
+				execute = "rumor",
+				label = "rumor",
+				price = this.m.Tavern.getRumorPrice(),
+				result = freeRumor
+			},
+			{
+				execute = "drink",
+				label = "drink",
+				price = this.m.Tavern.getDrinkPrice(),
+				result = ""
+			}
+		];
+		this.m.ItemIndex = 0;
+		this.m.Active = true;
+		this.announceItem(true);
+	},
+	function currentRow()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return null;
+		if (this.m.ItemIndex < 0 || this.m.ItemIndex >= this.m.Items.len()) return null;
+		return this.m.Items[this.m.ItemIndex];
+	},
+	function move(_code)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	// Keep vanilla's own panel in step after an accessible purchase, so the crowns
+	// on screen and the button availability match what was actually spent.
+	function refreshNative()
+	{
+		if (this.m.Module == null || this.m.Screen == null) return;
+		local data = this.m.Module.queryData();
+		this.m.Screen.updateAssets();
+		if (data != null && this.m.Module.m.JSHandle != null)
+			this.m.Module.m.JSHandle.asyncCall("loadFromData", data);
+	},
+	// Flatten the drinking report into one spoken block. Vanilla renders an intro
+	// line plus a table of per-brother outcomes; the icons carry no text, so only
+	// the written rows are worth speaking.
+	function joinDrinkResult(_result)
+	{
+		if (_result == null) return "";
+		local text = ("Intro" in _result && _result.Intro != null) ? _result.Intro : "";
+		if (!("Result" in _result) || _result.Result == null) return text;
+		foreach( row in _result.Result )
+		{
+			if (row == null) continue;
+			if (!("Text" in row) || row.Text == null || row.Text == "") continue;
+			if (text != "") text += "\n";
+			text += row.Text;
+		}
+		return text;
+	},
+	function execute()
+	{
+		local row = this.currentRow();
+		if (row == null || this.m.Module == null) return;
+
+		// Both endpoints refuse and charge nothing when the crowns are short, and
+		// report that by returning null. Checking their answer rather than the purse
+		// keeps the affordability rule in the game's hands, prices multipliers and
+		// all.
+		if (row.execute == "rumor")
+		{
+			local data = this.m.Module.onQueryRumor();
+			local rumor = (data != null && "Rumor" in data && data.Rumor != null)
+				? data.Rumor : null;
+			if (rumor == null)
+			{
+				::UnseenBanner.sendMessage("interrupt", "", "world.tavern.error", "money");
+				return;
+			}
+			row.result = rumor;
+			this.refreshNative();
+			::UnseenBanner.sendMessage("interrupt", rumor, "world.tavern.result.rumor",
+				"" + row.price, "" + ::World.Assets.getMoney());
+			return;
+		}
+
+		local data = this.m.Module.onDrink();
+		local drink = (data != null && "Drink" in data) ? data.Drink : null;
+		if (drink == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.tavern.error", "money");
+			return;
+		}
+		row.result = this.joinDrinkResult(drink);
+		this.refreshNative();
+		::UnseenBanner.sendMessage("interrupt", row.result, "world.tavern.result.drink",
+			"" + row.price, "" + ::World.Assets.getMoney());
+	},
+	// V re-reads whatever the focused action last produced. The free rumor the
+	// tavern offers on arrival counts, so a player can hear it without paying.
+	function inspect()
+	{
+		local row = this.currentRow();
+		if (row == null) return;
+		if (row.result == null || row.result == "")
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.tavern.nothing." + row.label);
+			return;
+		}
+		::UnseenBanner.sendMessage("interrupt", row.result, "world.tavern.reread");
+	},
+	function announceItem(_opened = false)
+	{
+		local row = this.currentRow();
+		if (row == null) return;
+		local detail = "" + row.price + "|" + (this.m.ItemIndex + 1)
+			+ "|" + this.m.Items.len() + "|" + (_opened ? "1" : "0")
+			+ "|" + (row.result != null && row.result != "" ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", "" + ::World.Assets.getMoney(),
+			"world.tavern.action", row.label, detail);
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active) return;
+		if (_code == this.ActionKey) this.execute();
+		else if (_code == this.InspectKey) this.inspect();
+		else if (_code in this.MoveKeys) this.move(_code);
+	}
+};
+
+// Temple. Vanilla lists every brother carrying an untreated, treatable injury and,
+// for the selected one, a row per injury with a price button. The module exposes
+// both the roster query and the treatment endpoint, so this cursor mirrors the
+// recruitment one: Up/Down over the wounded, Enter opens that man's injuries as an
+// action sub-list, Enter again pays for the treatment, V or Escape backs out.
+//
+// One thing vanilla does NOT do in Squirrel: onTreatInjury deducts the price with
+// no affordability check at all — the only guard is the JS disabling the button
+// when the crowns are short. Reaching the endpoint directly therefore has to
+// enforce that rule here, or an accessible treatment would push the company into
+// negative crowns where a mouse never could.
+::UnseenBanner.WorldTemple <- {
+	m = {
+		Screen = null,
+		Module = null,
+		Items = null,
+		ItemIndex = 0,
+		ActionMode = false,
+		Actions = null,
+		ActionIndex = 0,
+		Active = false
+	},
+	InspectKey = 32, // v
+	ActionKey = 39, // enter
+	EscapeKey = 41,
+	MoveKeys = {
+		[44] = "end",
+		[45] = "home",
+		[49] = "up",
+		[51] = "down"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function isCurrent(_screen)
+	{
+		return this.m.Active && _screen != null && this.m.Screen == _screen
+			&& _screen.m.LastActiveModule == this.m.Module;
+	},
+	function handles(_code)
+	{
+		if (!this.m.Active) return false;
+		return _code == this.InspectKey
+			|| _code == this.ActionKey
+			|| (_code == this.EscapeKey && this.m.ActionMode)
+			|| _code in this.MoveKeys;
+	},
+	function reset()
+	{
+		this.m.Screen = null;
+		this.m.Module = null;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.ActionMode = false;
+		this.m.Actions = null;
+		this.m.ActionIndex = 0;
+		this.m.Active = false;
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function open(_screen, _module)
+	{
+		this.reset();
+		if (_screen == null || _module == null) return;
+		this.m.Screen = _screen;
+		this.m.Module = _module;
+		this.m.Active = true;
+		this.buildItems();
+		this.announceItem(true);
+	},
+	// Rebuilt from queryRosterInformation, the same call that feeds the visible
+	// list, so a man whose last injury was just treated drops out exactly as he does
+	// on screen. _preferredID keeps the cursor on the brother being worked on across
+	// that rebuild; _fallbackIndex catches the case where he has left the list.
+	function buildItems(_preferredID = null, _fallbackIndex = 0)
+	{
+		local rows = [];
+		if (this.m.Module != null)
+		{
+			local data = this.m.Module.queryRosterInformation();
+			if (data != null && "Roster" in data && data.Roster != null)
+			{
+				foreach( entry in data.Roster )
+				{
+					if (entry == null) continue;
+					local injuries = [];
+					local total = 0;
+					foreach( injury in entry.Injuries )
+					{
+						if (injury == null) continue;
+						injuries.push({
+							id = injury.id,
+							name = injury.name,
+							price = injury.price
+						});
+						total += injury.price;
+					}
+					if (injuries.len() == 0) continue;
+					rows.push({
+						entityID = entry.ID,
+						name = entry.Name,
+						injuries = injuries,
+						total = total
+					});
+				}
+			}
+		}
+
+		this.m.Items = rows;
+		this.m.ItemIndex = _fallbackIndex;
+		if (_preferredID != null)
+		{
+			for (local i = 0; i < rows.len(); i += 1)
+			{
+				if (rows[i].entityID == _preferredID)
+				{
+					this.m.ItemIndex = i;
+					break;
+				}
+			}
+		}
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (rows.len() > 0 && this.m.ItemIndex >= rows.len())
+			this.m.ItemIndex = rows.len() - 1;
+	},
+	function currentRow()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return null;
+		if (this.m.ItemIndex < 0 || this.m.ItemIndex >= this.m.Items.len()) return null;
+		return this.m.Items[this.m.ItemIndex];
+	},
+	function move(_code)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0)
+		{
+			this.announceItem();
+			return;
+		}
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function openActions()
+	{
+		local row = this.currentRow();
+		if (row == null)
+		{
+			this.announceItem();
+			return;
+		}
+		this.m.Actions = row.injuries;
+		this.m.ActionMode = true;
+		this.m.ActionIndex = 0;
+		this.announceAction(true);
+	},
+	function leaveActions(_announceParent = false)
+	{
+		this.m.ActionMode = false;
+		this.m.Actions = null;
+		this.m.ActionIndex = 0;
+		if (_announceParent) this.announceItem();
+	},
+	function moveAction(_code)
+	{
+		if (this.m.Actions == null || this.m.Actions.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ActionIndex -= 1;
+		else if (dir == "down") this.m.ActionIndex += 1;
+		else if (dir == "home") this.m.ActionIndex = 0;
+		else this.m.ActionIndex = this.m.Actions.len() - 1;
+		if (this.m.ActionIndex < 0) this.m.ActionIndex = 0;
+		if (this.m.ActionIndex >= this.m.Actions.len())
+			this.m.ActionIndex = this.m.Actions.len() - 1;
+		this.announceAction();
+	},
+	function refreshNative()
+	{
+		if (this.m.Module == null || this.m.Screen == null) return;
+		local data = this.m.Module.queryRosterInformation();
+		this.m.Screen.updateAssets();
+		// The whole table, not data.Roster: the temple's loadFromData reads
+		// _data.Roster itself (unlike the recruit module, which takes the bare list).
+		if (data != null && this.m.Module.m.JSHandle != null)
+			this.m.Module.m.JSHandle.asyncCall("loadFromData", data);
+	},
+	function executeAction()
+	{
+		if (!this.m.ActionMode || this.m.Actions == null
+			|| this.m.Actions.len() == 0) return;
+		local row = this.currentRow();
+		if (row == null) return;
+		local injury = this.m.Actions[this.m.ActionIndex];
+
+		// The guard vanilla only ever applied in the UI layer (see the note above).
+		if (injury.price > ::World.Assets.getMoney())
+		{
+			::UnseenBanner.sendMessage("interrupt", injury.name, "world.temple.error", "money");
+			return;
+		}
+
+		local fallback = this.m.ItemIndex;
+		this.m.Module.onTreatInjury([row.entityID, injury.id]);
+		this.leaveActions(false);
+		this.refreshNative();
+		this.buildItems(row.entityID, fallback);
+		::UnseenBanner.sendMessage("interrupt", injury.name, "world.temple.result",
+			row.name, "" + injury.price + "|" + ::World.Assets.getMoney());
+	},
+	function announceAction(_opened = false)
+	{
+		if (this.m.Actions == null || this.m.Actions.len() == 0) return;
+		local row = this.currentRow();
+		local injury = this.m.Actions[this.m.ActionIndex];
+		local detail = "" + injury.price + "|" + (this.m.ActionIndex + 1)
+			+ "|" + this.m.Actions.len() + "|" + (_opened ? "1" : "0")
+			+ "|" + (injury.price > ::World.Assets.getMoney() ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", injury.name, "world.temple.injury",
+			row != null ? row.name : "", detail);
+	},
+	function announceItem(_opened = false)
+	{
+		local money = "" + ::World.Assets.getMoney();
+		if (this.m.Items == null || this.m.Items.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.temple.empty", money,
+				_opened ? "1" : "0");
+			return;
+		}
+		local row = this.currentRow();
+		if (row == null) return;
+		local detail = "" + row.injuries.len() + "|" + row.total + "|"
+			+ (this.m.ItemIndex + 1) + "|" + this.m.Items.len() + "|"
+			+ (_opened ? "1" : "0") + "|" + money;
+		::UnseenBanner.sendMessage("interrupt", row.name, "world.temple.patient",
+			"", detail);
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active) return;
+
+		if (this.m.ActionMode)
+		{
+			if (_code == this.ActionKey) this.executeAction();
+			else if (_code == this.InspectKey || _code == this.EscapeKey)
+				this.leaveActions(true);
+			else if (_code in this.MoveKeys) this.moveAction(_code);
+			return;
+		}
+
+		if (_code == this.ActionKey) this.openActions();
+		else if (_code in this.MoveKeys) this.move(_code);
 	}
 };
 
@@ -8107,6 +8595,8 @@
 		__original();
 		::UnseenBanner.WorldShop.close();
 		::UnseenBanner.WorldHire.close();
+		::UnseenBanner.WorldTavern.close();
+		::UnseenBanner.WorldTemple.close();
 		::UnseenBanner.WorldTown.open(this.getTown());
 	}
 
@@ -8115,6 +8605,8 @@
 		__original();
 		::UnseenBanner.WorldShop.close();
 		::UnseenBanner.WorldHire.close();
+		::UnseenBanner.WorldTavern.close();
+		::UnseenBanner.WorldTemple.close();
 		::UnseenBanner.WorldTown.close();
 	}
 
@@ -8137,14 +8629,38 @@
 		}
 	}
 
+	// tavern_building.onClicked hands the building to the module immediately before
+	// calling this, so the module's Tavern is already set by the time we open.
+	q.showTavernDialog = @(__original) function()
+	{
+		__original();
+		if (this.isVisible() && this.m.TavernDialogModule != null)
+		{
+			::UnseenBanner.WorldTavern.open(this, this.m.TavernDialogModule);
+		}
+	}
+
+	q.showTempleDialog = @(__original) function()
+	{
+		__original();
+		if (this.isVisible() && this.m.TempleDialogModule != null)
+		{
+			::UnseenBanner.WorldTemple.open(this, this.m.TempleDialogModule);
+		}
+	}
+
 	q.showMainDialog = @(__original) function()
 	{
 		local leavingShop = ::UnseenBanner.WorldShop.isCurrent(this);
 		local leavingHire = ::UnseenBanner.WorldHire.isCurrent(this);
+		local leavingTavern = ::UnseenBanner.WorldTavern.isCurrent(this);
+		local leavingTemple = ::UnseenBanner.WorldTemple.isCurrent(this);
 		__original();
 		if (leavingShop) ::UnseenBanner.WorldShop.close();
 		if (leavingHire) ::UnseenBanner.WorldHire.close();
-		if (leavingShop || leavingHire)
+		if (leavingTavern) ::UnseenBanner.WorldTavern.close();
+		if (leavingTemple) ::UnseenBanner.WorldTemple.close();
+		if (leavingShop || leavingHire || leavingTavern || leavingTemple)
 		{
 			if (::UnseenBanner.WorldTown.isActive())
 				::UnseenBanner.WorldTown.announceItem();
@@ -8262,6 +8778,8 @@
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
+		::UnseenBanner.WorldTavern.close();
+		::UnseenBanner.WorldTemple.close();
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
@@ -8281,6 +8799,8 @@
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
+		::UnseenBanner.WorldTavern.close();
+		::UnseenBanner.WorldTemple.close();
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
@@ -8300,6 +8820,8 @@
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
+		::UnseenBanner.WorldTavern.close();
+		::UnseenBanner.WorldTemple.close();
 		::UnseenBanner.WorldObituary.close();
 		::UnseenBanner.WorldRelations.close();
 		::UnseenBanner.WorldRetinue.reset();
@@ -8653,6 +9175,36 @@
 			return true;
 		}
 
+		// Tavern: two paid actions and their results, same priority rule as the shop
+		// and the recruit list. Escape is never captured here — at action level it
+		// belongs to the native menu stack, which walks back to the town frame.
+		if (this.m.WorldTownScreen.isVisible()
+			&& !::UnseenBanner.EventNav.isActive()
+			&& ::UnseenBanner.WorldTavern.isCurrent(this.m.WorldTownScreen)
+			&& ::UnseenBanner.WorldTavern.handles(code))
+		{
+			if (_key.getState() == 0 && !this.m.WorldTownScreen.isAnimating())
+			{
+				::UnseenBanner.WorldTavern.onKey(code);
+			}
+			return true;
+		}
+
+		// Temple: wounded brothers and their treatable injuries. Escape is captured
+		// only inside the injury sub-list; at patient level it falls through and
+		// leaves the temple natively.
+		if (this.m.WorldTownScreen.isVisible()
+			&& !::UnseenBanner.EventNav.isActive()
+			&& ::UnseenBanner.WorldTemple.isCurrent(this.m.WorldTownScreen)
+			&& ::UnseenBanner.WorldTemple.handles(code))
+		{
+			if (_key.getState() == 0 && !this.m.WorldTownScreen.isAnimating())
+			{
+				::UnseenBanner.WorldTemple.onKey(code);
+			}
+			return true;
+		}
+
 		// Town screen (phase 4.5): while the settlement screen is up (and no event is
 		// layered over it), our list drives it — Up/Down/Home/End walk buildings and
 		// contracts, Enter activates. Act on release, consume the key. Escape is left
@@ -8661,6 +9213,8 @@
 			&& !::UnseenBanner.EventNav.isActive()
 			&& !::UnseenBanner.WorldShop.isCurrent(this.m.WorldTownScreen)
 			&& !::UnseenBanner.WorldHire.isCurrent(this.m.WorldTownScreen)
+			&& !::UnseenBanner.WorldTavern.isCurrent(this.m.WorldTownScreen)
+			&& !::UnseenBanner.WorldTemple.isCurrent(this.m.WorldTownScreen)
 			&& ::UnseenBanner.WorldTown.isActive()
 			&& ::UnseenBanner.WorldTown.handles(code))
 		{

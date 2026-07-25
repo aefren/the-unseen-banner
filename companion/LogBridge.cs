@@ -168,6 +168,13 @@ namespace TheUnseenBanner.Companion
                     "world.recruit.action" => ComposeRecruitAction(texto, valor, detalle),
                     "world.recruit.actions.none" => L10n.F(categoria, texto),
                     "world.recruit.error" => L10n.T("world.recruit.error." + valor),
+                    "world.tavern.action" => ComposeTavernAction(texto, valor, detalle),
+                    "world.tavern.error" => L10n.T("world.tavern.error." + valor),
+                    "world.temple.patient" => ComposeTemplePatient(texto, detalle),
+                    "world.temple.empty" => ComposeTempleEmpty(valor, detalle),
+                    "world.temple.injury" => ComposeTempleInjury(texto, valor, detalle),
+                    "world.temple.result" => ComposeTempleResult(texto, valor, detalle),
+                    "world.temple.error" => L10n.F("world.temple.error." + valor, texto),
                     string key when key.StartsWith("world.recruit.result.", StringComparison.Ordinal)
                         => L10n.F(key, texto, valor, detalle),
                     "world.character.perk" => ComposeWorldPerk(texto, valor, detalle),
@@ -505,6 +512,78 @@ namespace TheUnseenBanner.Companion
                 label, candidateName);
             result += " " + L10n.F("world.recruit.action.position", index, total);
             return opened ? L10n.F("world.recruit.action.opened", result) : result;
+        }
+
+        private static string ComposeTavernAction(string money, string action, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string price = parts.Length > 0 ? parts[0] : "";
+            string index = parts.Length > 1 ? parts[1] : "1";
+            string total = parts.Length > 2 ? parts[2] : "1";
+            bool opened = parts.Length > 3 && parts[3] == "1";
+            bool hasResult = parts.Length > 4 && parts[4] == "1";
+
+            string result = L10n.F("world.tavern.action." + action, price);
+            result += " " + L10n.F("world.tavern.position", index, total);
+            // Whether there is anything to re-read decides which of the two hints
+            // makes sense: offering V when nothing was ever said only wastes breath.
+            result += " " + L10n.T(hasResult ? "world.tavern.unread" : "world.tavern.unheard");
+            return opened
+                ? L10n.F("world.tavern.screen",
+                    L10n.F("world.tavern.purse", money) + " " + result)
+                : result;
+        }
+
+        private static string ComposeTemplePatient(string name, string detail)
+        {
+            string[] parts = detail.Split('|');
+            int injuries = parts.Length > 0 &&
+                int.TryParse(parts[0], out int parsedInjuries) ? parsedInjuries : 0;
+            string total = parts.Length > 1 ? parts[1] : "";
+            string index = parts.Length > 2 ? parts[2] : "1";
+            string patients = parts.Length > 3 ? parts[3] : "1";
+            bool opened = parts.Length > 4 && parts[4] == "1";
+            string money = parts.Length > 5 ? parts[5] : "";
+
+            string count = injuries == 1
+                ? L10n.T("world.temple.injuries.one")
+                : L10n.F("world.temple.injuries.many", injuries);
+            string result = L10n.F("world.temple.patient", name, count, total);
+            result += " " + L10n.F("world.temple.position", index, patients);
+            return opened
+                ? L10n.F("world.temple.screen",
+                    L10n.F("world.tavern.purse", money) + " " + result)
+                : result;
+        }
+
+        private static string ComposeTempleEmpty(string money, string detail)
+        {
+            string result = L10n.F("world.temple.empty", money);
+            return detail == "1" ? L10n.F("world.temple.empty.opened", result) : result;
+        }
+
+        private static string ComposeTempleInjury(string injury, string brother, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string price = parts.Length > 0 ? parts[0] : "";
+            string index = parts.Length > 1 ? parts[1] : "1";
+            string total = parts.Length > 2 ? parts[2] : "1";
+            bool opened = parts.Length > 3 && parts[3] == "1";
+            bool unaffordable = parts.Length > 4 && parts[4] == "1";
+
+            string result = L10n.F("world.temple.injury", injury, price, brother);
+            if (unaffordable)
+                result += " " + L10n.T("world.temple.injury.unaffordable");
+            result += " " + L10n.F("world.temple.injury.position", index, total);
+            return opened ? L10n.F("world.temple.injury.opened", result) : result;
+        }
+
+        private static string ComposeTempleResult(string injury, string brother, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string price = parts.Length > 0 ? parts[0] : "";
+            string money = parts.Length > 1 ? parts[1] : "";
+            return L10n.F("world.temple.result", injury, brother, price, money);
         }
 
         private static string ComposeWorldPerk(string name, string state, string tier)
