@@ -10,7 +10,7 @@
     <RootNamespace>TheUnseenBanner.Companion</RootNamespace>
     <!-- Kept in step with ::UnseenBanner.Version in the mod and ModVersion in
          Program.cs: the three are the same release. -->
-    <Version>0.7.0</Version>
+    <Version>0.8.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

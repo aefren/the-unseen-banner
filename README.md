@@ -2,7 +2,7 @@
 
 **An accessibility mod for blind players of *Battle Brothers*.**
 
-**Version 0.7** — first public release.
+**Version 0.8**
 
 *Battle Brothers* is a turn-based tactical RPG where you lead a medieval
 mercenary company: hire and equip fighters, take contracts across an open world
@@ -71,8 +71,10 @@ before starting a serious campaign:
   cursor with travel-to-tile and footprint reading, the nearby survey of
   settlements, locations, landmarks and visible parties, and a company readout
   covering day and time, brothers, crowns, wages, food, the active contract with
-  its objectives, and the current ambition. Day changes, speed changes, pauses
-  and brothers ready to level up are announced as they happen.
+  its objectives, and the current ambition. Settlements, locations and landmarks
+  are announced the first time they come into sight, and enemy parties every
+  time they do. Day changes, speed changes, pauses and brothers ready to level
+  up are announced as they happen.
 - ✅ **Settlements**: the town screen as a list of buildings and contracts, plus
   accessible market, recruitment, tavern, temple and arena.
 - ✅ **Company management**: the character screen — sheet, equipped items,

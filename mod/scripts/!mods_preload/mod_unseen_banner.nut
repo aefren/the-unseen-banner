@@ -5,7 +5,7 @@
 ::UnseenBanner <- {
 	ID = "mod_unseen_banner",
 	Name = "The Unseen Banner",
-	Version = "0.7.0",
+	Version = "0.8.0",
 	Mod = null,
 	JSConnection = null,
 	MenuNav = null,
