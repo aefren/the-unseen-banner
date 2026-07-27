@@ -42,6 +42,14 @@ $csprojVersion = [regex]::Match((Get-Content -LiteralPath (Join-Path $Root 'comp
 if (-not $Version.StartsWith($progVersion)) { Write-Warn "companion/Program.cs says $progVersion, the mod says $Version." }
 if ($csprojVersion -ne $Version) { Write-Warn "the csproj says $csprojVersion, the mod says $Version." }
 
+# The changelog ships in the download and is the text the release is announced
+# with, so a build with nothing written for this version is almost certainly a
+# forgotten entry rather than a release worth publishing silently.
+$changelog = Get-Content -LiteralPath (Join-Path $Root 'CHANGELOG.md') -Raw
+if ($changelog -notmatch ('(?m)^##\s+' + [regex]::Escape(($Version -replace '\.0$', '')) + '\s*$')) {
+    Write-Warn "CHANGELOG.md has no '## ' section for $Version."
+}
+
 $Dist = Join-Path $Root 'dist'
 $Out = Join-Path $Dist ("TheUnseenBanner-" + $Version)
 if (Test-Path -LiteralPath $Out) { Remove-Item -LiteralPath $Out -Recurse -Force }
@@ -100,7 +108,7 @@ Write-Ok "Published to companion\"
 
 # --- The installer and the docs -------------------------------------------------
 Write-Step "Copying the installer and the documentation"
-foreach ($file in @('install.bat', 'uninstall.bat', 'README.md', 'LICENSE')) {
+foreach ($file in @('install.bat', 'uninstall.bat', 'README.md', 'CHANGELOG.md', 'LICENSE')) {
     Copy-Item -LiteralPath (Join-Path $Root $file) -Destination $Out -Force
     Write-Ok $file
 }
