@@ -569,21 +569,24 @@
 // World-map company/campaign readout (phase 4.4). The map's topbar status is a
 // short semantic list: day and time of day, brother count, crowns, daily wages,
 // food, days of food, and the active contract with its current objectives. Pull,
-// not push: G opens/closes the list and Up/Down read one fact at a time. Every
+// not push: F2 opens/closes the list and Up/Down read one fact at a time. Every
 // fact is a Squirrel API (World.Assets / World.getTime / World.Contracts / the
 // player roster), so nothing is scraped from the DOM; the companion owns the
 // framing words.
 //
-// Key: g (code 17). g is unbound on the world map in vanilla — the letters the
-// map already claims are c/f/i/o/p/r/t (character, ?, inventory, obituary, perks,
-// relations, camp). Eventually remappable through MSU keybinds (roadmap fase 5).
+// Key: F2 (code 72). g (17) used to own this readout, but it collided with the
+// map explorer's own G (send the company to the cursor tile): with the explorer
+// on, this list became unreachable. F2 is unbound on the world map in vanilla —
+// only 42/75/79 are claimed among the higher codes (menu, quicksave, quickload)
+// — and it is free of that ambiguity regardless of explorer state. Eventually
+// remappable through MSU keybinds (roadmap fase 5).
 ::UnseenBanner.WorldStatus <- {
 	m = {
 		Items = null,
 		ItemIndex = 0,
 		Active = false
 	},
-	ToggleKey = 17, // g
+	ToggleKey = 72, // f2
 	MoveKeys = {
 		[49] = "up",
 		[51] = "down",
@@ -868,9 +871,9 @@
 // and locations use the game's per-entity discovered flag.
 //
 // Key: b (code 12), free on the world map in vanilla (the map claims c/f/i/o/p/r/t and
-// G is our company status). Mutually exclusive with WorldStatus so Up/Down never has
-// two owners. Enter acts on the focused row through the same AutoAttack /
-// AutoEnterLocation funnels as a mouse click.
+// G is the explorer's send-to-cursor action). Mutually exclusive with WorldStatus so
+// Up/Down never has two owners. Enter acts on the focused row through the same
+// AutoAttack / AutoEnterLocation funnels as a mouse click.
 ::UnseenBanner.WorldSurvey <- {
 	m = {
 		Items = null,
@@ -5294,6 +5297,11 @@
 		InspectItems = null,
 		InspectIndex = 0,
 		InspectMenuActive = false,
+		// A row can carry more than one native tooltip (the equipment row, one per
+		// worn piece). DetailMode nests V's list one level into that row's own
+		// details; V again backs out to the row, same convention as SheetNav.
+		DetailMode = false,
+		DetailIndex = 0,
 		// Engine code of the key that closed the inspect list on its press, so its
 		// own release can be swallowed instead of leaking into vanilla (-1 = none).
 		PendingRelease = -1,
@@ -5753,14 +5761,17 @@
 		::UnseenBanner.sendMessage("interrupt", name, "combat.inspect", "ok", detail,
 			null, null, null, null, null, corpseName != "" ? corpseName : null);
 	},
-	function inspectItem(_cat, _texto = "", _valor = "", _detalle = "", _tooltip = null)
+	// _details is an array of native tooltip descriptors (0, 1 or many): 0 means
+	// "no tooltip" (V says so), 1 shows directly, more than 1 nests into a list
+	// V walks with Up/Down, same convention as SheetNav's rows.
+	function inspectItem(_cat, _texto = "", _valor = "", _detalle = "", _details = null)
 	{
 		return {
 			cat = _cat,
 			texto = _texto,
 			valor = _valor,
 			detalle = _detalle,
-			tooltip = _tooltip
+			details = _details != null ? _details : []
 		};
 	},
 	function statusDetail(_actor, _skill)
@@ -5770,6 +5781,48 @@
 			entityId = _actor.getID(),
 			statusEffectId = _skill.getID()
 		};
+	},
+	function itemDetail(_actor, _item)
+	{
+		return {
+			contentType = "ui-item",
+			entityId = _actor.getID(),
+			itemId = _item.getInstanceID(),
+			itemOwner = "entity"
+		};
+	},
+	// Worn equipment (mainhand, offhand, head, body, accessory), same slot order
+	// and same "combat.sheet.equipment" wording as SheetNav's character sheet, so
+	// the phrasing a player already knows for a brother ("Equipment: sword, ...")
+	// is exactly what they hear for any unit under the cursor — ally or enemy. A
+	// non-combatant actor (a beast with no item container) reads as no equipment
+	// rather than throwing and aborting the rest of the menu.
+	function equipmentItem(_actor)
+	{
+		local inv = _actor.getItems();
+		if (inv == null) return this.inspectItem("combat.sheet.equipment", "", "0");
+
+		local slots = [
+			::Const.ItemSlot.Mainhand,
+			::Const.ItemSlot.Offhand,
+			::Const.ItemSlot.Head,
+			::Const.ItemSlot.Body,
+			::Const.ItemSlot.Accessory
+		];
+		local text = "";
+		local n = 0;
+		local details = [];
+		foreach( sl in slots )
+		{
+			local it = inv.getItemAtSlot(sl);
+			if (it == null) continue;
+			if (n > 0) text += "\n";
+			text += it.getName();
+			details.push(this.itemDetail(_actor, it));
+			n += 1;
+		}
+		return this.inspectItem("combat.sheet.equipment", text, "" + n, "",
+			n > 0 ? details : null);
 	},
 	function timing(_actor)
 	{
@@ -5864,30 +5917,31 @@
 		items.push(this.inspectItem("combat.inspect.menu.armor.body",
 			"", "" + actor.getArmor(::Const.BodyPart.Body),
 			"" + actor.getArmorMax(::Const.BodyPart.Body)));
+		items.push(this.equipmentItem(actor));
 		items.push(this.inspectItem("combat.inspect.menu.fatigue",
 			"", "" + actor.getFatigue(), "" + actor.getFatigueMax()));
 
 		local statuses = actor.getSkills().query(
 			::Const.SkillType.StatusEffect | ::Const.SkillType.TemporaryInjury,
 			false, true);
-		local moraleTooltip = null;
+		local moraleDetails = null;
 		foreach( status in statuses )
 		{
 			if (status != null && status.getID() == "special.morale.check")
 			{
-				moraleTooltip = this.statusDetail(actor, status);
+				moraleDetails = [this.statusDetail(actor, status)];
 				break;
 			}
 		}
 		items.push(this.inspectItem("combat.inspect.menu.morale", "",
-			"" + actor.getMoraleState(), "", moraleTooltip));
+			"" + actor.getMoraleState(), "", moraleDetails));
 
 		local effectCount = 0;
 		foreach( status in statuses )
 		{
 			if (status == null || status.getID() == "special.morale.check") continue;
 			items.push(this.inspectItem("combat.inspect.menu.effect", status.getName(),
-				"", "", this.statusDetail(actor, status)));
+				"", "", [this.statusDetail(actor, status)]));
 			effectCount += 1;
 		}
 		if (effectCount == 0)
@@ -5907,6 +5961,8 @@
 		this.m.InspectItems = null;
 		this.m.InspectIndex = 0;
 		this.m.InspectMenuActive = false;
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
 		::UnseenBanner.TooltipNav.hide();
 		if (_announce && wasActive)
 			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.menu.closed");
@@ -5932,19 +5988,36 @@
 		if (_code == this.InspectCancelKey
 			|| (_shift && (_code in this.InspectKeys)))
 		{
-			this.closeInspectMenu(true);
+			// Escape/Shift+V backs out one level at a time: out of a row's nested
+			// detail list first, only closing the whole menu on the next press.
+			if (this.m.DetailMode)
+			{
+				this.leaveDetails();
+				::UnseenBanner.TooltipNav.hide();
+				this.announceInspectItem();
+			}
+			else
+			{
+				this.closeInspectMenu(true);
+			}
 			this.armReleaseSwallow(_code);
 			return;
 		}
 
 		if (_code in this.InspectKeys)
 		{
-			this.showInspectDetail();
+			this.toggleDetails();
 			return;
 		}
 		if (!(_code in this.InspectMoveKeys)
 			|| this.m.InspectItems == null || this.m.InspectItems.len() == 0)
 		{
+			return;
+		}
+
+		if (this.m.DetailMode)
+		{
+			this.moveDetail(_code);
 			return;
 		}
 
@@ -5970,7 +6043,49 @@
 
 		local item = this.m.InspectItems[this.m.InspectIndex];
 		::UnseenBanner.sendMessage("interrupt", item.texto, item.cat,
-			item.valor, item.detalle, null, item.tooltip != null ? "1" : null);
+			item.valor, item.detalle, null, "" + item.details.len());
+	},
+	// V on a row with several native tooltips (currently only the equipment row)
+	// enters a nested list; V again backs out and re-announces the parent row. A
+	// single tooltip is shown/read directly without changing modes, same as
+	// SheetNav's character sheet.
+	function leaveDetails()
+	{
+		this.m.DetailMode = false;
+		this.m.DetailIndex = 0;
+	},
+	function toggleDetails()
+	{
+		if (this.m.DetailMode)
+		{
+			this.leaveDetails();
+			::UnseenBanner.TooltipNav.hide();
+			this.announceInspectItem();
+			return;
+		}
+		if (this.m.InspectItems == null || this.m.InspectItems.len() == 0) return;
+		local details = this.m.InspectItems[this.m.InspectIndex].details;
+		if (details.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "tooltip.unavailable");
+			return;
+		}
+		this.m.DetailIndex = 0;
+		if (details.len() > 1) this.m.DetailMode = true;
+		this.showInspectDetail();
+	},
+	function moveDetail(_code)
+	{
+		local details = this.m.InspectItems[this.m.InspectIndex].details;
+		if (details.len() == 0) return;
+		local dir = this.InspectMoveKeys[_code];
+		if (dir == "up") this.m.DetailIndex -= 1;
+		else if (dir == "down") this.m.DetailIndex += 1;
+		else if (dir == "home") this.m.DetailIndex = 0;
+		else this.m.DetailIndex = details.len() - 1;
+		if (this.m.DetailIndex < 0) this.m.DetailIndex = 0;
+		if (this.m.DetailIndex >= details.len()) this.m.DetailIndex = details.len() - 1;
+		this.showInspectDetail();
 	},
 	function showInspectDetail()
 	{
@@ -5980,13 +6095,14 @@
 			return;
 		}
 
-		local item = this.m.InspectItems[this.m.InspectIndex];
-		if (item.tooltip == null)
+		local details = this.m.InspectItems[this.m.InspectIndex].details;
+		if (details.len() == 0)
 		{
 			::UnseenBanner.sendMessage("interrupt", "", "tooltip.unavailable");
 			return;
 		}
-		::UnseenBanner.TooltipNav.show(item.tooltip, 1, 1, "combat.inspect.menu.effect");
+		::UnseenBanner.TooltipNav.show(details[this.m.DetailIndex],
+			this.m.DetailIndex + 1, details.len(), "combat.inspect.menu.effect");
 	}
 };
 
@@ -10018,7 +10134,8 @@
 		// Enter. Every one of those keys is acted on at PRESS and consumed in both states:
 		// three of them carry a native binding on this screen (the letters pan the camera on
 		// press, X toggles the camera lock on release, Enter recentres it), and G is our own
-		// company readout, so letting either state through would fire two actions at once.
+		// send-company-to-cursor action, so letting either state through would fire two
+		// actions at once. G no longer collides with the company readout (moved to F2).
 		// Only the keys the cursor SHARES with the other two readouts (V and the list keys)
 		// yield while one of those windows is open, so Up/Down and V never have two owners.
 		// The mode's own keys never yield: M has to be able to leave the mode from anywhere,

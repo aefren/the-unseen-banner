@@ -214,7 +214,7 @@ accident.
 |---|---|
 | Q W E / A S D | Move the company one neighbouring hex; hold Shift to keep marching; Space stops and pauses |
 | Enter | Enter the settlement or location the company is standing on, or engage a hostile party at contact range |
-| G | Company status: day and time, brothers, crowns, wages, food, active contract with its objectives, and current ambition |
+| F2 | Company status: day and time, brothers, crowns, wages, food, active contract with its objectives, and current ambition |
 | B | Known places: settlements, locations and landmarks. Page Down/Page Up switch category, V opens details, Enter travels there or enters, B closes |
 | Shift+B | The parties currently in sight, same navigation |
 | M | Map explorer on/off (see below) |
@@ -298,7 +298,7 @@ the button.
 | Z / Shift+Z | Cycle living, visible enemies by distance (Z farther, Shift+Z nearer) |
 | H / Shift+H | Cycle living allies by distance, excluding the active brother |
 | V | Inspect the unit under the cursor: health, armour, fatigue, morale, effects, when it acts |
-| Shift+V | Open that same inspection as a navigable list, one fact per row; V on a row opens its native tooltip (status effects included); Shift+V or Escape closes |
+| Shift+V | Open that same inspection as a navigable list, one fact per row (equipment included); V on a row opens its native tooltip (status effects and each worn item included) — on the equipment row with several pieces, V opens a second list to browse them and V again backs out; Shift+V or Escape closes (Escape backs out of that nested list first) |
 | G | Confirm on the cursor tile: move there, or use the armed skill |
 | T | Active brother's status (health, action points, fatigue, morale) |
 | Tab | Turn order for the round |

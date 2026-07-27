@@ -586,8 +586,8 @@ namespace TheUnseenBanner.Companion
             ["combat.dialog.button.confirm.mono"] = "Ok, button.",
             ["combat.dialog.button.cancel"] = "No, button.",
             ["combat.tactical.dialog.button"] = "{0}, button.",
-            // World-map company/campaign list (phase 4.4, G then Up/Down).
-            ["world.status.screen"] = "Company status. Use Up and Down to review. Press G to close.",
+            // World-map company/campaign list (phase 4.4, F2 then Up/Down).
+            ["world.status.screen"] = "Company status. Use Up and Down to review. Press F2 to close.",
             ["world.status.closed"] = "Company status closed.",
             ["world.status.time.day"] = "Day {1}, {0}.",
             // Most buildings shut at night (building.nut defaults IsClosedAtNight to
