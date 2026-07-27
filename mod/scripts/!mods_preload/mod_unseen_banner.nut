@@ -7428,9 +7428,24 @@
 			success = this.mutationSucceeded(result);
 			break;
 
+		// Deliberately NOT onDropBagItemIntoInventory, the endpoint that matches this
+		// direction by name: it hands our null target index straight to
+		// stash_container.insert(), whose isValidSlot(null) is false in Squirrel
+		// (null compares below 0), so it stores nothing and returns null — and the
+		// caller only puts the item back in the bag when insert() hands it a displaced
+		// one. The bag slot had already been emptied, so the item was destroyed, and
+		// the call still returned valid UI data, which we read as success. Vanilla
+		// never trips this: a mouse drag always names the stash slot it dropped on.
+		//
+		// onDropPaperdollItem is the null-tolerant sibling. Its helper checks for stash
+		// room first, moves an item whose current slot is Bag with stash.add(), and
+		// restores it to the bag if that fails; it finds the item by instance ID across
+		// every slot type, the bag included, so a bag item resolves fine despite the
+		// paperdoll name. The three other inventory endpoints we call all guard their
+		// null index like this one; this was the only one that did not.
 		case "bag_to_stash":
-			result = _screen.onDropBagItemIntoInventory([
-				bro.getID(), payload.itemId, payload.slotIndex, null
+			result = _screen.onDropPaperdollItem([
+				bro.getID(), payload.itemId, null
 			]);
 			success = this.mutationSucceeded(result);
 			break;
