@@ -102,6 +102,51 @@ function Get-ModZips {
     return $zips
 }
 
+# The companion app is the voice: it stays where this download is. Release layout
+# first, repo build second. Returns $null when none of the three is there.
+function Find-CompanionExe {
+    param([string]$Root)
+    foreach ($rel in @('companion\TheUnseenBanner.Companion.exe',
+                       'companion\bin\Release\net8.0\TheUnseenBanner.Companion.exe',
+                       'companion\bin\Debug\net8.0\TheUnseenBanner.Companion.exe')) {
+        $candidate = Join-Path $Root $rel
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return $null
+}
+
+# The mod zip and the companion are two halves of one release, and the installer
+# checks they agree (see install.ps1). The mod's version is the one string
+# build-release.ps1 reads too: ::UnseenBanner.Version in the preload script.
+# Returns $null if the zip does not carry a version we can read.
+function Get-ModZipVersion {
+    param([string]$ZipPath)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $text = $null
+    $zip = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+    try {
+        $entry = @($zip.Entries | Where-Object { $_.Name -eq 'mod_unseen_banner.nut' })[0]
+        if (-not $entry) { return $null }
+        $reader = New-Object IO.StreamReader($entry.Open())
+        try { $text = $reader.ReadToEnd() } finally { $reader.Close() }
+    }
+    finally { $zip.Dispose() }
+    $m = [regex]::Match($text, 'Version\s*=\s*"([0-9][0-9.]*)"')
+    if ($m.Success) { return $m.Groups[1].Value }
+    return $null
+}
+
+# The exe carries the csproj's <Version> as a four-part FileVersion (0.8.0.0);
+# cut it to the mod's three parts so the two are comparable.
+function Get-CompanionVersion {
+    param([string]$ExePath)
+    $v = (Get-Item -LiteralPath $ExePath).VersionInfo.FileVersion
+    if (-not $v) { return $null }
+    $parts = $v.Split('.')
+    if ($parts.Count -ge 3) { return ($parts[0..2] -join '.') }
+    return $v
+}
+
 function Write-Manifest {
     param([string]$GameFolder, [string[]]$Files)
     $dir = Split-Path $Script:ManifestPath -Parent
