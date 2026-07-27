@@ -214,6 +214,8 @@ accident.
 |---|---|
 | Q W E / A S D | Move the company one neighbouring hex; hold Shift to keep marching; Space stops and pauses |
 | Enter | Enter the settlement or location the company is standing on, or engage a hostile party at contact range |
+| X | The hex the company stands on, in one breath: terrain, then each trail of footprints crossing it and the directions it runs. The quick version of V, meant to be tapped between marching steps |
+| V | The same hex as a navigable list: terrain, place, parties and trails, one row at a time, with Enter on a place or party |
 | F2 | Company status: day and time, brothers, crowns, wages, food, active contract with its objectives, and current ambition |
 | B | Known places: settlements, locations and landmarks. Page Down/Page Up switch category, V opens details, Enter travels there or enters, B closes |
 | Shift+B | The parties currently in sight, same navigation |
@@ -231,9 +233,9 @@ so you can survey what is around before committing to a march:
 
 | Key | Action |
 |---|---|
-| Q W E / A S D | Move the cursor one hex (same directions as the company and the battlefield cursor) |
-| X | Bring the cursor back to the company; **Shift+X** reports the company's bearing and distance from it |
-| V | Read the cursor's tile as a list: terrain, places, parties and footprints. Enter acts on the focused one |
+| Q W E / A S D | Move the cursor one hex (same directions as the company and the battlefield cursor) and read it: terrain, place, parties, and each trail of footprints with the directions it runs |
+| X | Bring the cursor back to the company and read that hex the same way; **Shift+X** reports the company's bearing and distance from it |
+| V | Read the cursor's tile as a list instead, one row at a time. Enter acts on the focused place or party |
 | G | Send the company to the cursor tile |
 | M | Leave the mode |
 

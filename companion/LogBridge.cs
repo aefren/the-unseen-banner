@@ -231,6 +231,7 @@ namespace TheUnseenBanner.Companion
                     "world.move.stopped" => ComposeMoveStopped(texto, valor, detalle),
                     "world.cursor.tile" => ComposeCursorTile(texto, valor, detalle, recentered: false),
                     "world.cursor.recentered" => ComposeCursorTile(texto, valor, detalle, recentered: true),
+                    "world.cursor.here" => ComposeCursorHere(valor, detalle),
                     "world.cursor.bearing" => L10n.F(categoria, PackedPosition(detalle)),
                     "world.cursor.travel" => ComposeCursorTravel(texto, valor, detalle),
                     "world.cursor.list.screen" => ComposeCursorListScreen(valor, detalle),
@@ -1016,23 +1017,58 @@ namespace TheUnseenBanner.Companion
                 string.Join(", ", names.GetRange(0, names.Count - 1)), names[^1]);
         }
 
-        /// <summary>Word the footprints crossing a tile. Several exact types share one
-        /// family word (brigands and nomads are both simply men on the map), so the
-        /// collapsed names are de-duplicated or the same word would be said twice.
+        /// <summary>Word the footprints crossing a tile. packed holds ';'-separated
+        /// "type:dirs" entries, dirs being the hex directions that trail runs. An empty
+        /// list after the colon means the trail continues into no neighbouring tile,
+        /// which is said out loud rather than left silent. A bare type with no colon is
+        /// only produced by mod versions older than this companion; it degrades to the
+        /// collapsed names alone instead of inventing headings.
+        ///
+        /// Several exact types share one family word (brigands and nomads are both
+        /// simply men on the map), so entries are merged by the word they produce and
+        /// their directions unioned; otherwise the same family would be announced twice.
         /// </summary>
         private static string ComposeCursorTracks(string packed, bool lookout)
         {
             if (packed.Length == 0) return "";
 
+            bool detailed = packed.Contains(':');
             var names = new List<string>();
-            foreach (string t in packed.Split(','))
+            var dirsByName = new Dictionary<string, List<int>>();
+
+            foreach (string entry in packed.Split(';'))
             {
-                if (t.Length == 0) continue;
-                string name = TrackName(t, lookout);
-                if (!names.Contains(name)) names.Add(name);
+                if (entry.Length == 0) continue;
+                string[] e = entry.Split(':', 2);
+                string name = TrackName(e[0], lookout);
+                if (!dirsByName.ContainsKey(name))
+                {
+                    names.Add(name);
+                    dirsByName[name] = new List<int>();
+                }
+                if (e.Length < 2) continue;
+                foreach (string d in e[1].Split(','))
+                {
+                    if (int.TryParse(d, out int dir) && dir >= 0 && dir < ClockHours.Length
+                        && !dirsByName[name].Contains(dir))
+                        dirsByName[name].Add(dir);
+                }
             }
 
-            return names.Count == 0 ? "" : L10n.F("world.cursor.tracks", JoinWithAnd(names));
+            if (names.Count == 0) return "";
+            if (!detailed) return L10n.F("world.cursor.tracks", JoinWithAnd(names));
+
+            var parts = new List<string>();
+            foreach (string name in names)
+            {
+                string spoken = L10n.F("world.cursor.tracks", name);
+                var hours = dirsByName[name].ConvertAll(
+                    d => L10n.F("world.cursor.trail.hour", ClockHours[d]));
+                parts.Add(hours.Count == 0
+                    ? spoken + " " + L10n.T("world.cursor.trail.none")
+                    : spoken + " " + L10n.F("world.cursor.trail", JoinWithAnd(hours)));
+            }
+            return string.Join(" ", parts);
         }
 
         /// <summary>Word the parties standing on the cursor tile: the nearest one by
@@ -1081,6 +1117,22 @@ namespace TheUnseenBanner.Companion
             if (parties.Length > 0) parts.Add(parties);
 
             string tracks = ComposeCursorTracks(At(4), At(5) == "1");
+            if (tracks.Length > 0) parts.Add(tracks);
+
+            return string.Join(" ", parts);
+        }
+
+        /// <summary>Compose the X readout on the plain map: the terrain the company
+        /// stands on and, only when there are any, the footprints crossing that hex
+        /// with the direction each trail runs. detail packs "tracks|lookout". No fog
+        /// clause — the company cannot be standing on an unexplored tile.</summary>
+        private static string ComposeCursorHere(string terrain, string detail)
+        {
+            string[] p = detail.Split('|');
+            string At(int i) => i < p.Length ? p[i] : "";
+
+            var parts = new List<string> { TerrainWord(terrain, false) + "." };
+            string tracks = ComposeCursorTracks(At(0), At(1) == "1");
             if (tracks.Length > 0) parts.Add(tracks);
 
             return string.Join(" ", parts);

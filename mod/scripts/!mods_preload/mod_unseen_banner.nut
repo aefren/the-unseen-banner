@@ -2098,15 +2098,22 @@
 // instrument the tile cursor is on a battlefield. M toggles the mode: while it is on, the
 // Q/W/E/A/S/D cluster walks the cursor over the hexes instead of walking the company, and
 // each step reports its tile in one utterance (terrain, the place standing on it, the
-// parties in sight on it, the footprints crossing it). V opens that same tile as a
-// navigable list, one row per fact, and Enter acts on a place or party through the very
-// funnels the B survey uses; V works with the mode off too, on the company's own tile, as
-// an on-the-spot "what am I standing on". X recentres the cursor on the company, Shift+X
-// reports its bearing, and G sends the company to it.
+// parties in sight on it, and each trail of footprints crossing it with the directions it
+// runs). V opens that same tile as a navigable list, one row per fact, and Enter acts on a
+// place or party through the very funnels the B survey uses; V works with the mode off too,
+// on the company's own tile, as an on-the-spot "what am I standing on". X recentres the
+// cursor on the company, Shift+X reports its bearing, and G sends the company to it. With
+// the mode off X answers that same "what am I standing on" in one utterance instead of a
+// list: terrain, then the trails.
+//
+// Every one of those readouts carries the trail headings. Following a trail is the reason to
+// ask about footprints at all, and opening a list to learn which way it went is too slow to
+// do between marching steps — the whole point of keys you can just tap.
 //
 // Keys: m (23) is free on the plain map — vanilla reaches it only from the developer-mode
-// handler. x (34) is vanilla's camera lock and g (17) is our own company readout, so both
-// are consumed here while the mode is on and handed straight back when it is off.
+// handler. x (34) is vanilla's camera lock (a sighted-only toggle) and g (17) is the
+// explorer's own travel key, so both are consumed here while the mode is on; with it off
+// only x stays claimed, for the readout above.
 //
 // Footprints are the one fact vanilla gates behind a follower: the prints are drawn on the
 // map for everyone, but only a hired Lookout turns them into words, and only then names the
@@ -2169,9 +2176,9 @@
 		return this.m.ListActive;
 	},
 	// The mode key is always ours. With the mode on the cursor owns the letter cluster, X
-	// and G; with it off only V, which reads the company's own tile. The list keys are
-	// claimed solely while the list is up, so plain-map Enter keeps entering whatever the
-	// company is standing on.
+	// and G; with it off V and X, which both read the company's own tile — V as a list, X
+	// as one utterance. The list keys are claimed solely while the list is up, so plain-map
+	// Enter keeps entering whatever the company is standing on.
 	function handles(_code)
 	{
 		if (_code == this.ToggleKey) return true;
@@ -2180,7 +2187,7 @@
 			if ((_code in this.DirKeys) || _code == this.RecenterKey
 				|| _code == this.InspectKey || _code == this.TravelKey) return true;
 		}
-		else if (_code == this.InspectKey)
+		else if (_code == this.InspectKey || _code == this.RecenterKey)
 		{
 			return true;
 		}
@@ -2268,6 +2275,14 @@
 			return;
 		}
 
+		// X with the mode off has no cursor to recentre: it reads the hex the company is
+		// already on. Shift is ignored here for the same reason — a bearing to itself.
+		if (!this.m.Active && _code == this.RecenterKey)
+		{
+			this.announceHere();
+			return;
+		}
+
 		// Everything below belongs to the mode itself and cannot be reached with it off.
 		if (!this.m.Active) return;
 
@@ -2348,6 +2363,25 @@
 
 		::UnseenBanner.sendMessage("interrupt", "", "world.cursor.bearing", "",
 			::UnseenBanner.WorldSurvey.posDetail(playerTile, this.m.Tile));
+	},
+	// X with the mode off: terrain under the company, then the footprints crossing it and
+	// where each trail runs — the same detail X gives with the mode on, so the key means one
+	// thing whichever mode the player is in. Following a trail is the whole reason to ask,
+	// and the heading is what makes it followable; the V list stays for the rest of the tile
+	// (place, parties) one row at a time.
+	//
+	// Reads the player's tile directly rather than through the cursor: with the mode off
+	// there is no cursor, and anchoring one here would leave a stale tile behind.
+	function announceHere()
+	{
+		local player = ::World.State.getPlayer();
+		local tile = player != null ? player.getTile() : null;
+		// Silent on a company with no tile, exactly as recenter() and announceBearing()
+		// are: it means the world is mid-load, not that the player pressed a dead key.
+		if (tile == null) return;
+
+		::UnseenBanner.sendMessage("interrupt", "", "world.cursor.here", "" + tile.Type,
+			this.trackSegment(tile) + "|" + this.lookoutFlag());
 	},
 	// G: walk the company to the cursor tile, mirroring what a click on that hex does in
 	// world_state.onMouseInput — a straight-line march for anything very close or still
@@ -2530,6 +2564,30 @@
 		// same purpose; there is no getter to prefer.
 		return ::World.Assets.m.IsShowingExtendedFootprints ? "1" : "0";
 	},
+	// The footprints crossing a tile, packed for a single utterance: "index:dirs" entries
+	// separated by ";", the index being a Const.World.FootprintsType and dirs being
+	// trailDirs' own comma-separated hex directions. The colon and its (possibly empty)
+	// direction list are always emitted, so a trail that continues nowhere reads as exactly
+	// that instead of being confused with a readout that never computed the headings.
+	//
+	// Every cursor readout carries the headings — the tile list, X in either explorer mode,
+	// and each cursor step. Following a trail is the reason to ask about footprints at all,
+	// and the heading is the half that makes it followable; the six-neighbour pass it costs
+	// is paid on a keystroke, which is nowhere near often enough to matter.
+	function trackSegment(_tile)
+	{
+		local tracks = this.readFootprints(_tile);
+		if (tracks.len() == 0) return "";
+
+		local neighbours = this.neighbourFootprints(_tile);
+		local out = "";
+		foreach( t in tracks )
+		{
+			if (out != "") out += ";";
+			out += t + ":" + this.trailDirs(neighbours, t);
+		}
+		return out;
+	},
 	// One utterance per cursor step, never several: two interrupts in the same frame cut
 	// each other off (the lesson behind world.move.step packing terrain and place together),
 	// and a sweep across the map would leave only the last clause audible. Everything the
@@ -2549,12 +2607,7 @@
 			? parties.len() + "," + this.partyKind(parties[0]) + "," + parties[0].getName()
 			: "";
 
-		local tracksSeg = "";
-		foreach( t in this.readFootprints(tile) )
-		{
-			if (tracksSeg != "") tracksSeg += ",";
-			tracksSeg += t;
-		}
+		local tracksSeg = this.trackSegment(tile);
 
 		local detail = (tile.IsDiscovered ? "0" : "1")
 			+ "|" + (place != null ? place.kind : "")
@@ -2566,10 +2619,10 @@
 		::UnseenBanner.sendMessage("interrupt", place != null ? place.e.getName() : "",
 			_cat, "" + tile.Type, detail);
 	},
-	// V: the same tile as a navigable list, so the facts a step summarises can be taken one
-	// at a time — and so each trail gets its heading, which is too long to repeat on every
-	// hex of a sweep. Place and party rows reuse the B survey's own row category, which
-	// already words them and already offers Enter, so both windows speak the same language.
+	// V: the same tile as a navigable list, so the facts a step packs into one utterance can
+	// be taken one at a time, and so a place or party on the hex can be acted on with Enter.
+	// Place and party rows reuse the B survey's own row category, which already words them
+	// and already offers Enter, so both windows speak the same language.
 	function openList()
 	{
 		// With the mode off this is a readout of the company's own tile, wherever the
