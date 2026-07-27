@@ -1292,6 +1292,172 @@
 	}
 };
 
+// Ambient discovery pings (user request, jul 2026): settlements, locations,
+// attached locations (landmarks) and enemy parties newly entering the player's
+// sight while travelling, spoken without opening the B/Shift+B survey (4.3).
+// Reuses the exact 4.2 fog-of-war tests those lists already use — isDiscovered()
+// + !isHiddenToPlayer() for statics, the mouse-click visibility test for parties
+// — so nothing here reveals more than a sighted player would already see.
+//
+// Decisions (user, jul 2026): only enemy parties are announced (allies/neutrals
+// stay silent, matching the vanilla "enemy discovered" sound, which never plays
+// for them either — world_entity.onDiscovered). An enemy re-announces every time
+// it re-enters sight, since a sighted player watches it reappear too; a
+// settlement/location/landmark only ever announces once (a city does not
+// "reappear"). Several sightings landing in the same scan (fast travel, arriving
+// near a cluster) collapse into one short count instead of reading every row —
+// the detail is one B/Shift+B press away (see the "lists, not dumps" convention).
+//
+// Polled from world_state.onUpdate (below) at a throttled real-time interval,
+// not every frame — the full entity scan is not free — and skipped entirely
+// while the game is paused, since nothing can newly enter sight without the
+// party moving.
+::UnseenBanner.WorldDiscovery <- {
+	m = {
+		LastScanTime = 0.0,
+		Seeded = false,      // false until the first post-load scan has baselined
+		SeenStatic = {},     // "s<id>"/"l<id>" -> true, once sighted, forever
+		VisibleEnemies = {}  // party id -> true, enemies in sight as of last scan
+	},
+	ScanInterval = 0.4, // seconds of real time between scans
+	function reset()
+	{
+		this.m.LastScanTime = 0.0;
+		this.m.Seeded = false;
+		this.m.SeenStatic = {};
+		this.m.VisibleEnemies = {};
+	},
+	function isSettlementSighted(_s)
+	{
+		return _s != null && _s.isAlive() && _s.getTile() != null
+			&& _s.isDiscovered() && !_s.isHiddenToPlayer();
+	},
+	function isLocationSighted(_l, _isLandmark)
+	{
+		if (_l == null || !_l.isAlive() || _l.getTile() == null) return false;
+		// Same active-only gate WorldSurvey.collectLocations uses: a landmark keeps
+		// showing once burned down (it still stands and orients), a plain location does
+		// not.
+		if (!_isLandmark && !_l.isActive()) return false;
+		return _l.isDiscovered() && !_l.isHiddenToPlayer();
+	},
+	function isEnemySighted(_e, _player)
+	{
+		return _e != null && _e.isParty() && _e.getID() != _player.getID()
+			&& _e.getTile() != null && !_e.isHiddenToPlayer() && _e.getVisibilityMult() > 0.0
+			&& !_e.isAlliedWithPlayer() && _e.isAttackable();
+	},
+	// Baseline what is already discovered/visible on entering the map (or loading a
+	// save), so the very first scan reports nothing — matching the B survey, which
+	// never dumps the whole map either. Everything after this call is a genuine new
+	// sighting.
+	function seed(_player)
+	{
+		local seen = {};
+		foreach( s in ::World.EntityManager.getSettlements() )
+			if (this.isSettlementSighted(s)) seen["s" + s.getID()] <- true;
+		foreach( l in ::World.EntityManager.getLocations() )
+			if (this.isLocationSighted(l, ::UnseenBanner.isLandmark(l)))
+				seen["l" + l.getID()] <- true;
+		this.m.SeenStatic = seen;
+
+		local enemies = {};
+		foreach( e in ::World.getAllEntitiesAtPos(_player.getPos(),
+			::UnseenBanner.WorldSurvey.ScanRadius) )
+			if (this.isEnemySighted(e, _player)) enemies["" + e.getID()] <- true;
+		this.m.VisibleEnemies = enemies;
+	},
+	function collectNewStatics(_playerTile, _out)
+	{
+		foreach( s in ::World.EntityManager.getSettlements() )
+		{
+			if (!this.isSettlementSighted(s)) continue;
+			local id = "s" + s.getID();
+			if (id in this.m.SeenStatic) continue;
+			this.m.SeenStatic[id] <- true;
+			_out.push({ kind = "settlement", name = s.getName(), tile = s.getTile() });
+		}
+		foreach( l in ::World.EntityManager.getLocations() )
+		{
+			local isLandmark = ::UnseenBanner.isLandmark(l);
+			if (!this.isLocationSighted(l, isLandmark)) continue;
+			local id = "l" + l.getID();
+			if (id in this.m.SeenStatic) continue;
+			this.m.SeenStatic[id] <- true;
+			_out.push({ kind = isLandmark ? "landmark" : "location", name = l.getName(),
+				tile = l.getTile() });
+		}
+	},
+	// Enemies only (user decision). Re-diffed against the previous scan every time, so
+	// a party that leaves sight and comes back announces again — unlike statics, which
+	// only ever announce once.
+	function collectNewEnemies(_player, _out)
+	{
+		local current = {};
+		foreach( e in ::World.getAllEntitiesAtPos(_player.getPos(),
+			::UnseenBanner.WorldSurvey.ScanRadius) )
+		{
+			if (!this.isEnemySighted(e, _player)) continue;
+			local id = "" + e.getID();
+			current[id] <- true;
+			if (id in this.m.VisibleEnemies) continue;
+			_out.push({ kind = "enemy", name = e.getName(), tile = e.getTile() });
+		}
+		this.m.VisibleEnemies = current;
+	},
+	// A single sighting is read in full (name, kind, distance and bearing — the same
+	// posDetail packing the B survey and the tactical tile readout share); several at
+	// once collapse into one short count instead of a queued pile of full rows.
+	function announce(_playerTile, _sightings)
+	{
+		if (_sightings.len() == 1)
+		{
+			local s = _sightings[0];
+			::UnseenBanner.sendMessage("queue", s.name, "world.discovery.single", s.kind,
+				::UnseenBanner.WorldSurvey.posDetail(_playerTile, s.tile));
+			return;
+		}
+
+		local places = 0;
+		local enemies = 0;
+		foreach( s in _sightings )
+		{
+			if (s.kind == "enemy") enemies += 1;
+			else places += 1;
+		}
+		::UnseenBanner.sendMessage("queue", "", "world.discovery.summary",
+			places + "|" + enemies);
+	},
+	// _now is the caller's this.Time.getRealTimeF(): Time is only reachable through a
+	// hooked instance's own delegate, never as a bare global (see the this-root
+	// fallback lesson), so the value travels in rather than being fetched here.
+	function tick(_now)
+	{
+		if (::World.State.isPaused()) return;
+		if (_now - this.m.LastScanTime < this.ScanInterval) return;
+		this.m.LastScanTime = _now;
+
+		local player = ::World.State.getPlayer();
+		if (player == null) return;
+		local playerTile = player.getTile();
+		if (playerTile == null) return;
+
+		if (!this.m.Seeded)
+		{
+			this.seed(player);
+			this.m.Seeded = true;
+			return;
+		}
+
+		local sightings = [];
+		this.collectNewStatics(playerTile, sightings);
+		this.collectNewEnemies(player, sightings);
+		if (sightings.len() == 0) return;
+
+		this.announce(playerTile, sightings);
+	}
+};
+
 // Camping is a world-map state, not a modal screen. Vanilla T and the topbar
 // button both funnel through world_state.onCamp(), but their only feedback is
 // visual: the party turns into a camp and the shared PAUSED label becomes
@@ -9305,6 +9471,7 @@
 		::UnseenBanner.WorldClock.reset();
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
+		::UnseenBanner.WorldDiscovery.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
@@ -9327,6 +9494,7 @@
 		::UnseenBanner.WorldClock.reset();
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
+		::UnseenBanner.WorldDiscovery.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
@@ -9349,6 +9517,7 @@
 		::UnseenBanner.WorldClock.reset();
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
+		::UnseenBanner.WorldDiscovery.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
@@ -9411,6 +9580,7 @@
 		::UnseenBanner.WorldMove.observeDestination(this);
 		__original();
 		::UnseenBanner.WorldMove.tick();
+		::UnseenBanner.WorldDiscovery.tick(this.Time.getRealTimeF());
 	}
 
 	// Both T and the clickable topbar button reach this funnel; native movement

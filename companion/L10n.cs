@@ -663,6 +663,19 @@ namespace TheUnseenBanner.Companion
             ["world.survey.here"] = "At your position",
             ["world.survey.action.enemy"] = "Press Enter to engage or pursue.",
             ["world.survey.action.place"] = "Press Enter to approach or enter.",
+            // Ambient discovery pings: a settlement, location, landmark or enemy party
+            // newly entering the player's sight while travelling. Only enemy parties are
+            // announced (user decision); a single sighting is read in full, several at
+            // once collapse into the summary below.
+            ["world.discovery.enemy"] = "Enemy party sighted, {0}",
+            ["world.discovery.settlement"] = "Settlement discovered, {0}",
+            ["world.discovery.location"] = "Location discovered, {0}",
+            ["world.discovery.landmark"] = "Landmark discovered, {0}",
+            ["world.discovery.summary"] = "{0}.",
+            ["world.discovery.summary.places.one"] = "1 place discovered",
+            ["world.discovery.summary.places"] = "{0} places discovered",
+            ["world.discovery.summary.enemies.one"] = "1 enemy party sighted",
+            ["world.discovery.summary.enemies"] = "{0} enemy parties sighted",
             // Contextual Enter on the focused B-survey entity. The actual order uses
             // world_state's AutoAttack/AutoEnterLocation funnels; these are only the
             // immediate confirmations and failure cues for a screen-reader user.

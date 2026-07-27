@@ -222,6 +222,8 @@ namespace TheUnseenBanner.Companion
                     "world.survey.places.screen" => ComposeSurveyPlacesScreen(valor, detalle),
                     "world.survey.parties.screen" => ComposeSurveyPartiesScreen(detalle),
                     "world.survey.item" => ComposeSurveyItem(texto, valor, detalle),
+                    "world.discovery.single" => ComposeDiscoverySighting(texto, valor, detalle),
+                    "world.discovery.summary" => ComposeDiscoverySummary(valor),
                     "world.obituary.entry" => ComposeObituaryEntry(texto, detalle),
                     "world.retinue.slot.follower" => ComposeRetinueSlot(texto, valor, detalle),
                     "world.retinue.hire.follower" => ComposeRetinueFollower(texto, valor, detalle),
@@ -1199,6 +1201,57 @@ namespace TheUnseenBanner.Companion
             };
             string spoken = position.Length > 0 ? head + ". " + position + "." : head + ".";
             return action.Length > 0 ? spoken + " " + action : spoken;
+        }
+
+        /// <summary>Compose an ambient discovery ping: a settlement, location, landmark
+        /// or enemy party newly entering the player's sight while travelling, queued so
+        /// it never cuts off another announcement. texto is the entity's already-
+        /// localized name; valor is its kind; detalle is the shared "dist|dir" pair.
+        /// Unlike <see cref="ComposeSurveyItem"/> this carries no action hint — it is a
+        /// passing cue, not a row in an interactive list.</summary>
+        private static string ComposeDiscoverySighting(string name, string kind, string detail)
+        {
+            string[] p = detail.Split('|');
+            string dist = p.Length > 0 ? p[0] : "0";
+            string dir = p.Length > 1 ? p[1] : "-1";
+
+            string head = kind switch
+            {
+                "enemy" => L10n.F("world.discovery.enemy", name),
+                "settlement" => L10n.F("world.discovery.settlement", name),
+                "landmark" => L10n.F("world.discovery.landmark", name),
+                _ => L10n.F("world.discovery.location", name),
+            };
+
+            string position = ComposePosition(dist, dir);
+            if (position.Length == 0 && dist == "0")
+                position = L10n.T("world.survey.here");
+
+            return position.Length > 0 ? head + " " + position + "." : head + ".";
+        }
+
+        /// <summary>Compose the short count used when several sightings land in the same
+        /// scan (fast travel, arriving near a cluster) — read as one queued line instead
+        /// of a full row per sighting; the detail is one B/Shift+B press away. detalle
+        /// packs "places|enemies", places covering settlements, locations and
+        /// landmarks together since none of them carries a hostility distinction.</summary>
+        private static string ComposeDiscoverySummary(string detail)
+        {
+            string[] p = detail.Split('|');
+            int.TryParse(p.Length > 0 ? p[0] : "0", out int places);
+            int.TryParse(p.Length > 1 ? p[1] : "0", out int enemies);
+
+            var parts = new List<string>();
+            if (places > 0)
+                parts.Add(places == 1
+                    ? L10n.T("world.discovery.summary.places.one")
+                    : L10n.F("world.discovery.summary.places", places));
+            if (enemies > 0)
+                parts.Add(enemies == 1
+                    ? L10n.T("world.discovery.summary.enemies.one")
+                    : L10n.F("world.discovery.summary.enemies", enemies));
+
+            return L10n.F("world.discovery.summary", JoinWithAnd(parts));
         }
 
         /// <summary>Compose one row of the world-map obituary (phase 5.2).
