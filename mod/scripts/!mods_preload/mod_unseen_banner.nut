@@ -688,10 +688,23 @@
 		// feeds it as `leveledUp`), guests already excluded, so this count and the
 		// stars on screen cannot disagree. They are named one per row rather than
 		// crammed into a sentence — with eight of them a single utterance is a dump.
+		//
+		// That one flag covers two independent debts, though: the attribute increases
+		// the level granted (m.LevelUps) and the perk point (m.PerkPoints). Spending
+		// one does not clear the other, so each man says which he still owes. Saying
+		// only "waiting to level up" left the count stuck at one with an empty perk
+		// tree and no way to tell what was missing.
 		local leveled = [];
 		foreach( bro in ::World.getPlayerRoster().getAll() )
 		{
-			if (bro != null && bro.isLeveled()) leveled.push(bro.getName());
+			if (bro == null || !bro.isLeveled()) continue;
+			local levelUps = bro.getLevelUps();
+			local points = bro.getPerkPoints();
+			leveled.push({
+				name = bro.getName(),
+				what = levelUps > 0 ? (points > 0 ? "both" : "attributes") : "perk",
+				detail = levelUps + "|" + points
+			});
 		}
 
 		local speed = this.speedState();
@@ -713,8 +726,9 @@
 		else
 		{
 			items.push(this.item(leveled.len() == 1 ? "world.status.levelup.one" : "world.status.levelup", "", "" + leveled.len()));
-			foreach( name in leveled )
-				items.push(this.item("world.status.levelup.brother", name));
+			foreach( entry in leveled )
+				items.push(this.item("world.status.levelup.brother", entry.name,
+					entry.what, entry.detail));
 		}
 		items.push(this.item("world.status.money", "", "" + money));
 		items.push(this.item("world.status.wages", "", "" + dailyMoney));
@@ -6527,6 +6541,19 @@
 		ActionMode = false,
 		Actions = null,
 		ActionIndex = 0,
+		// The attribute-increase list, held apart from the ordinary sections the same
+		// way the dismissal confirmation is, and for the same reason: vanilla puts it
+		// in a modal popup and it ends in something that cannot be undone. Picks are
+		// one flag per attribute in Const.Attributes order, mirroring the popup's
+		// mLevelUpIncreaseValues — nothing reaches the game until the three are
+		// confirmed. The target is captured by ID and name so nothing depends on a
+		// live actor reference that a roster change could invalidate.
+		LevelUpMode = false,
+		LevelUpItems = null,
+		LevelUpIndex = 0,
+		LevelUpPicks = null,
+		LevelUpTargetID = null,
+		LevelUpTargetName = "",
 		FormationMoveMode = false,
 		FormationSourceID = null,
 		FormationSourceSlot = -1,
@@ -6548,6 +6575,11 @@
 		WorldMode = false,
 		Active = false
 	},
+	// Vanilla's own rule for a level-up: three of the eight attributes, each raised
+	// once (Constants.Game.MAX_STATS_INCREASE_COUNT in globals.js, which is what
+	// enables the popup's OK button). Not tunable — changing it would desync this
+	// list from what the game considers one spent level.
+	MaxStatsIncrease = 3,
 	InspectKey = 32, // v -> open/close the focused entry's native tooltip details
 	ActionKey = 39, // Enter -> rename, open/confirm an action or place a brother
 	CancelKey = 41, // Escape -> cancel an armed formation move
@@ -6586,9 +6618,10 @@
 				&& (this.m.ActionMode || this.m.DismissMode || this.isTacticalBagRow()
 					|| (this.m.WorldMode && (this.isInventorySection()
 						|| this.isIdentityRow() || this.isFormationSection()
-						|| this.isPerksSection()))))
+						|| this.isPerksSection())) || this.m.LevelUpMode))
 			|| (_code == this.CancelKey
-				&& (this.m.FormationMoveMode || this.m.DismissMode))
+				&& (this.m.FormationMoveMode || this.m.DismissMode
+					|| this.m.LevelUpMode))
 			// Delete is answered on every identity row in world mode, including the
 			// rows where dismissing is not allowed: vanilla simply hides its button
 			// there, and a key that does nothing at all is indistinguishable from a
@@ -6614,16 +6647,20 @@
 	function isReleaseHandledKey(_code)
 	{
 		return (_code == this.ActionKey
-				&& (this.isIdentityRow() || this.isFormationSection()))
+				&& (this.isIdentityRow() || this.isFormationSection()
+					|| this.m.LevelUpMode))
 			|| (_code == this.CancelKey
-				&& (this.m.FormationMoveMode || this.m.DismissMode));
+				&& (this.m.FormationMoveMode || this.m.DismissMode
+					|| this.m.LevelUpMode));
 	},
 	function onReleaseHandledKey(_code, _screen)
 	{
-		// Inside the dismissal confirmation the identity row is still the focused
-		// row, but Enter there means "carry out the chosen option", never "open the
-		// rename editor" — so the editor guards below must not intercept it.
-		if (_code == this.ActionKey && this.isIdentityRow() && !this.m.DismissMode)
+		// Inside the dismissal confirmation and the attribute list the identity row is
+		// still the focused row, but Enter there means "carry out the chosen option",
+		// never "open the rename editor" — so the editor guards below must not
+		// intercept it.
+		if (_code == this.ActionKey && this.isIdentityRow()
+			&& !this.m.DismissMode && !this.m.LevelUpMode)
 		{
 			if (::UnseenBanner.CharacterEdit.consumeSuppressedEnterRelease()) return;
 			if (::UnseenBanner.CharacterEdit.isActive()) return;
@@ -6648,6 +6685,7 @@
 		this.m.ActionMode = false;
 		this.m.Actions = null;
 		this.m.ActionIndex = 0;
+		this.resetLevelUp();
 		this.resetFormationMove();
 		this.resetDismiss();
 		this.m.Screen = null;
@@ -6760,6 +6798,42 @@
 			this.cancelDismiss(false);
 		}
 
+		// The attribute list owns the keyboard while it is up, like the dismissal
+		// confirmation. V is the one difference between them: here it stays "read what
+		// this attribute does", the native tooltip that is the whole basis for
+		// choosing, and Escape alone cancels.
+		if (this.m.LevelUpMode)
+		{
+			if (_code == this.CancelKey)
+			{
+				this.cancelLevelUp(true);
+				return;
+			}
+			if (_code == this.InspectKey)
+			{
+				this.showLevelUpDetail();
+				return;
+			}
+			if (_code == this.ActionKey)
+			{
+				this.activateLevelUp(_screen);
+				return;
+			}
+			if (_code in this.MoveKeys)
+			{
+				this.moveLevelUp(_code);
+				return;
+			}
+			// Delete belongs to the identity row underneath, which is still the focused
+			// row but is not what the player is on. Dropping straight from choosing an
+			// increase into a dismissal confirmation would be its own accident.
+			if (_code == this.DismissKey) return;
+
+			// Changing brother or section abandons the choices and then runs its
+			// ordinary course. Nothing was spent, so there is nothing to undo.
+			this.cancelLevelUp(false);
+		}
+
 		if (this.m.FormationMoveMode)
 		{
 			if (_code == this.InspectKey || _code == this.CancelKey)
@@ -6819,13 +6893,6 @@
 
 		if (_code == this.ActionKey)
 		{
-			if (this.isIdentityRow())
-			{
-				this.leaveDetails();
-				::UnseenBanner.TooltipNav.hide();
-				::UnseenBanner.CharacterEdit.open(this.current());
-				return;
-			}
 			if (this.isFormationSection())
 			{
 				this.beginFormationMove(_screen);
@@ -7279,8 +7346,30 @@
 	},
 	function buildActions(_row)
 	{
-		local payload = _row != null ? _row.payload : null;
+		// Sheet rows are built by a different helper and carry no payload field at
+		// all, so this cannot read the slot without testing for it — the identity row
+		// below is one of them.
+		local payload = _row != null && ("payload" in _row) ? _row.payload : null;
 		local actions = [];
+
+		// The identity row is the screen's header, and vanilla hangs two things off
+		// it: renaming, on the name, and the level-up popup, on the level label right
+		// beside it. Both live behind this one Enter. The level-up entry appears only
+		// while the man actually has increases to spend, exactly like the star vanilla
+		// draws there — and it leads, because the row's own hint has just said one is
+		// waiting, and that is what the player pressed Enter for.
+		if (this.m.WorldMode && _row != null && _row.cat == "combat.sheet.identity")
+		{
+			local bro = this.current();
+			if (this.levelUpPending(bro) > 0)
+			{
+				actions.push(this.action("levelup_open", "levelup_open", "levelup_open",
+					"", { source = "identity" }));
+			}
+			actions.push(this.action("rename", "rename", "rename",
+				bro != null ? bro.getName() : "", { source = "identity" }));
+			return actions;
+		}
 
 		// A perk is offered only when it can actually be taken. Every other state
 		// (already acquired, tier still locked, no points left) is reported by the
@@ -7352,7 +7441,8 @@
 	function openActions()
 	{
 		local canOpen = this.m.WorldMode
-			? (this.isInventorySection() || this.isPerksSection())
+			? (this.isInventorySection() || this.isPerksSection()
+				|| this.isIdentityRow())
 			: this.isTacticalBagRow();
 		if (!canOpen || this.m.Items == null || this.m.Items.len() == 0) return;
 
@@ -7446,6 +7536,25 @@
 		{
 			this.leaveActions(false);
 			::UnseenBanner.sendMessage("interrupt", "", "world.inventory.error", "0");
+			return;
+		}
+
+		// The two entries of the identity menu open something rather than changing
+		// state, so they leave the menu and hand over instead of running through the
+		// mutate-reload-announce tail below.
+		if (action.execute == "rename")
+		{
+			this.leaveActions(false);
+			this.leaveDetails();
+			::UnseenBanner.TooltipNav.hide();
+			::UnseenBanner.CharacterEdit.open(bro);
+			return;
+		}
+
+		if (action.execute == "levelup_open")
+		{
+			this.leaveActions(false);
+			this.openLevelUp();
 			return;
 		}
 
@@ -7593,6 +7702,310 @@
 				"combat.inventory.result." + action.result,
 				bro != null ? "" + bro.getActionPoints() : "");
 		}
+	},
+	// --- Spending a level-up (Enter on the identity row) ------------------------
+	//
+	// Vanilla's level-up is a mouse-only popup behind the portrait's level label:
+	// eight "+" buttons, three of which can be pressed, then OK. Nothing in it is
+	// reachable from the keyboard, so m.LevelUps only ever grew and every attribute
+	// increase the company earned was silently lost — while the F2 status kept
+	// counting the man as waiting to level up, because isLeveled() is true for
+	// either of the two debts a level grants. This is that popup as a list, opened
+	// where vanilla puts its star: on the identity row, beside the name and level.
+	//
+	// It is modal, like the dismissal confirmation, because it ends in the same kind
+	// of act: setAttributeLevelUpValues cannot be undone by anything short of
+	// loading a save.
+
+	// The eight attributes a level-up can raise, in the order
+	// general_onCommitStatsIncreaseValues unpacks the array it is handed — which is
+	// also Const.Attributes order, so one index serves as the commit slot and as the
+	// talent (star) lookup. The native dialog draws icons and has no names to read,
+	// so the names live in L10n and only the id travels. Each entry reuses the same
+	// character-stats tooltip the sheet already reads for that attribute.
+	function levelUpAttributes()
+	{
+		return [
+			{ id = "hitpoints", value = "hitpoints", max = "hitpointsMax",
+				increase = "hitpointsIncrease", tooltip = "character-stats.Hitpoints" },
+			{ id = "bravery", value = "bravery", max = "braveryMax",
+				increase = "braveryIncrease", tooltip = "character-stats.Bravery" },
+			{ id = "fatigue", value = "fatigue", max = "fatigueMax",
+				increase = "fatigueIncrease", tooltip = "character-stats.Fatigue" },
+			{ id = "initiative", value = "initiative", max = "initiativeMax",
+				increase = "initiativeIncrease", tooltip = "character-stats.Initiative" },
+			{ id = "mskill", value = "meleeSkill", max = "meleeSkillMax",
+				increase = "meleeSkillIncrease", tooltip = "character-stats.MeleeSkill" },
+			{ id = "rskill", value = "rangeSkill", max = "rangeSkillMax",
+				increase = "rangeSkillIncrease", tooltip = "character-stats.RangeSkill" },
+			{ id = "mdef", value = "meleeDefense", max = "meleeDefenseMax",
+				increase = "meleeDefenseIncrease", tooltip = "character-stats.MeleeDefense" },
+			{ id = "rdef", value = "rangeDefense", max = "rangeDefenseMax",
+				increase = "rangeDefenseIncrease", tooltip = "character-stats.RangeDefense" }
+		];
+	},
+	// Whether this man has attribute increases waiting, and how many. Two exclusions,
+	// both vanilla's: the popup is never offered in battle (its star checks
+	// isTacticalMode), and guests level up but never get their increases offered —
+	// isLeveled(), and with it the star, exclude them. Announcing a level-up where
+	// Enter would refuse is worse than staying quiet.
+	function levelUpPending(_bro = null)
+	{
+		if (!this.m.WorldMode) return 0;
+		local bro = _bro != null ? _bro : this.current();
+		if (bro == null || !::isKindOf(bro, "player") || bro.isGuest()) return 0;
+		return bro.getLevelUps();
+	},
+	function resetLevelUp()
+	{
+		this.m.LevelUpMode = false;
+		this.m.LevelUpItems = null;
+		this.m.LevelUpIndex = 0;
+		this.m.LevelUpPicks = null;
+		this.m.LevelUpTargetID = null;
+		this.m.LevelUpTargetName = "";
+	},
+	// Resolved from the captured ID rather than kept as a reference, so a roster
+	// change under the open list cannot leave it pointing at a stale actor.
+	function levelUpTarget()
+	{
+		if (this.m.LevelUpTargetID == null || this.m.Brothers == null) return null;
+		foreach( bro in this.m.Brothers )
+		{
+			if (bro != null && bro.getID() == this.m.LevelUpTargetID) return bro;
+		}
+		return null;
+	},
+	function levelUpPicked()
+	{
+		if (this.m.LevelUpPicks == null) return 0;
+		local n = 0;
+		foreach( picked in this.m.LevelUpPicks )
+		{
+			if (picked) n += 1;
+		}
+		return n;
+	},
+	function currentLevelUpItem()
+	{
+		if (this.m.LevelUpItems == null || this.m.LevelUpItems.len() == 0) return null;
+		if (this.m.LevelUpIndex < 0 || this.m.LevelUpIndex >= this.m.LevelUpItems.len())
+			return null;
+		return this.m.LevelUpItems[this.m.LevelUpIndex];
+	},
+	// Eight attributes and, last, the entry that applies them. The offer is read once
+	// here: getAttributeLevelUpValues returns a pre-rolled set that stays fixed until
+	// a commit consumes it, and holding it means what is committed is exactly what was
+	// spoken, with no chance of the two drifting apart.
+	function buildLevelUpItems(_bro)
+	{
+		local items = [];
+		if (_bro == null)
+		{
+			this.m.LevelUpItems = items;
+			return;
+		}
+
+		local offer = _bro.getAttributeLevelUpValues();
+		local talents = _bro.getTalents();
+		foreach( index, attribute in this.levelUpAttributes() )
+		{
+			items.push({
+				kind = "attribute",
+				index = index,
+				id = attribute.id,
+				increase = offer[attribute.increase],
+				facts = "" + offer[attribute.value] + "|" + offer[attribute.max]
+					+ "|" + offer[attribute.increase] + "|" + talents[index],
+				tooltip = this.uiElementDetail(_bro, attribute.tooltip)
+			});
+		}
+		items.push({
+			kind = "confirm",
+			index = -1,
+			id = "",
+			increase = 0,
+			facts = "",
+			tooltip = null
+		});
+		this.m.LevelUpItems = items;
+	},
+	function openLevelUp()
+	{
+		local bro = this.current();
+		if (this.levelUpPending(bro) <= 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.character.levelup.unavailable");
+			return;
+		}
+
+		this.leaveDetails();
+		::UnseenBanner.TooltipNav.hide();
+		this.m.LevelUpMode = true;
+		this.m.LevelUpTargetID = bro.getID();
+		this.m.LevelUpTargetName = bro.getName();
+		this.m.LevelUpPicks = [false, false, false, false, false, false, false, false];
+		this.m.LevelUpIndex = 0;
+		this.buildLevelUpItems(bro);
+		this.announceLevelUp(true);
+	},
+	function cancelLevelUp(_announce)
+	{
+		local name = this.m.LevelUpTargetName;
+		this.resetLevelUp();
+		::UnseenBanner.TooltipNav.hide();
+		// A silent cancel is one the player caused by moving on: changing brother or
+		// section speaks for itself right after this, and a second message would cut
+		// the first one off.
+		if (_announce)
+		{
+			::UnseenBanner.sendMessage("interrupt", name,
+				"world.character.levelup.cancelled");
+		}
+	},
+	function moveLevelUp(_code)
+	{
+		if (this.m.LevelUpItems == null || this.m.LevelUpItems.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.LevelUpIndex -= 1;
+		else if (dir == "down") this.m.LevelUpIndex += 1;
+		else if (dir == "home") this.m.LevelUpIndex = 0;
+		else this.m.LevelUpIndex = this.m.LevelUpItems.len() - 1;
+
+		if (this.m.LevelUpIndex < 0) this.m.LevelUpIndex = 0;
+		if (this.m.LevelUpIndex >= this.m.LevelUpItems.len())
+			this.m.LevelUpIndex = this.m.LevelUpItems.len() - 1;
+		::UnseenBanner.TooltipNav.hide();
+		this.announceLevelUp();
+	},
+	// The already-chosen attributes packed as "id:increase" pairs. It is what the
+	// confirm entry reads out before applying anything, and what the outcome repeats
+	// afterwards — by then the entity has changed and cannot be asked again.
+	function levelUpPickedPack()
+	{
+		local packed = "";
+		if (this.m.LevelUpItems == null) return packed;
+		foreach( item in this.m.LevelUpItems )
+		{
+			if (item.kind != "attribute" || !this.m.LevelUpPicks[item.index]) continue;
+			if (packed != "") packed += ",";
+			packed += item.id + ":" + item.increase;
+		}
+		return packed;
+	},
+	function announceLevelUp(_opened = false)
+	{
+		local item = this.currentLevelUpItem();
+		if (item == null) return;
+		local position = (this.m.LevelUpIndex + 1) + "|" + this.m.LevelUpItems.len()
+			+ "|" + (_opened ? "1" : "0");
+
+		if (item.kind == "confirm")
+		{
+			::UnseenBanner.sendMessage("interrupt", this.m.LevelUpTargetName,
+				"world.character.levelup.confirm", this.levelUpPickedPack(),
+				this.levelUpPicked() + "|" + this.MaxStatsIncrease + "|" + position);
+			return;
+		}
+
+		::UnseenBanner.sendMessage("interrupt", this.m.LevelUpTargetName,
+			"world.character.levelup.attribute", item.id,
+			item.facts + "|" + (this.m.LevelUpPicks[item.index] ? "1" : "0")
+				+ "|" + position,
+			null, "1");
+	},
+	// V keeps its ordinary meaning here rather than becoming a second cancel: each
+	// attribute has exactly one native tooltip, and what it says is the whole reason
+	// to prefer one increase over another.
+	function showLevelUpDetail()
+	{
+		local item = this.currentLevelUpItem();
+		if (item == null || item.tooltip == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "tooltip.unavailable");
+			return;
+		}
+		::UnseenBanner.TooltipNav.show(item.tooltip, 1, 1, "world.character.levelup");
+	},
+	function activateLevelUp(_screen)
+	{
+		local item = this.currentLevelUpItem();
+		if (item == null) return;
+		if (item.kind == "confirm")
+		{
+			this.commitLevelUp(_screen);
+			return;
+		}
+
+		local picked = this.m.LevelUpPicks[item.index];
+		// The cap is the game's own (Constants.Game.MAX_STATS_INCREASE_COUNT): three
+		// attributes per level, each raised once. Refusing has to name the way out,
+		// because with three taken every further Enter would otherwise be silence.
+		if (!picked && this.levelUpPicked() >= this.MaxStatsIncrease)
+		{
+			::UnseenBanner.sendMessage("interrupt", item.id,
+				"world.character.levelup.full", "" + this.MaxStatsIncrease);
+			return;
+		}
+
+		this.m.LevelUpPicks[item.index] = !picked;
+		::UnseenBanner.TooltipNav.hide();
+		::UnseenBanner.sendMessage("interrupt", item.id,
+			"world.character.levelup.result." + (picked ? "undo" : "pick"),
+			"" + this.levelUpPicked(), "" + this.MaxStatsIncrease);
+	},
+	// The screen's own endpoint, not entity.setAttributeLevelUpValues directly: it is
+	// the funnel that resolves the entity and refuses one the player does not control,
+	// exactly as the popup's OK button does. Nothing else decrements m.LevelUps.
+	function commitLevelUp(_screen)
+	{
+		local bro = this.levelUpTarget();
+		if (bro == null || _screen == null)
+		{
+			this.cancelLevelUp(false);
+			::UnseenBanner.sendMessage("interrupt", "", "world.inventory.error", "0");
+			return;
+		}
+
+		// setAttributeLevelUpValues decrements m.LevelUps whatever array it is handed,
+		// so a partial set would burn the level and apply almost nothing. This is the
+		// lock on it; the confirm entry itself already says how many are missing.
+		if (this.levelUpPicked() < this.MaxStatsIncrease)
+		{
+			::UnseenBanner.sendMessage("interrupt", "",
+				"world.character.levelup.confirm.blocked",
+				"" + this.levelUpPicked(), "" + this.MaxStatsIncrease);
+			return;
+		}
+
+		local values = [0, 0, 0, 0, 0, 0, 0, 0];
+		foreach( item in this.m.LevelUpItems )
+		{
+			if (item.kind != "attribute" || !this.m.LevelUpPicks[item.index]) continue;
+			values[item.index] = item.increase;
+		}
+		local applied = this.levelUpPickedPack();
+
+		local saved = this.captureSectionPositions();
+		local oldSection = this.m.SectionIndex;
+		local result = _screen.onCommitStatsIncreaseValues([bro.getID(), values]);
+		if (!this.mutationSucceeded(result))
+		{
+			// Nothing was spent, so the list stays open with the choices intact.
+			::UnseenBanner.sendMessage("interrupt", "", "world.inventory.error",
+				this.mutationErrorCode(result));
+			return;
+		}
+
+		local left = bro.getLevelUps();
+		this.resetLevelUp();
+		_screen.loadData();
+		this.buildWorldSections(saved);
+		this.activateSection(oldSection, false, false);
+		// A brother can be several levels behind, so the outcome ends with whether
+		// there is another set waiting — the identity row will offer it again.
+		::UnseenBanner.sendMessage("interrupt", applied,
+			"world.character.levelup.confirmed", "" + left);
 	},
 	// --- Dismissing a brother (Delete on the identity row) ----------------------
 	//
@@ -7781,12 +8194,15 @@
 			detail = it.payload.position + "|" + this.m.FormationSourceName
 				+ "|" + (it.payload.slot == this.m.FormationSourceSlot ? "1" : "0");
 		}
-		// The identity row is where Delete acts, so its hint travels with that row —
-		// and only when the man can actually be dismissed. Advertising a key that
-		// will refuse is worse than not advertising it at all.
-		else if (category == "combat.sheet.identity" && this.canDismiss())
+		// Hints that belong to the identity row travel with it, and only while they
+		// are true: a pending level-up is where vanilla puts its star, next to the
+		// name and the level, and Delete is where it puts the dismiss button.
+		// Advertising a key that will refuse is worse than not advertising it at all.
+		else if (category == "combat.sheet.identity")
 		{
-			detail = "dismiss";
+			detail = "";
+			if (this.levelUpPending() > 0) detail = "levelup";
+			if (this.canDismiss()) detail += (detail != "" ? "|" : "") + "dismiss";
 		}
 		// Identity already contains the brother's name, so do not say it twice when
 		// that is the retained item.
@@ -7798,10 +8214,9 @@
 			? it.details.len()
 			: 0;
 		local actionCount = 0;
-		if ((this.m.WorldMode && this.isInventorySection()) || this.isTacticalBagRow())
+		if ((this.m.WorldMode && this.isInventorySection()) || this.isTacticalBagRow()
+			|| this.isIdentityRow())
 			actionCount = this.buildActions(it).len();
-		else if (this.isIdentityRow())
-			actionCount = 1;
 		local context = null;
 		local section = this.currentSection();
 		if (this.m.WorldMode && section != null)
@@ -8080,6 +8495,33 @@
 				}));
 		}
 		return rows;
+	},
+	// The eight attributes a level-up can raise, in the order
+	// general_onCommitStatsIncreaseValues unpacks the array it is handed — which is
+	// also Const.Attributes order, so one index serves as the commit slot and as the
+	// talent (star) lookup. The native dialog draws icons and has no names to read,
+	// so the names live in L10n and only the id travels. Each row reuses the same
+	// character-stats tooltip the sheet already reads for that attribute.
+	function levelUpAttributes()
+	{
+		return [
+			{ id = "hitpoints", value = "hitpoints", max = "hitpointsMax",
+				increase = "hitpointsIncrease", tooltip = "character-stats.Hitpoints" },
+			{ id = "bravery", value = "bravery", max = "braveryMax",
+				increase = "braveryIncrease", tooltip = "character-stats.Bravery" },
+			{ id = "fatigue", value = "fatigue", max = "fatigueMax",
+				increase = "fatigueIncrease", tooltip = "character-stats.Fatigue" },
+			{ id = "initiative", value = "initiative", max = "initiativeMax",
+				increase = "initiativeIncrease", tooltip = "character-stats.Initiative" },
+			{ id = "mskill", value = "meleeSkill", max = "meleeSkillMax",
+				increase = "meleeSkillIncrease", tooltip = "character-stats.MeleeSkill" },
+			{ id = "rskill", value = "rangeSkill", max = "rangeSkillMax",
+				increase = "rangeSkillIncrease", tooltip = "character-stats.RangeSkill" },
+			{ id = "mdef", value = "meleeDefense", max = "meleeDefenseMax",
+				increase = "meleeDefenseIncrease", tooltip = "character-stats.MeleeDefense" },
+			{ id = "rdef", value = "rangeDefense", max = "rangeDefenseMax",
+				increase = "rangeDefenseIncrease", tooltip = "character-stats.RangeDefense" }
+		];
 	},
 	function buildPerkRows()
 	{

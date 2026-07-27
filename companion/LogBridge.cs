@@ -184,6 +184,18 @@ namespace TheUnseenBanner.Companion
                         L10n.T("world.character.perk.state." + valor)),
                     string key when key.StartsWith("world.character.perk.result.",
                         StringComparison.Ordinal) => L10n.F(key, texto, valor),
+                    "world.character.levelup.attribute"
+                        => ComposeLevelUpAttribute(texto, valor, detalle),
+                    "world.character.levelup.confirm"
+                        => ComposeLevelUpConfirm(texto, valor, detalle),
+                    "world.character.levelup.full"
+                        => L10n.F(categoria, LevelUpAttributeName(texto), valor),
+                    "world.character.levelup.cancelled" => L10n.F(categoria, texto),
+                    "world.character.levelup.confirmed"
+                        => ComposeLevelUpConfirmed(texto, valor),
+                    string key when key.StartsWith("world.character.levelup.result.",
+                        StringComparison.Ordinal)
+                        => ComposeLevelUpChoice(key, texto, valor, detalle),
                     "world.character.dismiss.blocked"
                         => L10n.F("world.character.dismiss.blocked." + valor, texto),
                     "world.character.dismiss.cancelled"
@@ -193,6 +205,7 @@ namespace TheUnseenBanner.Companion
                         => ComposeDismissResult(texto, valor, detalle),
                     string key when key.StartsWith("world.character.dismiss.option.",
                         StringComparison.Ordinal) => ComposeDismissOption(key, texto, valor, detalle),
+                    "world.status.levelup.brother" => ComposeStatusLevelUp(texto, valor, detalle),
                     "world.character.formation.summary" => ComposeFormationSummary(valor, detalle),
                     "world.character.formation.slot" => ComposeFormationSlot(texto, valor, detalle),
                     "world.character.formation.target" => ComposeFormationTarget(texto, valor, detalle),
@@ -243,7 +256,7 @@ namespace TheUnseenBanner.Companion
                 };
                 spoken = AppendDetailsHint(spoken, detalles);
                 spoken = AppendActionsHint(spoken, acciones);
-                spoken = AppendDismissHint(spoken, categoria, detalle);
+                spoken = AppendIdentityHints(spoken, categoria, detalle);
                 spoken = ComposeCharacterContext(spoken, contexto);
                 // When changing the brother shown on the tactical character sheet,
                 // keep his name and the retained attribute in one utterance. Two
@@ -292,16 +305,28 @@ namespace TheUnseenBanner.Companion
             return spoken.Length > 0 ? spoken + " " + hint : hint;
         }
 
-        /// <summary>The Delete hint rides on the identity row, and only when Squirrel
-        /// says this man can really be dismissed (world map, more than one brother,
-        /// not the player character). It lands after the Enter hint and before the
-        /// position, so the row reads: who he is, what Enter does, what Delete does,
-        /// where you are in the list.</summary>
-        private static string AppendDismissHint(string spoken, string categoria, string detalle)
+        /// <summary>Hints that ride on the identity row, in the order Squirrel packs
+        /// them and only while they are true: a pending level up, which is where
+        /// vanilla draws its star, and Delete, which it only offers when the man can
+        /// really be dismissed. They land after the Enter hint and before the position,
+        /// so the row reads: who he is, what Enter does, what is waiting for him, what
+        /// Delete does, where you are in the list.</summary>
+        private static string AppendIdentityHints(string spoken, string categoria, string detalle)
         {
-            if (categoria != "combat.sheet.identity" || detalle != "dismiss") return spoken;
-            string hint = L10n.T("world.character.dismiss.hint");
-            return spoken.Length > 0 ? spoken + " " + hint : hint;
+            if (categoria != "combat.sheet.identity") return spoken;
+            foreach (string flag in detalle.Split('|', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string key = flag switch
+                {
+                    "levelup" => "world.character.levelup.hint",
+                    "dismiss" => "world.character.dismiss.hint",
+                    _ => "",
+                };
+                if (key.Length == 0) continue;
+                string hint = L10n.T(key);
+                spoken = spoken.Length > 0 ? spoken + " " + hint : hint;
+            }
+            return spoken;
         }
 
         /// <summary>One row of the dismissal confirmation. Squirrel packs
@@ -412,6 +437,133 @@ namespace TheUnseenBanner.Companion
 
             bool opened = parts.Length > 2 && parts[2] == "1";
             return opened ? L10n.F("world.inventory.action.opened", result) : result;
+        }
+
+        /// <summary>Attribute names live here, not in the game: the native level-up
+        /// dialog draws icons only, so Squirrel sends the attribute id and nothing
+        /// readable.</summary>
+        private static string LevelUpAttributeName(string id)
+        {
+            return id.Length > 0 ? L10n.T("world.character.levelup.attribute." + id) : "";
+        }
+
+        /// <summary>Wrap the focused entry of the attribute list with its position,
+        /// and — only the first time, when Enter opened it — with the header naming
+        /// whose increases these are and which keys drive the list. Squirrel packs
+        /// "index|total|opened" at the tail of every entry's detail.</summary>
+        private static string FrameLevelUpEntry(string spoken, string name, string[] parts, int at)
+        {
+            string index = parts.Length > at ? parts[at] : "1";
+            string total = parts.Length > at + 1 ? parts[at + 1] : "1";
+            bool opened = parts.Length > at + 2 && parts[at + 2] == "1";
+
+            string result = spoken + " " + L10n.F("world.character.levelup.position", index, total);
+            return opened ? L10n.F("world.character.levelup.opened", name, result) : result;
+        }
+
+        /// <summary>One attribute offered by a pending level up. Squirrel packs
+        /// "current|max|increase|talent|chosen|index|total|opened"; talent is the 0-3
+        /// star rating the dialog only draws as an icon, and it is what makes one
+        /// attribute worth raising over another.</summary>
+        private static string ComposeLevelUpAttribute(string name, string id, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string current = parts.Length > 0 ? parts[0] : "";
+            string max = parts.Length > 1 ? parts[1] : "";
+            string increase = parts.Length > 2 ? parts[2] : "";
+            string talent = parts.Length > 3 ? parts[3] : "0";
+            bool chosen = parts.Length > 4 && parts[4] == "1";
+
+            string result = L10n.F("world.character.levelup.attribute",
+                LevelUpAttributeName(id), current, max, increase);
+            string stars = L10n.T("world.character.levelup.talent." + talent);
+            if (stars.Length > 0) result += " " + stars;
+            result += " " + L10n.T(chosen
+                ? "world.character.levelup.attribute.chosen"
+                : "world.character.levelup.attribute.free");
+            return FrameLevelUpEntry(result, name, parts, 5);
+        }
+
+        /// <summary>The last entry of the list, the one that applies the choices. It
+        /// reads back the three attributes and warns that this is permanent — on
+        /// focus, before Enter, because afterwards nothing can take it back. Squirrel
+        /// packs "chosen|max|index|total|opened" and the picks as "id:increase" pairs.</summary>
+        private static string ComposeLevelUpConfirm(string name, string picks, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string chosen = parts.Length > 0 ? parts[0] : "0";
+            string max = parts.Length > 1 ? parts[1] : "3";
+
+            string result = chosen == max
+                ? L10n.F("world.character.levelup.confirm", ComposeLevelUpPicks(picks))
+                : L10n.F("world.character.levelup.confirm.pending", chosen, max);
+            return FrameLevelUpEntry(result, name, parts, 2);
+        }
+
+        /// <summary>"id:increase" pairs as a spoken list: "Melee skill plus 3."</summary>
+        private static string ComposeLevelUpPicks(string picks)
+        {
+            string raised = "";
+            foreach (string pick in picks.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                string[] pair = pick.Split(':');
+                if (pair.Length != 2) continue;
+                if (raised.Length > 0) raised += " ";
+                raised += L10n.F("world.character.levelup.raised",
+                    LevelUpAttributeName(pair[0]), pair[1]);
+            }
+            return raised;
+        }
+
+        /// <summary>Outcome of choosing or unchoosing. Nothing has been spent yet, so
+        /// the reply is how many of the three are now taken — and, on the third, where
+        /// to go to apply them.</summary>
+        private static string ComposeLevelUpChoice(string key, string id, string chosen, string max)
+        {
+            string result = L10n.F(key, LevelUpAttributeName(id), chosen, max);
+            if (chosen == max) result += " " + L10n.T("world.character.levelup.result.ready");
+            return result;
+        }
+
+        /// <summary>Outcome of the commit, from the choices as they were sent:
+        /// Squirrel packs "id:increase" pairs separated by commas. The entity has
+        /// already changed by the time this is spoken, which is why the amounts
+        /// travel rather than being read back.</summary>
+        private static string ComposeLevelUpConfirmed(string picks, string left)
+        {
+            string raised = ComposeLevelUpPicks(picks);
+            string remaining = left switch
+            {
+                "0" => L10n.T("world.character.levelup.remaining.none"),
+                "1" => L10n.T("world.character.levelup.remaining.one"),
+                _ => L10n.F("world.character.levelup.remaining", left),
+            };
+            return L10n.F("world.character.levelup.confirmed", raised) + " " + remaining;
+        }
+
+        /// <summary>One brother on the F2 status list who still owes something a level
+        /// gave him. The two debts are independent — spending the perk point leaves the
+        /// attribute increases pending, and vice versa — so the row names which.
+        /// Squirrel packs "level-ups|perk-points".</summary>
+        private static string ComposeStatusLevelUp(string name, string what, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string levelUps = parts.Length > 0 ? parts[0] : "0";
+            string points = parts.Length > 1 ? parts[1] : "0";
+
+            string attributes = L10n.F(levelUps == "1"
+                ? "world.status.levelup.attributes.one"
+                : "world.status.levelup.attributes", levelUps);
+            string perks = L10n.F(points == "1"
+                ? "world.status.levelup.perks.one"
+                : "world.status.levelup.perks", points);
+
+            return what switch
+            {
+                "both" => L10n.F("world.status.levelup.brother.both", name, attributes, perks),
+                "attributes" => L10n.F("world.status.levelup.brother", name, attributes),
+                _ => L10n.F("world.status.levelup.brother", name, perks),
+            };
         }
 
         private static string ComposeMarketScreen(string name, string money, string description)
