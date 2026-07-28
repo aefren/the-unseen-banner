@@ -72,12 +72,19 @@ UnseenBannerTooltipNav.IconTokens = {
 	xp_received: 'experience'
 };
 
+// Groups whose native tooltips end in hint rows that instruct the MOUSE: the game
+// appends them (tooltip_events.tactical_helper_addHintsToTooltip) to every item it
+// can act on, keyed by the item's owner. "Right mouse button: take item" is a lie
+// to a keyboard player, who takes it with Enter, so those rows are dropped for
+// these groups. Any group that reaches an item tooltip belongs here — the loot of
+// the post-combat screen was missing and leaked exactly that instruction.
 UnseenBannerTooltipNav.MouseOnlyInventoryGroups = {
 	'combat.sheet.equipment': true,
 	'world.character.equipment': true,
 	'world.character.bag': true,
 	'world.character.stash': true,
-	'world.market.item': true
+	'world.market.item': true,
+	'combat.result.loot.item': true
 };
 
 UnseenBannerTooltipNav.prototype.onConnection = function (_handle)
