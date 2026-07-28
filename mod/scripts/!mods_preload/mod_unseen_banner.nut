@@ -326,6 +326,23 @@
 			|| (this.m.ActiveModule == "OptionsMenuModule"
 				&& _code in ::UnseenBanner.OptionsKeyCodes);
 	},
+	ActionKey = 39, // enter
+	// Enter must never act on the press. Several menu rows open a text field — the
+	// company name in New Campaign, the name prompt when saving — and once an input
+	// holds DOM focus the engine routes the keyboard to the DOM, including the REST
+	// of the very press that opened it. That press's ~40 ms auto-repeat arrives at
+	// the field as a plain code 13, which every handler there reads as "commit and
+	// leave the field": it opened and closed inside a single tap, and the player
+	// never got to type a letter. KeyGate cannot debounce that repeat, because it is
+	// delivered to the DOM and never passes through our Squirrel hook at all.
+	//
+	// So Enter waits for the release, once the press that triggered it is over —
+	// the same rule SheetNav applies to the rows that open a new state. The movement
+	// keys keep acting on the press, and that is where the reader latency was.
+	function isReleaseHandledKey(_code)
+	{
+		return _code == this.ActionKey;
+	},
 	function getKeyName(_code)
 	{
 		if (_code in ::UnseenBanner.KeyCodes)
@@ -10325,7 +10342,10 @@
 
 ::UnseenBanner.KeyGate <- {
 	m = {
-		Last = {}
+		Last = {},
+		// Codes acted on during their PRESS whose RELEASE must not act again. See
+		// armSwallow below.
+		Swallow = {}
 	},
 	// Minimum seconds between two firings of the same held key. Long enough to
 	// swallow the ~40 ms auto-repeat, short enough that hold-to-repeat still feels
@@ -10344,9 +10364,29 @@
 	{
 		if (_code in this.m.Last) delete this.m.Last[_code];
 	},
+	// A cursor that acts on the press changes the surface underneath the very key
+	// that is still held down: Enter opens a building, Escape closes a sub-list,
+	// Enter on a contract raises the event screen. The matching release then lands
+	// on a DIFFERENT owner — a release-driven cursor, or vanilla's own handler —
+	// and fires a second, unasked-for action from one physical tap (Escape's
+	// release left the building; Enter's release picked the first event option).
+	// So every press-driven branch arms the swallow, and the state hook consumes it
+	// before any dispatch: one tap, one action, wherever the release lands.
+	function armSwallow(_code)
+	{
+		this.m.Swallow[_code] <- true;
+	},
+	function consumeSwallow(_code)
+	{
+		if (!(_code in this.m.Swallow)) return false;
+		delete this.m.Swallow[_code];
+		this.release(_code);
+		return true;
+	},
 	function reset()
 	{
 		this.m.Last = {};
+		this.m.Swallow = {};
 	}
 };
 
@@ -10463,18 +10503,45 @@
 			::UnseenBanner.KeyHelp.close(false);
 		}
 
+		// A key already acted on during its press: eat its release before anything
+		// else can read it as a fresh keystroke (Enter's release would otherwise
+		// activate whatever the submenu it just opened has focused).
+		if (_key.getState() == 0 && ::UnseenBanner.KeyGate.consumeSwallow(_key.getKey()))
+		{
+			return true;
+		}
+
 		// Only steal keys while a menu handled by menu_nav.js is fully shown.
 		// All other submenus keep their native keyboard behavior.
 		//
-		// State 0 is key release (1 = press, repeated while held) — same
-		// event the vanilla menu uses for its own escape handling, and it
-		// cannot flood the JS side with key-repeat.
-		if (_key.getState() == 0
-			&& ::UnseenBanner.MenuNav.handlesKey(_key.getKey())
+		// Move on the PRESS: waiting for the release means the screen reader only
+		// starts speaking once the player lifts the key, which reads as lag on every
+		// single move. KeyGate debounces the ~40 ms auto-repeat that comes with the
+		// press, and both states are consumed so vanilla never sees half a keystroke.
+		// Enter is the exception (see MenuNav.isReleaseHandledKey): it opens text
+		// fields, so it has to wait for the press to be over.
+		if (::UnseenBanner.MenuNav.handlesKey(_key.getKey())
 			&& ::UnseenBanner.MenuNav.isActive()
 			&& this.isKeyInputPermitted())
 		{
-			::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(_key.getKey()));
+			local code = _key.getKey();
+			local onRelease = ::UnseenBanner.MenuNav.isReleaseHandledKey(code);
+			if (_key.getState() == 1 && !onRelease)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(code));
+				}
+				::UnseenBanner.KeyGate.armSwallow(code);
+			}
+			else if (_key.getState() == 0)
+			{
+				::UnseenBanner.KeyGate.release(code);
+				if (onRelease)
+				{
+					::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(code));
+				}
+			}
 			return true;
 		}
 
@@ -11057,6 +11124,18 @@
 
 	q.onKeyInput = @(__original) function( _key )
 	{
+		// A key already acted on during its press: eat its release before any cursor
+		// or vanilla handler below can read it as a fresh keystroke. This runs first
+		// because the press that armed it usually changed the surface, so the release
+		// lands on a different owner than the one that handled the press — it is what
+		// keeps a press-driven Enter from also picking the first option of the event
+		// screen it just opened, and a press-driven Escape from closing a sub-list and
+		// then leaving the building underneath it.
+		if (_key.getState() == 0 && ::UnseenBanner.KeyGate.consumeSwallow(_key.getKey()))
+		{
+			return true;
+		}
+
 		// The end-of-campaign screen is terminal and fully modal: it pushes a
 		// MenuStack entry that refuses to be popped, so Escape does nothing and Quit
 		// is the only action left. Handle its cursor first and let every other key
@@ -11137,16 +11216,32 @@
 		}
 
 		// In-game menus (pause menu, load, save) run through the same keyboard cursor
-		// as the main menu. They are shown inside world_state, so keys are stolen here
-		// while one is fully up; Escape (41) is left to the native handler, which pops
-		// the menu stack (submenu -> pause menu -> resume). The event screen and a menu
-		// are never up at once.
-		if (_key.getState() == 0
-			&& ::UnseenBanner.MenuNav.handlesKey(_key.getKey())
+		// as the main menu, and on the same press cadence. They are shown inside
+		// world_state, so keys are stolen here while one is fully up; Escape (41) is
+		// left to the native handler, which pops the menu stack (submenu -> pause menu
+		// -> resume). The event screen and a menu are never up at once.
+		if (::UnseenBanner.MenuNav.handlesKey(_key.getKey())
 			&& !::UnseenBanner.EventNav.isActive()
 			&& ::UnseenBanner.MenuNav.isActive())
 		{
-			::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(_key.getKey()));
+			local menuCode = _key.getKey();
+			local menuOnRelease = ::UnseenBanner.MenuNav.isReleaseHandledKey(menuCode);
+			if (_key.getState() == 1 && !menuOnRelease)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(menuCode, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(menuCode));
+				}
+				::UnseenBanner.KeyGate.armSwallow(menuCode);
+			}
+			else if (_key.getState() == 0)
+			{
+				::UnseenBanner.KeyGate.release(menuCode);
+				if (menuOnRelease)
+				{
+					::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(menuCode));
+				}
+			}
 			return true;
 		}
 
@@ -11301,35 +11396,59 @@
 			return true;
 		}
 
+		// The settlement screen and every building dialog inside it act on the PRESS.
+		// Waiting for the release put the whole town under a "press, lift, then hear
+		// it" cadence, which is dead time on every row of a long building or item
+		// list. KeyGate debounces the auto-repeat that comes with the press, both
+		// states are still consumed so vanilla never sees half a keystroke, and the
+		// press arms the release swallow because these keys change the surface under
+		// themselves (Enter opens a building, Escape closes a sub-list).
+		local townPressed = _key.getState() == 1;
+		local townFree = this.m.WorldTownScreen.isVisible()
+			&& !::UnseenBanner.EventNav.isActive();
+
 		// Recruitment (phase 4.5): like the shop, the town frame remains technically
 		// visible behind this module. Candidate navigation and its action/detail
 		// sub-lists therefore take priority over the town list. At candidate level
 		// Escape remains native and returns through MenuStack.
-		if (this.m.WorldTownScreen.isVisible()
-			&& !::UnseenBanner.EventNav.isActive()
+		if (townFree
 			&& ::UnseenBanner.WorldHire.isCurrent(this.m.WorldTownScreen)
 			&& ::UnseenBanner.WorldHire.handles(code))
 		{
-			if (_key.getState() == 0 && !this.m.WorldTownScreen.isAnimating())
+			if (townPressed && !this.m.WorldTownScreen.isAnimating())
 			{
-				::UnseenBanner.WorldHire.onKey(code);
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldHire.onKey(code);
+				}
+				::UnseenBanner.KeyGate.armSwallow(code);
+			}
+			else if (!townPressed)
+			{
+				::UnseenBanner.KeyGate.release(code);
 			}
 			return true;
 		}
 
 		// Market (phase 2.3b): the town screen remains technically visible behind its
-		// shop module, so give the market cursor priority over the town list. Consume
-		// both key states; act on release once the native slide animation is finished.
-		// Escape is captured only inside an action/confirmation sub-list. At the normal
-		// item level it falls through to MenuStack and returns to the town frame.
-		if (this.m.WorldTownScreen.isVisible()
-			&& !::UnseenBanner.EventNav.isActive()
+		// shop module, so give the market cursor priority over the town list. Escape is
+		// captured only inside an action/confirmation sub-list. At the normal item level
+		// it falls through to MenuStack and returns to the town frame.
+		if (townFree
 			&& ::UnseenBanner.WorldShop.isCurrent(this.m.WorldTownScreen)
 			&& ::UnseenBanner.WorldShop.handles(code))
 		{
-			if (_key.getState() == 0 && !this.m.WorldTownScreen.isAnimating())
+			if (townPressed && !this.m.WorldTownScreen.isAnimating())
 			{
-				::UnseenBanner.WorldShop.onKey(code);
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldShop.onKey(code);
+				}
+				::UnseenBanner.KeyGate.armSwallow(code);
+			}
+			else if (!townPressed)
+			{
+				::UnseenBanner.KeyGate.release(code);
 			}
 			return true;
 		}
@@ -11337,14 +11456,21 @@
 		// Tavern: two paid actions and their results, same priority rule as the shop
 		// and the recruit list. Escape is never captured here — at action level it
 		// belongs to the native menu stack, which walks back to the town frame.
-		if (this.m.WorldTownScreen.isVisible()
-			&& !::UnseenBanner.EventNav.isActive()
+		if (townFree
 			&& ::UnseenBanner.WorldTavern.isCurrent(this.m.WorldTownScreen)
 			&& ::UnseenBanner.WorldTavern.handles(code))
 		{
-			if (_key.getState() == 0 && !this.m.WorldTownScreen.isAnimating())
+			if (townPressed && !this.m.WorldTownScreen.isAnimating())
 			{
-				::UnseenBanner.WorldTavern.onKey(code);
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldTavern.onKey(code);
+				}
+				::UnseenBanner.KeyGate.armSwallow(code);
+			}
+			else if (!townPressed)
+			{
+				::UnseenBanner.KeyGate.release(code);
 			}
 			return true;
 		}
@@ -11352,14 +11478,21 @@
 		// Temple: wounded brothers and their treatable injuries. Escape is captured
 		// only inside the injury sub-list; at patient level it falls through and
 		// leaves the temple natively.
-		if (this.m.WorldTownScreen.isVisible()
-			&& !::UnseenBanner.EventNav.isActive()
+		if (townFree
 			&& ::UnseenBanner.WorldTemple.isCurrent(this.m.WorldTownScreen)
 			&& ::UnseenBanner.WorldTemple.handles(code))
 		{
-			if (_key.getState() == 0 && !this.m.WorldTownScreen.isAnimating())
+			if (townPressed && !this.m.WorldTownScreen.isAnimating())
 			{
-				::UnseenBanner.WorldTemple.onKey(code);
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldTemple.onKey(code);
+				}
+				::UnseenBanner.KeyGate.armSwallow(code);
+			}
+			else if (!townPressed)
+			{
+				::UnseenBanner.KeyGate.release(code);
 			}
 			return true;
 		}
@@ -11368,24 +11501,30 @@
 		// Same priority rule as the other building dialogs — the town frame stays
 		// technically visible behind the module. Escape is captured only inside a
 		// sub-list; at blueprint level it leaves the building natively.
-		if (this.m.WorldTownScreen.isVisible()
-			&& !::UnseenBanner.EventNav.isActive()
+		if (townFree
 			&& ::UnseenBanner.WorldTaxidermist.isCurrent(this.m.WorldTownScreen)
 			&& ::UnseenBanner.WorldTaxidermist.handles(code))
 		{
-			if (_key.getState() == 0 && !this.m.WorldTownScreen.isAnimating())
+			if (townPressed && !this.m.WorldTownScreen.isAnimating())
 			{
-				::UnseenBanner.WorldTaxidermist.onKey(code);
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldTaxidermist.onKey(code);
+				}
+				::UnseenBanner.KeyGate.armSwallow(code);
+			}
+			else if (!townPressed)
+			{
+				::UnseenBanner.KeyGate.release(code);
 			}
 			return true;
 		}
 
 		// Town screen (phase 4.5): while the settlement screen is up (and no event is
 		// layered over it), our list drives it — Up/Down/Home/End walk buildings and
-		// contracts, Enter activates. Act on release, consume the key. Escape is left
-		// alone so the native menu-stack pop still leaves the town.
-		if (this.m.WorldTownScreen.isVisible()
-			&& !::UnseenBanner.EventNav.isActive()
+		// contracts, Enter activates. Escape is left alone so the native menu-stack pop
+		// still leaves the town.
+		if (townFree
 			&& !::UnseenBanner.WorldShop.isCurrent(this.m.WorldTownScreen)
 			&& !::UnseenBanner.WorldHire.isCurrent(this.m.WorldTownScreen)
 			&& !::UnseenBanner.WorldTavern.isCurrent(this.m.WorldTownScreen)
@@ -11394,9 +11533,17 @@
 			&& ::UnseenBanner.WorldTown.isActive()
 			&& ::UnseenBanner.WorldTown.handles(code))
 		{
-			if (_key.getState() == 0)
+			if (townPressed)
 			{
-				::UnseenBanner.WorldTown.onKey(code, this);
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldTown.onKey(code, this);
+				}
+				::UnseenBanner.KeyGate.armSwallow(code);
+			}
+			else
+			{
+				::UnseenBanner.KeyGate.release(code);
 			}
 			return true;
 		}
@@ -11708,6 +11855,14 @@
 			::UnseenBanner.KeyHelp.close(false);
 		}
 
+		// A key already acted on during its press (the pause menu below, or a world
+		// surface whose action dropped us into this state): eat its release before any
+		// cursor here can read it as a fresh keystroke.
+		if (_key.getState() == 0 && ::UnseenBanner.KeyGate.consumeSwallow(code))
+		{
+			return true;
+		}
+
 		// Post-combat result screen. The state swallows every key once the battle
 		// has ended (isBattleEnded short-circuits its own onKeyInput), so this must
 		// run before every other cursor to keep list navigation and its buttons
@@ -11756,15 +11911,28 @@
 			return true;
 		}
 
-		// The tactical pause menu uses the same modules as the other menu surfaces.
-		// Consume both key states while one is up so native camera bindings cannot
-		// leak through, but act only on release to avoid the press auto-repeat. The
-		// arrow releases were verified to reach this hook even in tactical combat.
+		// The tactical pause menu uses the same modules as the other menu surfaces,
+		// and the same press cadence. Consume both key states while one is up so
+		// native camera bindings cannot leak through; KeyGate debounces the press
+		// auto-repeat and arms the swallow for the release.
 		if (::UnseenBanner.MenuNav.isActive() && ::UnseenBanner.MenuNav.handlesKey(code))
 		{
-			if (_key.getState() == 0)
+			local menuOnRelease = ::UnseenBanner.MenuNav.isReleaseHandledKey(code);
+			if (_key.getState() == 1 && !menuOnRelease)
 			{
-				::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(code));
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(code));
+				}
+				::UnseenBanner.KeyGate.armSwallow(code);
+			}
+			else if (_key.getState() == 0)
+			{
+				::UnseenBanner.KeyGate.release(code);
+				if (menuOnRelease)
+				{
+					::UnseenBanner.MenuNav.sendKey(::UnseenBanner.MenuNav.getKeyName(code));
+				}
 			}
 			return true;
 		}
