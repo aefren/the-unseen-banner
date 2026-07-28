@@ -190,6 +190,12 @@ Almost everything the mod opens is a list, and every list works the same way:
 
 Learn that, and the rest of this section is only about which key opens what.
 
+**F1 answers the same question from inside the game.** It opens the keys that are
+live on whatever surface you are standing on — the battlefield, the map, the
+market, a confirmation — as a list, one key per row, navigated like any other:
+Up/Down/Home/End walk it, Escape or F1 again closes it. It reads the surface that
+would receive your next keystroke, so it is never a menu of keys you cannot use.
+
 > **One deliberate change to vanilla**: in combat, vanilla binds **End** to
 > "wait turn", the same key every list here uses for "last entry". A blind
 > player cannot see which of the two is in front of them, and spending a turn is
@@ -218,7 +224,8 @@ accident.
 | Enter | Enter the settlement or location the company is standing on, or engage a hostile party at contact range |
 | X | The hex the company stands on, in one breath: terrain, then each trail of footprints crossing it and the directions it runs. The quick version of V, meant to be tapped between marching steps |
 | V | The same hex as a navigable list: terrain, place, parties and trails, one row at a time, with Enter on a place or party |
-| F2 | Company status: day and time, brothers, crowns, wages, food, active contract with its objectives, and current ambition |
+| F2 | Company status: day and time, brothers, crowns, wages, food, active contract with its objectives, and current ambition. **Enter on the ambition row abandons it**, when the game allows it — the mouse-only click on the topbar banner, with its own confirmation |
+| F1 | The keys that work right here (see above) |
 | B | Known places: settlements, locations and landmarks. Page Down/Page Up switch category, V opens details, Enter travels there or enters, B closes |
 | Shift+B | The parties currently in sight, same navigation |
 | M | Map explorer on/off (see below) |
@@ -256,6 +263,7 @@ Leave. Enter opens the focused one; Escape leaves the town.
 | **Recruitment** | Up/Down walk the candidates with their live hiring and wage costs, V opens the native background and revealed-trait tooltips, and Enter offers hiring or paying for a tryout |
 | **Tavern** | Two paid actions — a round for the patrons, a round for your men — Enter performs the focused one, V re-reads the rumor or report it produced |
 | **Temple** | Up/Down walk the wounded, Enter opens that brother's treatable injuries, a second Enter pays for the treatment, V or Escape backs out |
+| **Taxidermist** | Up/Down walk the recipes with their cost and, when one cannot be made, why not; V opens its description and ingredients, each with how many are still missing; Enter opens the craft action and a second Enter pays for it |
 | **Arena** | Opens as it does for a mouse; when it refuses (night, cooldown, another contract, no stash room) the reason is spoken instead of nothing happening |
 
 ### Character screen (C / I)
@@ -313,9 +321,24 @@ the button.
 | C / I | Character sheet (see above) |
 | R | End round (native; its confirmation dialog is navigable) |
 | Space | Wait turn (native) |
+| F1 | The keys that work right here (see above) |
+
+Every tile the cursor lands on also reports three things a sighted player reads
+off the screen. **Height opens the readout**, in the same breath as the terrain;
+the other two close it, after everything the readout already said, so a fast
+sweep stays fast:
+
+- **Height**, relative to the active brother — "one level higher" — and silence
+  when you are level with it. High ground is hit chance and reach in this game.
+- **Zone of control**, when enemies hold the tile: standing there means each of
+  them gets a free attack the moment you walk away.
+- **What walking there costs** in action points and fatigue, or that it is out of
+  reach this turn, or that there is no path at all. These are the game's own
+  numbers, from the same navigator the mouse hover prices its path with.
 
 With a **targeted skill armed**, the tile cursor adds "valid target, N% to hit" /
-"not a valid target" for the focused tile, and G uses it there. Arming and
+"not a valid target" for the focused tile, and G uses it there; the walking cost
+steps aside there, since the question has already been answered. Arming and
 cancelling a skill are both announced.
 
 The cursor also reads corpses, cover and decorations standing on a tile, so
@@ -363,18 +386,21 @@ in the real game.
     brother-to-brother comparison.
   - Inventory, stash and market actions: equip, use, move, mark for repair,
     sort, filter, buy, sell and repair, with localized results and errors.
-  - Recruitment, tavern and temple.
+  - Recruitment, tavern, temple and the taxidermist's crafting.
 - **Phase 3 — Tactical combat.** Spoken combat log; tile cursor with terrain,
-  occupants and corpses; enemy and ally cycling; skills with valid targets and
-  hit chance; on-demand readouts; adjacency by clock direction; turn and round
-  announcements; in-battle equipment changes; retreat and confirmation dialogs;
-  result screen with per-item looting.
+  occupants, corpses, height, zone of control and the cost of walking there;
+  enemy and ally cycling; skills with valid targets and hit chance; on-demand
+  readouts; adjacency by clock direction; turn and round announcements;
+  in-battle equipment changes; retreat and confirmation dialogs; result screen
+  with per-item looting.
 - **Phase 4 — World map.** Directional movement and arrivals; camping; the
   perception-safe survey of places and parties; the company and objectives
-  readout; the map explorer cursor with travel-to-tile and footprints; keyboard
-  entry into settlements and the town screen.
+  readout, with abandoning an ambition; the map explorer cursor with
+  travel-to-tile and footprints; keyboard entry into settlements and the town
+  screen.
 - **Phase 5 — Special screens.** Obituary, factions and relations, the Retinue
   with accessible confirmations, and the end-of-campaign screen.
+- **Contextual key help (F1)** on every surface the mod drives.
 
 ### Pending
 

@@ -119,7 +119,7 @@ namespace TheUnseenBanner.Companion
                 string cadaver = GetOptionalString(root, "cadaver");
                 string spoken = categoria switch
                 {
-                    "tile.readout" => ComposeTileReadout(valor, texto, detalle, cadaver),
+                    "tile.readout" => ComposeTileReadout(valor, texto, detalle, cadaver, comparacion),
                     "combat.skill.selected" => ComposeSkillSelected(texto, valor, detalle),
                     "combat.move" => ComposeMove(valor),
                     "combat.status" => ComposeStatus(texto, valor, detalle),
@@ -175,6 +175,16 @@ namespace TheUnseenBanner.Companion
                     "world.temple.injury" => ComposeTempleInjury(texto, valor, detalle),
                     "world.temple.result" => ComposeTempleResult(texto, valor, detalle),
                     "world.temple.error" => L10n.F("world.temple.error." + valor, texto),
+                    "world.craft.blueprint" => ComposeCraftBlueprint(texto, valor, detalle),
+                    "world.craft.empty" => ComposeCraftEmpty(valor, detalle),
+                    "world.craft.detail.description"
+                        => ComposeCraftDetail(L10n.F("world.craft.detail.description", texto), detalle),
+                    "world.craft.detail.ingredient"
+                        => ComposeCraftDetail(ComposeCraftIngredient(texto, valor), detalle),
+                    "world.craft.details.none" => L10n.F(categoria, texto),
+                    "world.craft.action" => ComposeCraftAction(texto, valor, detalle),
+                    "world.craft.result" => L10n.F(categoria, texto, valor, detalle),
+                    "world.craft.error" => L10n.F("world.craft.error." + valor, texto),
                     string key when key.StartsWith("world.recruit.result.", StringComparison.Ordinal)
                         => L10n.F(key, texto, valor, detalle),
                     "world.character.perk" => ComposeWorldPerk(texto, valor, detalle),
@@ -250,6 +260,7 @@ namespace TheUnseenBanner.Companion
                     "world.cursor.list.screen" => ComposeCursorListScreen(valor, detalle),
                     "world.cursor.list.terrain" => ComposeCursorTerrainRow(valor, detalle),
                     "world.cursor.list.tracks" => ComposeCursorTracksRow(valor, detalle),
+                    "help.row" => ComposeHelpRow(valor, detalle),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
@@ -801,6 +812,103 @@ namespace TheUnseenBanner.Companion
             return L10n.F("world.temple.result", injury, brother, price, money);
         }
 
+        /// <summary>One row of the F1 key help. Squirrel sends only the row key and
+        /// "context|index|total|opened": the text of every key, and the name of the
+        /// surface, live here, so a translation covers the help with no mod change.
+        /// A row whose string is missing falls back to its own key rather than
+        /// swallowing the row, which keeps a stale list audible instead of silent.
+        /// </summary>
+        private static string ComposeHelpRow(string row, string detail)
+        {
+            string[] p = detail.Split('|');
+            string context = p.Length > 0 ? p[0] : "";
+            string index = p.Length > 1 ? p[1] : "1";
+            string total = p.Length > 2 ? p[2] : "1";
+            bool opened = p.Length > 3 && p[3] == "1";
+
+            string body = L10n.T("help." + context + "." + row);
+            string result = body + " " + L10n.F("help.position", index, total);
+            return opened
+                ? L10n.F("help.screen", L10n.T("help.context." + context), total, result)
+                : result;
+        }
+
+        /// <summary>One blueprint row of the taxidermist's crafting list. detail is
+        /// "craftable|affordable|index|total|opened|money|ingredients": the two flags
+        /// are kept apart so the reason a recipe cannot be made right now can be
+        /// named — that greyed-out entry is exactly what a blind player cannot
+        /// see. The position closes the row, as in every other navigable list.
+        /// </summary>
+        private static string ComposeCraftBlueprint(string name, string cost, string detail)
+        {
+            string[] p = detail.Split('|');
+            bool craftable = p.Length > 0 && p[0] == "1";
+            bool affordable = p.Length > 1 && p[1] == "1";
+            string index = p.Length > 2 ? p[2] : "1";
+            string total = p.Length > 3 ? p[3] : "1";
+            bool opened = p.Length > 4 && p[4] == "1";
+            string money = p.Length > 5 ? p[5] : "";
+            int ingredients = p.Length > 6 && int.TryParse(p[6], out int parsed) ? parsed : 0;
+
+            string result = L10n.F("world.craft.blueprint", name, cost);
+            if (!craftable) result += " " + L10n.T("world.craft.blocked.ingredients");
+            else if (!affordable) result += " " + L10n.T("world.craft.blocked.money");
+            if (ingredients > 0) result += " " + L10n.F("world.craft.details", ingredients);
+            result += " " + L10n.F("world.craft.position", index, total);
+            return opened
+                ? L10n.F("world.craft.screen",
+                    L10n.F("world.tavern.purse", money) + " " + result)
+                : result;
+        }
+
+        private static string ComposeCraftEmpty(string money, string detail)
+        {
+            string result = L10n.F("world.craft.empty", money);
+            return detail == "1" ? L10n.F("world.craft.empty.opened", result) : result;
+        }
+
+        /// <summary>Close a V sub-list row with its position, and frame the first one
+        /// with how to get back out. detail is "index|total|opened".</summary>
+        private static string ComposeCraftDetail(string body, string detail)
+        {
+            string[] p = detail.Split('|');
+            string index = p.Length > 0 ? p[0] : "1";
+            string total = p.Length > 1 ? p[1] : "1";
+            bool opened = p.Length > 2 && p[2] == "1";
+
+            string result = body + " " + L10n.F("world.craft.detail.position", index, total);
+            return opened ? L10n.F("world.craft.detail.opened", result) : result;
+        }
+
+        /// <summary>An ingredient row: the item's own name, how many the recipe wants
+        /// and how many of those the stash is still short of. The missing count is
+        /// the game's — counted off the very array whose icons it greys out.</summary>
+        private static string ComposeCraftIngredient(string name, string counts)
+        {
+            string[] p = counts.Split('|');
+            string num = p.Length > 0 ? p[0] : "1";
+            int missing = p.Length > 1 && int.TryParse(p[1], out int parsed) ? parsed : 0;
+
+            string result = L10n.F("world.craft.detail.ingredient", num, name);
+            if (missing > 0) result += " " + L10n.F("world.craft.detail.missing", missing);
+            return result;
+        }
+
+        /// <summary>The craft action opened with Enter. detail is
+        /// "opened|blockReason|money"; an empty reason means it can be made.</summary>
+        private static string ComposeCraftAction(string name, string cost, string detail)
+        {
+            string[] p = detail.Split('|');
+            bool opened = p.Length > 0 && p[0] == "1";
+            string reason = p.Length > 1 ? p[1] : "";
+            string money = p.Length > 2 ? p[2] : "";
+
+            string result = reason.Length > 0
+                ? L10n.F("world.craft.action.blocked", name, L10n.T("world.craft.blocked." + reason))
+                : L10n.F("world.craft.action", name, cost, money);
+            return opened ? L10n.F("world.craft.action.opened", result) : result;
+        }
+
         private static string ComposeWorldPerk(string name, string state, string tier)
         {
             return L10n.F("world.character.perk", name, tier,
@@ -933,7 +1041,7 @@ namespace TheUnseenBanner.Companion
         /// "enemy", anything else is empty. direction is -1 on the active man's
         /// own tile.</summary>
         private static string ComposeTileReadout(
-            string terrain, string name, string detail, string corpseName)
+            string terrain, string name, string detail, string corpseName, string extras)
         {
             string[] parts = detail.Split('|');
             string kind = parts.Length > 0 ? parts[0] : "";
@@ -958,6 +1066,12 @@ namespace TheUnseenBanner.Companion
 
             string position = ComposePosition(distText, dirText);
             string readout = terrainText + ". " + occupant + ".";
+            // Height leads the readout instead of trailing it: it is a property of the
+            // ground, heard in the same breath as the terrain, and the answer to "is
+            // this the hex I want" starts with it. The other two extras stay at the
+            // end, where they do not delay the words the player navigates by.
+            string elevation = ComposeTileElevation(extras);
+            if (elevation.Length > 0) readout = elevation + " " + readout;
             if (corpseName.Length > 0)
                 readout += " " + L10n.F("tile.corpse", corpseName) + ".";
             if (position.Length > 0)
@@ -967,7 +1081,66 @@ namespace TheUnseenBanner.Companion
             // the tile is a legal target ("1"/"0") and, for an attackable actor on
             // it, the hit chance (an int, or "-" when it does not apply).
             string target = ComposeTarget(parts);
-            return target.Length > 0 ? readout + " " + target : readout;
+            if (target.Length > 0) readout += " " + target;
+
+            // Zone of control and movement cost close the readout, after everything it
+            // already said. They are additions to a sweep the player already knows by
+            // ear, so they must never delay the words he is listening for — he
+            // interrupts through them, he does not wait for them.
+            string more = ComposeTileExtras(extras);
+            return more.Length > 0 ? readout + " " + more : readout;
+        }
+
+        /// <summary>The height clause that opens a tile readout. Relative to the
+        /// active man and silent when level with him, which is the common case.
+        /// </summary>
+        private static string ComposeTileElevation(string extras)
+        {
+            if (string.IsNullOrEmpty(extras)) return "";
+
+            string[] p = extras.Split('|');
+            if (p.Length == 0 || !int.TryParse(p[0], out int elevation) || elevation == 0)
+                return "";
+
+            int levels = Math.Abs(elevation);
+            return levels == 1
+                ? L10n.T(elevation > 0 ? "tile.elevation.higher.one" : "tile.elevation.lower.one")
+                : L10n.F(elevation > 0 ? "tile.elevation.higher" : "tile.elevation.lower", levels);
+        }
+
+        /// <summary>The two tactical facts that close a tile readout, packed by
+        /// Squirrel as "elevation|zoneOfControl|kind[|ap|fatigue|complete]" (the
+        /// elevation slot is read by <see cref="ComposeTileElevation"/> instead). The
+        /// zone of control is silent when no enemy holds the tile; the movement clause
+        /// is absent ("" kind) on the man's own tile, on an occupied tile and while a
+        /// skill is armed, where the target preview already answers the question.
+        /// </summary>
+        private static string ComposeTileExtras(string extras)
+        {
+            if (string.IsNullOrEmpty(extras)) return "";
+
+            string[] p = extras.Split('|');
+            var parts = new List<string>();
+
+            if (p.Length > 1 && int.TryParse(p[1], out int zoc) && zoc > 0)
+            {
+                parts.Add(zoc == 1 ? L10n.T("tile.zoc.one") : L10n.F("tile.zoc", zoc));
+            }
+
+            string kind = p.Length > 2 ? p[2] : "";
+            if (kind == "none") parts.Add(L10n.T("tile.move.none"));
+            else if (kind == "far") parts.Add(L10n.T("tile.move.far"));
+            else if (kind == "cost")
+            {
+                string ap = p.Length > 3 ? p[3] : "0";
+                string fatigue = p.Length > 4 ? p[4] : "0";
+                bool complete = p.Length <= 5 || p[5] == "1";
+                parts.Add(complete
+                    ? L10n.F("tile.move.cost", ap, fatigue)
+                    : L10n.F("tile.move.partial", ap, fatigue));
+            }
+
+            return string.Join(" ", parts);
         }
 
         /// <summary>The target-preview clause of a tile readout while a skill is

@@ -584,9 +584,14 @@
 	m = {
 		Items = null,
 		ItemIndex = 0,
-		Active = false
+		Active = false,
+		// True from the moment Enter asks to abandon the ambition until the native
+		// confirmation closes, so the dialog_screen hook knows the popup coming up is
+		// ours to narrate (same handshake the Retinue uses for its own confirmations).
+		DialogPending = false
 	},
 	ToggleKey = 72, // f2
+	ActionKey = 39, // enter
 	MoveKeys = {
 		[49] = "up",
 		[51] = "down",
@@ -597,9 +602,21 @@
 	{
 		return this.m.Active;
 	},
+	function isDialogPending()
+	{
+		return this.m.DialogPending;
+	},
+	function onDialogClosed()
+	{
+		this.m.DialogPending = false;
+	},
 	function handles(_code)
 	{
-		return _code == this.ToggleKey || (this.m.Active && _code in this.MoveKeys);
+		if (_code == this.ToggleKey) return true;
+		if (!this.m.Active) return false;
+		// Enter is only ours while the list is open; on the plain map it belongs to
+		// WorldEnter (enter a settlement) and, failing that, to vanilla's zoom reset.
+		return _code == this.ActionKey || _code in this.MoveKeys;
 	},
 	function reset()
 	{
@@ -607,9 +624,10 @@
 		this.m.ItemIndex = 0;
 		this.m.Active = false;
 	},
-	function item(_cat, _texto = "", _valor = "", _detalle = "")
+	function item(_cat, _texto = "", _valor = "", _detalle = "", _action = "")
 	{
-		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle };
+		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle,
+			action = _action };
 	},
 	// Which of the topbar's four time buttons is lit, named. The test is copied from
 	// world_state.updateTopBarButtonState, exact float comparison included, so the
@@ -670,12 +688,17 @@
 		// treatment as game-written text elsewhere — a throw in here would abort the
 		// list half-built and leave G mute.
 		local ambition = "";
+		// Vanilla only lets an ambition be abandoned through the topbar banner, a
+		// mouse-only click, and only for the ones that allow it; the row below turns
+		// that same guarded path into an Enter when the game itself would allow it.
+		local ambitionCancelable = false;
 		if ("Ambitions" in ::World && ::World.Ambitions != null
 			&& ::World.Ambitions.hasActiveAmbition())
 		{
 			try
 			{
 				ambition = ::World.Ambitions.getActiveAmbition().getUIText();
+				ambitionCancelable = ::World.Ambitions.getActiveAmbition().isCancelable();
 			}
 			catch (error)
 			{
@@ -741,7 +764,11 @@
 		items.push(this.item("world.status.supplies", "", "" + assets.getArmorParts()));
 		items.push(this.item("world.status.ammo", "", "" + assets.getAmmo()));
 		items.push(this.item("world.status.medicine", "", "" + assets.getMedicine()));
-		items.push(this.item(ambition != "" ? "world.status.ambition" : "world.status.ambition.none", ambition));
+		local ambitionCat = ambition == ""
+			? "world.status.ambition.none"
+			: (ambitionCancelable ? "world.status.ambition.cancelable" : "world.status.ambition");
+		items.push(this.item(ambitionCat, ambition, "", "",
+			ambitionCancelable ? "ambition.cancel" : ""));
 		items.push(this.item(contract != null ? "world.status.contract" : "world.status.contract.none", title));
 		if (contract != null)
 		{
@@ -772,6 +799,12 @@
 			return;
 		}
 
+		if (_code == this.ActionKey)
+		{
+			this.activate();
+			return;
+		}
+
 		if (!this.m.Active || !(_code in this.MoveKeys)) return;
 		local dir = this.MoveKeys[_code];
 		if (dir == "up") this.m.ItemIndex -= 1;
@@ -782,6 +815,38 @@
 		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
 		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
 		this.announceItem();
+	},
+	// Enter on a row that offers an action. Only the ambition row does today: it runs
+	// the topbar module's own onRequestCancel, which re-checks that an ambition is
+	// active and cancelable and then raises vanilla's confirmation popup — the same
+	// path, guards included, as clicking the banner. DialogNav narrates that popup,
+	// and the game's own "ambition failed" event reports the outcome afterwards, so
+	// nothing here invents feedback for something that has not happened yet.
+	function activate()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		if (it.action != "ambition.cancel")
+		{
+			this.announceItem(); // no action on this row: re-read it
+			return;
+		}
+
+		local module = ("TopbarAmbitionModule" in ::World) ? ::World.TopbarAmbitionModule : null;
+		if (module == null || ::World.Ambitions == null
+			|| !::World.Ambitions.hasActiveAmbition()
+			|| !::World.Ambitions.getActiveAmbition().isCancelable())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.status.ambition.uncancelable");
+			return;
+		}
+
+		// The confirmation takes over the screen, and the row behind it would be
+		// describing an ambition that may be gone by the time it comes back. Close the
+		// list rather than leave a stale row under the cursor; F2 rebuilds it fresh.
+		this.reset();
+		this.m.DialogPending = true;
+		module.onRequestCancel();
 	},
 	function announceItem()
 	{
@@ -2776,7 +2841,8 @@
 		["building.crowd"] = true,
 		["building.tavern"] = true,
 		["building.temple"] = true,
-		["building.arena"] = true
+		["building.arena"] = true,
+		["building.taxidermist"] = true
 	},
 	// The arena is the one building whose native onClicked can refuse silently:
 	// it returns without opening anything at night, during its one-day cooldown,
@@ -4661,6 +4727,367 @@
 	}
 };
 
+// Taxidermist (the crafting building of the Beasts & Exploration DLC). Vanilla
+// shows a mouse-only list of qualified blueprints; the ingredients are icons whose
+// only text lives in a hover tooltip, so a blind player could neither tell what a
+// trophy recipe needs nor why a greyed-out entry is greyed out.
+//
+// This cursor flattens the same queryBlueprints() the screen is painted from:
+// Up/Down over the blueprints, V opens description and ingredients as a sub-list
+// (one fact per row, never one long utterance), Enter opens an explicit craft
+// action and a second Enter calls the module's own onCraft. Escape is captured only
+// inside those sub-lists; at blueprint level it belongs to the native menu stack.
+//
+// Same trap as the temple: onCraft charges the crowns with no affordability check
+// of its own — the only guard vanilla has is the JS disabling the button when the
+// purse is short or an ingredient is missing (see its updateDetailsPanel). Reaching
+// the endpoint directly therefore has to enforce both rules here.
+::UnseenBanner.WorldTaxidermist <- {
+	m = {
+		Screen = null,
+		Module = null,
+		Items = null,
+		ItemIndex = 0,
+		DetailMode = false,
+		Details = null,
+		DetailIndex = 0,
+		ActionMode = false,
+		ActionIndex = 0,
+		Active = false
+	},
+	InspectKey = 32, // v
+	ActionKey = 39, // enter
+	EscapeKey = 41,
+	MoveKeys = {
+		[44] = "end",
+		[45] = "home",
+		[49] = "up",
+		[51] = "down"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function isCurrent(_screen)
+	{
+		return this.m.Active && _screen != null && this.m.Screen == _screen
+			&& _screen.m.LastActiveModule == this.m.Module;
+	},
+	function handles(_code)
+	{
+		if (!this.m.Active) return false;
+		return _code == this.InspectKey
+			|| _code == this.ActionKey
+			|| (_code == this.EscapeKey && (this.m.ActionMode || this.m.DetailMode))
+			|| _code in this.MoveKeys;
+	},
+	function reset()
+	{
+		this.m.Screen = null;
+		this.m.Module = null;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.DetailMode = false;
+		this.m.Details = null;
+		this.m.DetailIndex = 0;
+		this.m.ActionMode = false;
+		this.m.ActionIndex = 0;
+		this.m.Active = false;
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function open(_screen, _module)
+	{
+		this.reset();
+		if (_screen == null || _module == null) return;
+		this.m.Screen = _screen;
+		this.m.Module = _module;
+		this.m.Active = true;
+		this.buildItems();
+		this.announceItem(true);
+	},
+	// Ingredient names for one blueprint. getUIData's Ingredients array is one entry
+	// per required unit ({InstanceID, IsMissing}) and carries no name — the screen
+	// paints icons — so the names come from the blueprint's own components, the item
+	// instances the recipe was built from, already localized by the game. The missing
+	// flags stay the game's: they are counted off the very array the icons are
+	// greyed out from, never recomputed against the stash here.
+	function ingredientsOf(_blueprintID, _uiIngredients)
+	{
+		local rows = [];
+		if (!("Crafting" in ::World) || ::World.Crafting == null) return rows;
+		local blueprint = ::World.Crafting.getBlueprint(_blueprintID);
+		if (blueprint == null) return rows;
+
+		foreach( index, component in blueprint.m.PreviewComponents )
+		{
+			if (component == null || component.Instance == null) continue;
+			local missing = 0;
+			if (_uiIngredients != null)
+			{
+				foreach( entry in _uiIngredients )
+				{
+					if (entry != null && entry.InstanceID == index && entry.IsMissing)
+						missing += 1;
+				}
+			}
+			rows.push({
+				name = component.Instance.getName(),
+				num = component.Num,
+				missing = missing
+			});
+		}
+		return rows;
+	},
+	// Rebuilt from queryBlueprints(), the same call that fills the visible list, so a
+	// recipe that stops qualifying after a craft drops out exactly as it does on
+	// screen. _preferredID holds the cursor on the recipe just worked on across the
+	// rebuild; _fallbackIndex catches the case where it is gone.
+	function buildItems(_preferredID = null, _fallbackIndex = 0)
+	{
+		local rows = [];
+		if (this.m.Module != null)
+		{
+			local data = this.m.Module.queryBlueprints();
+			if (data != null && "Blueprints" in data && data.Blueprints != null)
+			{
+				foreach( entry in data.Blueprints )
+				{
+					if (entry == null) continue;
+					rows.push({
+						id = entry.ID,
+						name = entry.Name,
+						description = entry.Description,
+						cost = entry.Cost,
+						craftable = entry.IsCraftable,
+						ingredients = this.ingredientsOf(entry.ID,
+							("Ingredients" in entry) ? entry.Ingredients : null)
+					});
+				}
+			}
+		}
+
+		this.m.Items = rows;
+		this.m.ItemIndex = _fallbackIndex;
+		if (_preferredID != null)
+		{
+			for (local i = 0; i < rows.len(); i += 1)
+			{
+				if (rows[i].id == _preferredID)
+				{
+					this.m.ItemIndex = i;
+					break;
+				}
+			}
+		}
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (rows.len() > 0 && this.m.ItemIndex >= rows.len())
+			this.m.ItemIndex = rows.len() - 1;
+	},
+	function currentRow()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return null;
+		if (this.m.ItemIndex < 0 || this.m.ItemIndex >= this.m.Items.len()) return null;
+		return this.m.Items[this.m.ItemIndex];
+	},
+	function move(_code)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0)
+		{
+			this.announceItem();
+			return;
+		}
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function openDetails()
+	{
+		local row = this.currentRow();
+		if (row == null)
+		{
+			this.announceItem();
+			return;
+		}
+
+		local details = [];
+		if (row.description != null && row.description != "")
+			details.push({ kind = "description", texto = row.description, valor = "" });
+		foreach( ingredient in row.ingredients )
+			details.push({
+				kind = "ingredient",
+				texto = ingredient.name,
+				valor = "" + ingredient.num + "|" + ingredient.missing
+			});
+
+		if (details.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", row.name, "world.craft.details.none");
+			return;
+		}
+
+		this.m.Details = details;
+		this.m.DetailIndex = 0;
+		this.m.DetailMode = true;
+		this.announceDetail(true);
+	},
+	function leaveDetails(_announceParent = false)
+	{
+		this.m.DetailMode = false;
+		this.m.Details = null;
+		this.m.DetailIndex = 0;
+		if (_announceParent) this.announceItem();
+	},
+	function moveDetail(_code)
+	{
+		if (this.m.Details == null || this.m.Details.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.DetailIndex -= 1;
+		else if (dir == "down") this.m.DetailIndex += 1;
+		else if (dir == "home") this.m.DetailIndex = 0;
+		else this.m.DetailIndex = this.m.Details.len() - 1;
+		if (this.m.DetailIndex < 0) this.m.DetailIndex = 0;
+		if (this.m.DetailIndex >= this.m.Details.len())
+			this.m.DetailIndex = this.m.Details.len() - 1;
+		this.announceDetail();
+	},
+	function openActions()
+	{
+		local row = this.currentRow();
+		if (row == null)
+		{
+			this.announceItem();
+			return;
+		}
+		this.m.ActionMode = true;
+		this.m.ActionIndex = 0;
+		this.announceAction(true);
+	},
+	function leaveActions(_announceParent = false)
+	{
+		this.m.ActionMode = false;
+		this.m.ActionIndex = 0;
+		if (_announceParent) this.announceItem();
+	},
+	// Keep vanilla's own panel in step after an accessible craft, so the crowns and
+	// the recipe list on screen match what was really spent and made.
+	function refreshNative()
+	{
+		if (this.m.Module == null || this.m.Screen == null) return;
+		local data = this.m.Module.queryBlueprints();
+		this.m.Screen.updateAssets();
+		if (data != null && this.m.Module.m.JSHandle != null)
+			this.m.Module.m.JSHandle.asyncCall("loadFromData", data);
+	},
+	function blockReason(_row)
+	{
+		if (_row == null) return "";
+		if (!_row.craftable) return "ingredients";
+		if (_row.cost > ::World.Assets.getMoney()) return "money";
+		return "";
+	},
+	function executeAction()
+	{
+		local row = this.currentRow();
+		if (row == null || this.m.Module == null) return;
+
+		// The two guards vanilla only ever applied in the UI layer (see the note
+		// above the module).
+		local reason = this.blockReason(row);
+		if (reason != "")
+		{
+			::UnseenBanner.sendMessage("interrupt", row.name, "world.craft.error", reason);
+			return;
+		}
+
+		local fallback = this.m.ItemIndex;
+		local cost = row.cost;
+		local id = row.id;
+		local name = row.name;
+		this.m.Module.onCraft(id);
+		this.leaveActions(false);
+		this.refreshNative();
+		this.buildItems(id, fallback);
+		::UnseenBanner.sendMessage("interrupt", name, "world.craft.result",
+			"" + cost, "" + ::World.Assets.getMoney());
+	},
+	function announceDetail(_opened = false)
+	{
+		if (this.m.Details == null || this.m.Details.len() == 0) return;
+		local detail = this.m.Details[this.m.DetailIndex];
+		local position = "" + (this.m.DetailIndex + 1) + "|" + this.m.Details.len()
+			+ "|" + (_opened ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", detail.texto,
+			"world.craft.detail." + detail.kind, detail.valor, position);
+	},
+	function announceAction(_opened = false)
+	{
+		local row = this.currentRow();
+		if (row == null) return;
+		local detail = "" + (_opened ? "1" : "0") + "|" + this.blockReason(row)
+			+ "|" + ::World.Assets.getMoney();
+		::UnseenBanner.sendMessage("interrupt", row.name, "world.craft.action",
+			"" + row.cost, detail);
+	},
+	function announceItem(_opened = false)
+	{
+		local money = "" + ::World.Assets.getMoney();
+		if (this.m.Items == null || this.m.Items.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.craft.empty", money,
+				_opened ? "1" : "0");
+			return;
+		}
+		local row = this.currentRow();
+		if (row == null) return;
+		// craftable + affordable are sent apart so the companion can name the reason
+		// a recipe cannot be made right now, which is the whole point of the greyed
+		// out entry a blind player cannot see.
+		local detail = (row.craftable ? "1" : "0")
+			+ "|" + (row.cost <= ::World.Assets.getMoney() ? "1" : "0")
+			+ "|" + (this.m.ItemIndex + 1) + "|" + this.m.Items.len()
+			+ "|" + (_opened ? "1" : "0") + "|" + money
+			+ "|" + row.ingredients.len();
+		::UnseenBanner.sendMessage("interrupt", row.name, "world.craft.blueprint",
+			"" + row.cost, detail);
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active) return;
+
+		if (this.m.ActionMode)
+		{
+			if (_code == this.ActionKey) this.executeAction();
+			else if (_code == this.InspectKey || _code == this.EscapeKey)
+				this.leaveActions(true);
+			// Crafting offers a single action, so Up/Down have nowhere to go; re-read
+			// it rather than answer a keystroke with silence, which reads as a hang.
+			else if (_code in this.MoveKeys) this.announceAction();
+			return;
+		}
+
+		if (this.m.DetailMode)
+		{
+			if (_code == this.InspectKey || _code == this.EscapeKey)
+				this.leaveDetails(true);
+			else if (_code in this.MoveKeys) this.moveDetail(_code);
+			return;
+		}
+
+		if (_code == this.ActionKey) this.openActions();
+		else if (_code == this.InspectKey) this.openDetails();
+		else if (_code in this.MoveKeys) this.move(_code);
+	}
+};
+
 // Obituary screen (phase 5.2). Vanilla renders a read-only table with one row per
 // fallen brother: name, days with the company, battles, kills and demise. The
 // backend already exposes that exact table through World.Statistics.getFallen(),
@@ -5615,6 +6042,94 @@
 		this.m.CursorTile = scored[this.m.AllyIndex].e.getTile();
 		this.announce(_active);
 	},
+	// Three facts the tile readout used to leave to the eye, packed for the companion
+	// as "elev|zoc|kind|ap|fatigue|complete". They ride in their own protocol field
+	// instead of being tacked onto `detail`, whose last two slots are the optional
+	// target preview: appended there they would sit at a different index depending on
+	// whether a skill is armed. Every one of them is spoken AFTER everything the
+	// readout already said, so sweeping hexes stays as fast to hear as before and the
+	// new clauses are what a player interrupts through, never what he waits for.
+	function extras(_active, _tile)
+	{
+		if (_active == null || _tile == null) return null;
+		local activeTile = _active.getTile();
+
+		// Height relative to the active man, not the absolute level: high ground is
+		// worth hit chance and ranged reach in this game, and "one level higher" is
+		// the form that answers the question. Equal height stays silent (companion
+		// side), which is the common case on most maps.
+		local elev = activeTile != null ? (_tile.Level - activeTile.Level) : 0;
+
+		// Enemies exerting zone of control over the tile — the same count the AI
+		// consults before disengaging (ai_disengage reads it off the destination
+		// tile). Standing here means each of them gets a free attack the moment this
+		// man walks away, which is exactly the trap a blind player cannot see coming.
+		local zoc = _tile.getZoneOfControlCountOtherThan(_active.getAlliedFactions());
+
+		return "" + elev + "|" + zoc + "|" + this.moveCost(_active, _tile);
+	},
+	// What walking to the cursor tile would cost, mirroring the mouse hover's own
+	// preview (tactical_state.computeEntityPath): identical navigator settings and
+	// the same find -> build -> cost order, so the numbers are the ones vanilla
+	// paints on the turn bar. Two deliberate differences: m.CurrentActionState is
+	// left untouched (the cursor must never cancel an armed skill or a queued
+	// action), and the visualisation is cleared again immediately — nothing on
+	// screen may change just because a blind player swept a hex.
+	//
+	// Returns "" whenever there is nothing useful to say: the man's own tile, an
+	// occupied or undiscovered tile, or a skill already armed, where the target
+	// preview answers the question instead and a movement clause would be noise.
+	function moveCost(_active, _tile)
+	{
+		if (this.m.CurrentSkill != null) return "";
+
+		local from = _active.getTile();
+		if (from == null || from.ID == _tile.ID) return "";
+		if (!_tile.IsEmpty || !_tile.IsDiscovered) return "";
+		// Rooted is announced by G itself when the move is attempted; repeating it on
+		// every hex of a sweep would be the verbosity this readout is trying to avoid.
+		if (_active.getCurrentProperties().IsRooted) return "";
+
+		local nav = ::Tactical.getNavigator();
+		local settings = nav.createSettings();
+		settings.ActionPointCosts = _active.getActionPointCosts();
+		settings.FatigueCosts = _active.getFatigueCosts();
+		settings.FatigueCostFactor = ::Const.Movement.FatigueCostFactor;
+		settings.ActionPointCostPerLevel = _active.getLevelActionPointCost();
+		settings.FatigueCostPerLevel = _active.getLevelFatigueCost();
+		settings.ZoneOfControlCost = 4;
+		settings.AlliedFactions = _active.getAlliedFactions();
+		settings.Faction = _active.getFaction();
+		settings.AllowZoneOfControlPassing = true;
+		settings.IsPlayer = true;
+
+		if (!nav.findPath(from, _tile, settings, 0))
+		{
+			nav.clearVisualisation();
+			return "none";
+		}
+
+		nav.buildVisualisation(_active, settings, _active.getActionPoints(),
+			_active.getFatigueMax() - _active.getFatigue());
+		// Vanilla drops the zone-of-control surcharge before pricing the path: the
+		// extra cost steers the route, it is not part of what the move charges.
+		settings.ZoneOfControlCost = 0;
+		local costs = nav.getCostForPath(_active, settings, _active.getActionPoints(),
+			_active.getFatigueMax() - _active.getFatigue());
+		nav.clearVisualisation();
+
+		if (costs == null) return "";
+		local tiles = ("Tiles" in costs) ? costs.Tiles : 0;
+		if (tiles == 0) return "far";
+
+		local ap = ("ActionPoints" in costs) ? costs.ActionPoints : 0;
+		local fatigue = ("Fatigue" in costs) ? costs.Fatigue : 0;
+		// IsComplete is false when the man would run out of action points partway and
+		// stop short of the tile — the difference between "you can be there" and "you
+		// can start walking there", which the numbers alone do not convey.
+		local complete = (!("IsComplete" in costs) || costs.IsComplete) ? "1" : "0";
+		return "cost|" + ap + "|" + fatigue + "|" + complete;
+	},
 	function getCorpseName(_tile)
 	{
 		if (_tile == null || !_tile.IsCorpseSpawned
@@ -5710,8 +6225,13 @@
 			detail += "|" + targetable + "|" + hit;
 		}
 
+		// NB: the extras ride in `comparacion`, not in `contexto`. `contexto` is not a
+		// free field: every message passes through ComposeCharacterContext, which
+		// turns whatever is in it into "Entry N of M" — a tile readout sent there came
+		// out with a bogus position glued to its tail. `comparacion` and `cadaver` are
+		// the two fields with no such global post-processing.
 		::UnseenBanner.sendMessage("interrupt", name, "tile.readout", "" + tile.Type,
-			detail, null, null, null, null, null,
+			detail, null, null, null, null, this.extras(_active, tile),
 			corpseName != "" ? corpseName : null);
 	},
 	// On-demand detail for whatever stands on the cursor tile (the v key). Reads the
@@ -9615,6 +10135,195 @@
 // still ticks while the character screen pauses the game). A delivered release
 // clears the entry, so a deliberate re-tap of a key that DOES report release fires
 // again at once.
+// Contextual key help (F1). The mod owns some thirty keys spread over a dozen
+// surfaces, and until now they lived only in the README — unreachable from inside
+// the game, which is precisely where a player forgets one. F1 opens the keys that
+// are live on the surface he is standing on, as a navigable list (Up/Down/Home/End,
+// one key per row) rather than a single utterance: the "lists, not dumps" rule that
+// every other multi-fact readout in this mod follows.
+//
+// The rows are pure L10n keys — Squirrel owns the order, the companion owns every
+// spoken word — so a translation covers the help without touching the mod.
+::UnseenBanner.KeyHelp <- {
+	m = {
+		Rows = null,
+		RowIndex = 0,
+		Active = false,
+		Context = "",
+		// Engine code of the key that closed the list on its press, so its own
+		// release can be swallowed instead of leaking into vanilla — Escape's
+		// release opens the pause menu, the same trap the tactical inspect list hit.
+		PendingRelease = -1
+	},
+	ToggleKey = 71, // f1 (no vanilla binding in either state)
+	CancelKey = 41, // escape
+	MoveKeys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end"
+	},
+	// Surface -> ordered row keys. A surface missing from here falls back to the
+	// plain map or plain combat list, so a screen the mod has not described yet
+	// still answers F1 with something true rather than with silence.
+	Contexts = {
+		["combat"] = ["cursor", "recenter", "enemies", "allies", "inspect",
+			"inspectlist", "act", "status", "turnorder", "threats", "adjacent",
+			"skills", "hotkeys", "sheet", "endround", "wait"],
+		["combat.sheet"] = ["move", "details", "equip", "switch", "close"],
+		["combat.inspect"] = ["move", "details", "close"],
+		["combat.result"] = ["move", "activate", "details", "lootall", "repeat"],
+		["world"] = ["move", "march", "brake", "enter", "places", "parties",
+			"status", "explorer", "camp", "campdetails", "sheet", "obituary",
+			"relations", "retinue", "menu"],
+		["world.explorer"] = ["move", "recenter", "list", "travel", "leave"],
+		["world.survey"] = ["move", "details", "activate", "pages", "close"],
+		["world.status"] = ["move", "ambition", "close"],
+		["world.sheet"] = ["sections", "move", "details", "actions", "switch", "close"],
+		["world.town"] = ["move", "activate", "leave"],
+		["world.market"] = ["pages", "move", "actions", "details", "compare", "back"],
+		["world.recruit"] = ["move", "details", "actions", "back"],
+		["world.tavern"] = ["move", "buy", "reread", "back"],
+		["world.temple"] = ["move", "injuries", "pay", "back"],
+		["world.craft"] = ["move", "details", "craft", "back"],
+		["world.retinue"] = ["move", "activate", "back"],
+		["world.list"] = ["move", "close"],
+		["world.event"] = ["move", "activate", "hotkeys"],
+		["world.encounter"] = ["move", "activate", "retreat"],
+		["menu"] = ["move", "activate", "adjust", "back"],
+		["dialog"] = ["move", "activate", "cancel"]
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function handles(_code)
+	{
+		if (_code == this.ToggleKey) return true;
+		if (this.m.PendingRelease == _code) return true;
+		if (!this.m.Active) return false;
+		return (_code in this.MoveKeys) || _code == this.CancelKey;
+	},
+	function consumeReleaseSwallow(_code)
+	{
+		if (this.m.PendingRelease != _code) return false;
+		this.m.PendingRelease = -1;
+		return true;
+	},
+	function reset()
+	{
+		this.m.Rows = null;
+		this.m.RowIndex = 0;
+		this.m.Active = false;
+		this.m.Context = "";
+	},
+	function open(_context)
+	{
+		local context = _context;
+		if (!(context in this.Contexts))
+		{
+			// Fall back to the broadest list of the surface the player is on.
+			context = context.find("world") == 0 ? "world" : "combat";
+		}
+
+		this.m.Context = context;
+		this.m.Rows = this.Contexts[context];
+		this.m.RowIndex = 0;
+		this.m.Active = true;
+		this.announceRow(true);
+	},
+	// _armRelease carries the key whose release must not reach vanilla, for the two
+	// paths that close the list on a key PRESS (F1 again, Escape).
+	function close(_announce = false, _armRelease = -1)
+	{
+		local was = this.m.Active;
+		this.reset();
+		if (_armRelease >= 0) this.m.PendingRelease = _armRelease;
+		if (was && _announce) ::UnseenBanner.sendMessage("interrupt", "", "help.closed");
+	},
+	function move(_code)
+	{
+		if (this.m.Rows == null || this.m.Rows.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.RowIndex -= 1;
+		else if (dir == "down") this.m.RowIndex += 1;
+		else if (dir == "home") this.m.RowIndex = 0;
+		else this.m.RowIndex = this.m.Rows.len() - 1;
+		if (this.m.RowIndex < 0) this.m.RowIndex = 0;
+		if (this.m.RowIndex >= this.m.Rows.len()) this.m.RowIndex = this.m.Rows.len() - 1;
+		this.announceRow();
+	},
+	function onKey(_code, _context)
+	{
+		if (_code == this.ToggleKey)
+		{
+			if (this.m.Active) this.close(true, _code);
+			else this.open(_context);
+			return;
+		}
+
+		if (!this.m.Active) return;
+		if (_code == this.CancelKey)
+		{
+			this.close(true, _code);
+			return;
+		}
+		if (_code in this.MoveKeys) this.move(_code);
+	},
+	function announceRow(_opened = false)
+	{
+		if (this.m.Rows == null || this.m.Rows.len() == 0) return;
+		local detail = this.m.Context + "|" + (this.m.RowIndex + 1)
+			+ "|" + this.m.Rows.len() + "|" + (_opened ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", "", "help.row",
+			this.m.Rows[this.m.RowIndex], detail);
+	}
+};
+
+// Which key list F1 answers with, on each of the two states that route keyboard.
+// Read in the same priority order the key dispatchers themselves use, so the help
+// always describes the surface that would actually receive the next keystroke.
+::UnseenBanner.tacticalHelpContext <- function(_state)
+{
+	if (_state.m.TacticalCombatResultScreen != null
+		&& _state.m.TacticalCombatResultScreen.isVisible()) return "combat.result";
+	if ((_state.m.TacticalDialogScreen != null && _state.m.TacticalDialogScreen.isVisible())
+		|| ::UnseenBanner.DialogNav.isActive()) return "dialog";
+	if (::UnseenBanner.MenuNav.isActive()) return "menu";
+	if (_state.isInCharacterScreen()) return "combat.sheet";
+	if (::UnseenBanner.TileCursor.isInspectMenuActive()) return "combat.inspect";
+	return "combat";
+}
+
+::UnseenBanner.worldHelpContext <- function(_state)
+{
+	if (::UnseenBanner.EventNav.isActive()) return "world.event";
+	if (::UnseenBanner.MenuNav.isActive()) return "menu";
+	if (::UnseenBanner.DialogNav.isActive()) return "dialog";
+	if (_state.isInCharacterScreen()) return "world.sheet";
+	if (_state.m.CombatDialog != null && _state.m.CombatDialog.isVisible())
+		return "world.encounter";
+	if (_state.m.CampfireScreen != null && _state.m.CampfireScreen.isVisible())
+		return "world.retinue";
+	if ((_state.m.ObituaryScreen != null && _state.m.ObituaryScreen.isVisible())
+		|| (_state.m.RelationsScreen != null && _state.m.RelationsScreen.isVisible()))
+		return "world.list";
+	if (_state.m.WorldTownScreen != null && _state.m.WorldTownScreen.isVisible())
+	{
+		local screen = _state.m.WorldTownScreen;
+		if (::UnseenBanner.WorldShop.isCurrent(screen)) return "world.market";
+		if (::UnseenBanner.WorldHire.isCurrent(screen)) return "world.recruit";
+		if (::UnseenBanner.WorldTavern.isCurrent(screen)) return "world.tavern";
+		if (::UnseenBanner.WorldTemple.isCurrent(screen)) return "world.temple";
+		if (::UnseenBanner.WorldTaxidermist.isCurrent(screen)) return "world.craft";
+		return "world.town";
+	}
+	if (::UnseenBanner.WorldCursor.isActive()) return "world.explorer";
+	if (::UnseenBanner.WorldSurvey.isActive()) return "world.survey";
+	if (::UnseenBanner.WorldStatus.isActive()) return "world.status";
+	return "world";
+}
+
 ::UnseenBanner.KeyGate <- {
 	m = {
 		Last = {}
@@ -9729,6 +10438,32 @@
 
 	q.onKeyInput = @(__original) function( _key )
 	{
+		// Contextual key help (F1). The main menu is the first surface a new player
+		// meets, so it answers F1 too — with the menu key list, the same one the
+		// in-game pause menu and Options get. Acts on the press, consumes both states.
+		local helpCode = _key.getKey();
+		if (::UnseenBanner.KeyHelp.handles(helpCode))
+		{
+			if (_key.getState() == 1)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(helpCode, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.KeyHelp.onKey(helpCode, "menu");
+				}
+			}
+			else
+			{
+				::UnseenBanner.KeyGate.release(helpCode);
+				::UnseenBanner.KeyHelp.consumeReleaseSwallow(helpCode);
+			}
+			return true;
+		}
+
+		if (::UnseenBanner.KeyHelp.isActive() && !(helpCode in ::UnseenBanner.ModifierKeys))
+		{
+			::UnseenBanner.KeyHelp.close(false);
+		}
+
 		// Only steal keys while a menu handled by menu_nav.js is fully shown.
 		// All other submenus keep their native keyboard behavior.
 		//
@@ -9919,6 +10654,7 @@
 		::UnseenBanner.WorldHire.close();
 		::UnseenBanner.WorldTavern.close();
 		::UnseenBanner.WorldTemple.close();
+		::UnseenBanner.WorldTaxidermist.close();
 		::UnseenBanner.WorldTown.open(this.getTown());
 	}
 
@@ -9929,6 +10665,7 @@
 		::UnseenBanner.WorldHire.close();
 		::UnseenBanner.WorldTavern.close();
 		::UnseenBanner.WorldTemple.close();
+		::UnseenBanner.WorldTaxidermist.close();
 		::UnseenBanner.WorldTown.close();
 	}
 
@@ -9971,18 +10708,32 @@
 		}
 	}
 
+	// The crafting building of the Beasts & Exploration DLC. Its module is set as
+	// LastActiveModule right before this call, so the accessible cursor opens once
+	// vanilla has installed it, exactly like the tavern and the temple.
+	q.showTaxidermistDialog = @(__original) function()
+	{
+		__original();
+		if (this.isVisible() && this.m.TaxidermistDialogModule != null)
+		{
+			::UnseenBanner.WorldTaxidermist.open(this, this.m.TaxidermistDialogModule);
+		}
+	}
+
 	q.showMainDialog = @(__original) function()
 	{
 		local leavingShop = ::UnseenBanner.WorldShop.isCurrent(this);
 		local leavingHire = ::UnseenBanner.WorldHire.isCurrent(this);
 		local leavingTavern = ::UnseenBanner.WorldTavern.isCurrent(this);
 		local leavingTemple = ::UnseenBanner.WorldTemple.isCurrent(this);
+		local leavingCraft = ::UnseenBanner.WorldTaxidermist.isCurrent(this);
 		__original();
 		if (leavingShop) ::UnseenBanner.WorldShop.close();
 		if (leavingHire) ::UnseenBanner.WorldHire.close();
 		if (leavingTavern) ::UnseenBanner.WorldTavern.close();
 		if (leavingTemple) ::UnseenBanner.WorldTemple.close();
-		if (leavingShop || leavingHire || leavingTavern || leavingTemple)
+		if (leavingCraft) ::UnseenBanner.WorldTaxidermist.close();
+		if (leavingShop || leavingHire || leavingTavern || leavingTemple || leavingCraft)
 		{
 			if (::UnseenBanner.WorldTown.isActive())
 				::UnseenBanner.WorldTown.announceItem();
@@ -10053,12 +10804,17 @@
 		{
 			::UnseenBanner.DialogNav.prime(_title, _text, _isMonologue, "world.retinue");
 		}
+		else if (::UnseenBanner.WorldStatus.isDialogPending())
+		{
+			::UnseenBanner.DialogNav.prime(_title, _text, _isMonologue, "world.ambition");
+		}
 	}
 
 	q.onScreenShown = @(__original) function()
 	{
 		__original();
-		if (::Tactical.isActive() || ::UnseenBanner.DialogNav.isContext("world.retinue"))
+		if (::Tactical.isActive() || ::UnseenBanner.DialogNav.isContext("world.retinue")
+			|| ::UnseenBanner.DialogNav.isContext("world.ambition"))
 		{
 			::UnseenBanner.DialogNav.open();
 		}
@@ -10068,10 +10824,15 @@
 	{
 		__original();
 		local wasRetinue = ::UnseenBanner.DialogNav.isContext("world.retinue");
+		local wasAmbition = ::UnseenBanner.DialogNav.isContext("world.ambition");
 		::UnseenBanner.DialogNav.close();
 		if (wasRetinue)
 		{
 			::UnseenBanner.WorldRetinue.onDialogClosed();
+		}
+		if (wasAmbition)
+		{
+			::UnseenBanner.WorldStatus.onDialogClosed();
 		}
 	}
 });
@@ -10317,6 +11078,34 @@
 			return __original(_key);
 		}
 
+		// Contextual key help (F1), before every other cursor for the same reason as
+		// in combat: it has to be reachable from any map surface, and while it is open
+		// its rows own Up/Down. The map's own readouts stay untouched underneath.
+		if (::UnseenBanner.KeyHelp.handles(_key.getKey()))
+		{
+			local helpCode = _key.getKey();
+			if (_key.getState() == 1)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(helpCode, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.KeyHelp.onKey(helpCode,
+						::UnseenBanner.worldHelpContext(this));
+				}
+			}
+			else
+			{
+				::UnseenBanner.KeyGate.release(helpCode);
+				::UnseenBanner.KeyHelp.consumeReleaseSwallow(helpCode);
+			}
+			return true;
+		}
+
+		if (::UnseenBanner.KeyHelp.isActive()
+			&& !(_key.getKey() in ::UnseenBanner.ModifierKeys))
+		{
+			::UnseenBanner.KeyHelp.close(false);
+		}
+
 		// Ground truth for "a menu or popup is up" is the MenuStack's backsteps, not
 		// MenuNav's module flags. Saving from the in-game pause menu returns to this
 		// same world_state with no onInit and no loading screen (our other reset
@@ -10421,12 +11210,15 @@
 			return true;
 		}
 
-		// Retinue confirmation (cart upgrade or follower hire). The campfire screen
-		// is temporarily hidden while dialog_screen is visible, so this must run
-		// before checking the P screen itself or the plain-map guards. Use the same
-		// keydown cadence as the Retinue lists; P and Escape both cancel here.
+		// World confirmations we raised ourselves: the Retinue's cart/hire popups and
+		// the "abandon this ambition" one that Enter opens from the F2 list. The
+		// campfire screen is temporarily hidden while dialog_screen is visible, so
+		// this must run before checking the P screen itself or the plain-map guards.
+		// Use the same keydown cadence as the lists that open them; P and Escape both
+		// cancel here.
 		if (::UnseenBanner.DialogNav.isActive()
-			&& ::UnseenBanner.DialogNav.isContext("world.retinue")
+			&& (::UnseenBanner.DialogNav.isContext("world.retinue")
+				|| ::UnseenBanner.DialogNav.isContext("world.ambition"))
 			&& ::UnseenBanner.DialogNav.handles(code))
 		{
 			if (_key.getState() == 1)
@@ -10573,6 +11365,22 @@
 			return true;
 		}
 
+		// Taxidermist: blueprint list, its V detail sub-list and its craft action.
+		// Same priority rule as the other building dialogs — the town frame stays
+		// technically visible behind the module. Escape is captured only inside a
+		// sub-list; at blueprint level it leaves the building natively.
+		if (this.m.WorldTownScreen.isVisible()
+			&& !::UnseenBanner.EventNav.isActive()
+			&& ::UnseenBanner.WorldTaxidermist.isCurrent(this.m.WorldTownScreen)
+			&& ::UnseenBanner.WorldTaxidermist.handles(code))
+		{
+			if (_key.getState() == 0 && !this.m.WorldTownScreen.isAnimating())
+			{
+				::UnseenBanner.WorldTaxidermist.onKey(code);
+			}
+			return true;
+		}
+
 		// Town screen (phase 4.5): while the settlement screen is up (and no event is
 		// layered over it), our list drives it — Up/Down/Home/End walk buildings and
 		// contracts, Enter activates. Act on release, consume the key. Escape is left
@@ -10583,6 +11391,7 @@
 			&& !::UnseenBanner.WorldHire.isCurrent(this.m.WorldTownScreen)
 			&& !::UnseenBanner.WorldTavern.isCurrent(this.m.WorldTownScreen)
 			&& !::UnseenBanner.WorldTemple.isCurrent(this.m.WorldTownScreen)
+			&& !::UnseenBanner.WorldTaxidermist.isCurrent(this.m.WorldTownScreen)
 			&& ::UnseenBanner.WorldTown.isActive()
 			&& ::UnseenBanner.WorldTown.handles(code))
 		{
@@ -10600,6 +11409,7 @@
 		// be down, so these keys never fire inside modal surfaces.
 		local mapFree = !::UnseenBanner.EventNav.isActive() && !::UnseenBanner.MenuNav.isActive()
 			&& !::UnseenBanner.WorldCombatDialogNav.isActive()
+			&& !::UnseenBanner.DialogNav.isActive()
 			&& !this.isInCharacterScreen()
 			&& !this.m.WorldTownScreen.isVisible()
 			&& (this.m.CampfireScreen == null || !this.m.CampfireScreen.isVisible());
@@ -10840,6 +11650,7 @@
 		::UnseenBanner.CombatResult.reset();
 		::UnseenBanner.DialogNav.reset();
 		::UnseenBanner.TacticalDialogNav.reset();
+		::UnseenBanner.KeyHelp.close(false);
 		::UnseenBanner.KeyGate.reset();
 		// A battle starting clears the party's world path, so drop any in-flight world
 		// march here — otherwise Pending would be left stale and fire a spurious
@@ -10855,6 +11666,7 @@
 		::UnseenBanner.CombatResult.reset();
 		::UnseenBanner.DialogNav.reset();
 		::UnseenBanner.TacticalDialogNav.reset();
+		::UnseenBanner.KeyHelp.close(false);
 		__original();
 	}
 
@@ -10867,6 +11679,35 @@
 		// the physical press of V, so the auto-repeat latch is cleared here for
 		// every path through this hook, including the ones that return early.
 		if (_key.getState() == 0) ::UnseenBanner.TileCursor.clearInspectKeyHeld(code);
+
+		// Contextual key help (F1). First of all, so it can be reached from every
+		// battle surface — including the ones that consume every key, like the
+		// Shift+V list — and so its own Up/Down own the list while it is open.
+		if (::UnseenBanner.KeyHelp.handles(code))
+		{
+			if (_key.getState() == 1)
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.KeyHelp.onKey(code,
+						::UnseenBanner.tacticalHelpContext(this));
+				}
+			}
+			else
+			{
+				::UnseenBanner.KeyGate.release(code);
+				::UnseenBanner.KeyHelp.consumeReleaseSwallow(code);
+			}
+			return true;
+		}
+
+		// Any other key means the player has moved on: drop the help before it can
+		// own Up/Down over a surface he is no longer reading. A bare modifier is not
+		// "another key" — it is half of a combination still being pressed.
+		if (::UnseenBanner.KeyHelp.isActive() && !(code in ::UnseenBanner.ModifierKeys))
+		{
+			::UnseenBanner.KeyHelp.close(false);
+		}
 
 		// Post-combat result screen. The state swallows every key once the battle
 		// has ended (isBattleEnded short-circuits its own onKeyInput), so this must
