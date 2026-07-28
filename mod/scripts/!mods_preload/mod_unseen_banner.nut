@@ -730,8 +730,6 @@
 			});
 		}
 
-		local speed = this.speedState();
-
 		// Contract titles carry BBCode/colour markup, so they ride in `texto`, the
 		// field the companion runs through clean() before speaking.
 		local contract = ::World.Contracts.getActiveContract();
@@ -740,13 +738,14 @@
 		local items = [];
 		items.push(this.item("world.status.screen"));
 		items.push(this.item(timeCat, timeName, "" + day));
-		// Read-only: 1, 2 and 3 already switch the speed natively, so this row exists to
-		// answer "what is it now?" without having to change it to find out.
-		items.push(this.item("world.status.speed." + speed));
+		// No speed row: pausing and the 1/2/3 keys already announce the speed the
+		// moment it changes (see the setPause and setNormal/Fast/VeryFastTime hooks),
+		// so a row repeating it here is one more thing to walk past.
 		items.push(this.item(brothers == 1 ? "world.status.brothers.one" : "world.status.brothers", "", "" + brothers, "" + brothersMax));
-		if (leveled.len() == 0)
-			items.push(this.item("world.status.levelup.none"));
-		else
+		// Pending level ups are listed only when there are any. "Nobody is waiting"
+		// is not news: the answer to "who can level up" is a list, and an empty list
+		// is best said by not being there.
+		if (leveled.len() != 0)
 		{
 			items.push(this.item(leveled.len() == 1 ? "world.status.levelup.one" : "world.status.levelup", "", "" + leveled.len()));
 			foreach( entry in leveled )

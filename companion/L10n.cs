@@ -649,19 +649,14 @@ namespace TheUnseenBanner.Companion
             // true; only the port and the tavern stay open), so the hour is worth more
             // than a label here: it tells the player whether entering a town is useful.
             ["world.status.time.night"] = "Day {1}, {0}. Most buildings are closed at night.",
-            // Game speed, read-only row: 1, 2 and 3 are vanilla's own speed keys, so the
-            // hint points at them rather than offering a duplicate control here.
-            ["world.status.speed.normal"] = "Game speed: normal. Press 1, 2 or 3 to change it.",
-            ["world.status.speed.fast"] = "Game speed: fast. Press 1, 2 or 3 to change it.",
-            ["world.status.speed.veryfast"] = "Game speed: very fast. Press 1, 2 or 3 to change it.",
-            ["world.status.speed.paused"] = "Game speed: paused. Press 1, 2 or 3 to resume.",
-            ["world.status.speed.camp"] = "Game speed: fixed while camping.",
-            ["world.status.speed.locked"] = "Game speed: fixed for now.",
+            // No game-speed row: pause and the 1/2/3 keys announce the speed as it
+            // changes (world.speed.* below), so the list does not repeat it.
             ["world.status.brothers"] = "{1} of {2} brothers.",
             ["world.status.brothers.one"] = "1 of {2} brothers.",
+            // Only present when somebody really is waiting; there is no "nobody is"
+            // row, because an empty list says that by not being there.
             ["world.status.levelup"] = "{1} brothers are waiting to level up.",
             ["world.status.levelup.one"] = "1 brother is waiting to level up.",
-            ["world.status.levelup.none"] = "No one is waiting to level up.",
             // A level grants attribute increases and a perk point separately, and
             // spending one leaves the other pending, so each man says what he owes.
             ["world.status.levelup.brother"] = "{0} has {1} to spend.",
