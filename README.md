@@ -56,7 +56,11 @@ Here is what is **already playable by ear** and what is **not yet**. Be realisti
 before starting a serious campaign:
 
 - ✅ **Main menu, options, load and save.** Navigable and narrated, both from
-  the main menu and from the in-game pause menu.
+  the main menu and from the in-game pause menu. Confirmation dialogs — deleting
+  a save, retiring the company — are read out with the game's own warning and
+  focus Cancel first. In the main menu Escape dismisses just the dialog; in the
+  pause menu Escape closes the whole menu, dialog included, because MSU claims
+  that key there.
 - ✅ **Text events** (the narrative part): title, body and options. Contracts
   and ambitions are offered through this same screen, so taking, tracking and
   turning them in works end to end.
@@ -254,8 +258,14 @@ a sighted player gets from the sprite.
 
 ### Settlements
 
-The town screen is one list: the town's name, each building, each contract, and
-Leave. Enter opens the focused one; Escape leaves the town.
+The town screen is one list: the town's name and how many situations it has, then
+each situation, each building, each contract, and Leave. Enter opens the focused
+one, V explains a situation, and Escape leaves the town.
+
+Situations are the icons vanilla draws in the corner of that screen — a good
+harvest that halves food prices, ambushed trade routes, a siege, a tournament.
+On the world map they are gated behind the Agent follower, and `V` in the `B`
+survey honours that gate, exactly as the game does.
 
 | Building | Keys |
 |---|---|
@@ -264,7 +274,11 @@ Leave. Enter opens the focused one; Escape leaves the town.
 | **Tavern** | Two paid actions — a round for the patrons, a round for your men — Enter performs the focused one, V re-reads the rumor or report it produced |
 | **Temple** | Up/Down walk the wounded, Enter opens that brother's treatable injuries, a second Enter pays for the treatment, V or Escape backs out |
 | **Taxidermist** | Up/Down walk the recipes with their cost and, when one cannot be made, why not; V opens its description and ingredients, each with how many are still missing; Enter opens the craft action and a second Enter pays for it |
+| **Kennel** | A shop like any other, and driven by the market keys above |
+| **Harbor** | Up/Down walk the destinations with the fare for each and whether you can afford it, V opens the destination's own description, Enter asks to confirm the passage and a second Enter pays and sails. When the harbor refuses (you are escorting a caravan) the reason is spoken |
+| **Training hall** | Up/Down walk your men, Enter opens the three paid lessons for one of them, a second Enter pays, and V reads what a lesson teaches. Men who cannot train are still listed, with the reason — too experienced, already training, or a slave the manhunters will not school |
 | **Arena** | Opens as it does for a mouse; when it refuses (night, cooldown, another contract, no stash room) the reason is spoken instead of nothing happening |
+| **Barber** | Not described. It only changes a man's sprite — no cost, no effect in play — so there is nothing to read out; the mod says so instead of staying silent |
 
 ### Character screen (C / I)
 
@@ -275,7 +289,7 @@ different depth in each.
 
 | Section | Contents |
 |---|---|
-| Sheet | Identity, background, XP, mood, health, fatigue, resolve, initiative, melee and ranged skill and defence, armour, injuries, traits |
+| Sheet | Identity, background, XP, mood, health, fatigue, resolve, initiative, melee and ranged skill and defence, weapon damage, effectiveness against armour, chance to hit the head, sight distance, armour, injuries, traits. The eight attributes that grow on level up also report their talent stars, so a brother can be judged without waiting for a level up |
 | Equipment | Each worn item; Enter opens its actions |
 | Backpack | Each bag slot; Enter opens its actions (equip, use, move, mark for repair) |
 | Stash | The company stash, with the same action menu |
@@ -386,7 +400,8 @@ in the real game.
     brother-to-brother comparison.
   - Inventory, stash and market actions: equip, use, move, mark for repair,
     sort, filter, buy, sell and repair, with localized results and errors.
-  - Recruitment, tavern, temple and the taxidermist's crafting.
+  - Recruitment, tavern, temple, the taxidermist's crafting, the harbor's
+    passage by ship and the training hall's paid lessons.
 - **Phase 3 — Tactical combat.** Spoken combat log; tile cursor with terrain,
   occupants, corpses, height, zone of control and the cost of walking there;
   enemy and ally cycling; skills with valid targets and hit chance; on-demand

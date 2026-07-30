@@ -59,6 +59,21 @@ UnseenBannerMenuNav.prototype.sendAnnouncement = function (_category, _text, _va
 	}
 };
 
+// Popups have no module lifecycle, so Squirrel cannot see them. It needs to know,
+// because that is the one state in which Escape is ours rather than vanilla's.
+//
+// The payload is a TABLE, like every other SQ.call here: the bridge carries one
+// args value and a bare primitive is not a shape this codebase has ever sent (see
+// the note in sendAnnouncement). Callers must also invoke this AFTER speaking, so
+// that a bridge that refuses the call can never cost the player the announcement.
+UnseenBannerMenuNav.prototype.notifyBackendPopupState = function (_open)
+{
+	if (this.mSQHandle !== null)
+	{
+		SQ.call(this.mSQHandle, 'onPopupState', { abierto: _open === true });
+	}
+};
+
 UnseenBannerMenuNav.prototype.isButton = function (_element)
 {
 	var className = $(_element).attr('class') || '';
@@ -396,18 +411,46 @@ UnseenBannerMenuNav.prototype.adjustOptionsItem = function (_item, _direction)
 		this.announceItem(_item);
 };
 
-// --- Popups (Enter Name / Delete confirmation) ------------------------------
-// These are created synchronously when we click Save (on a New Savegame) or
-// Delete, and live inside the module container. They fire no lifecycle event, so
-// we look for them right after the click and, for the native-driven Enter Name
-// field, notice when they vanish (see onKeyForwarded).
+// --- Popups (Enter Name / Delete / Retire confirmation) ---------------------
+// These are created synchronously when we click Save (on a New Savegame),
+// Delete or Retire, and live inside the module container. They fire no lifecycle
+// event, so we look for them right after the click and, for the native-driven
+// Enter Name field, notice when they vanish (see onKeyForwarded).
 
+UnseenBannerMenuNav.prototype.getMainMenuContainer = function ()
+{
+	return $('.main-menu-module.display-block:first');
+};
+
+UnseenBannerMenuNav.prototype.getPopupHost = function ()
+{
+	if (this.mActiveModule === 'MainMenuModule')
+		return this.getMainMenuContainer();
+	if (this.mActiveModule === 'LoadCampaignModule' || this.mActiveModule === 'SaveCampaignModule')
+		return this.getCampaignModule(this.mActiveModule);
+	return $();
+};
+
+// A popup dialog is a screen-wide overlay, so do NOT insist on finding it inside
+// the active module's container. Scoping it there was a guess about where vanilla
+// hangs the dialog, and a wrong guess reads as the popup not existing at all: the
+// Retire confirmation was up on screen, fully built, while this returned null and
+// the cursor went on driving the buttons behind it in silence. Prefer the module's
+// own subtree — that is the popup we caused — and fall back to any visible dialog
+// in the document. `:visible` is what keeps a destroyed-but-not-yet-removed dialog
+// from being adopted.
 UnseenBannerMenuNav.prototype.detectPopup = function ()
 {
-	if (this.mActiveModule !== 'LoadCampaignModule' && this.mActiveModule !== 'SaveCampaignModule')
-		return null;
-	var dialog = this.getCampaignModule(this.mActiveModule).find('.popup-dialog:first');
-	return dialog.length > 0 ? dialog : null;
+	var host = this.getPopupHost();
+	if (host.length > 0)
+	{
+		var scoped = host.find('.popup-dialog:visible:first');
+		if (scoped.length > 0)
+			return scoped;
+	}
+
+	var anywhere = $('.popup-dialog:visible:first');
+	return anywhere.length > 0 ? anywhere : null;
 };
 
 UnseenBannerMenuNav.prototype.getPopupItems = function ()
@@ -426,10 +469,21 @@ UnseenBannerMenuNav.prototype.getPopupItems = function ()
 	return items;
 };
 
+UnseenBannerMenuNav.prototype.popupType = function (_dialog)
+{
+	if (_dialog.find('input:first').length > 0)
+		return 'enter-name';
+	// The Retire dialog is the only confirmation raised from the pause menu itself,
+	// and vanilla tags its content container. Everything else reaching here is the
+	// campaign-delete confirmation.
+	if (_dialog.find('.retire-campaign-container:first').length > 0)
+		return 'retire';
+	return 'delete';
+};
+
 UnseenBannerMenuNav.prototype.openPopup = function (_dialog)
 {
-	var hasInput = _dialog.find('input:first').length > 0;
-	this.mPopup = { type: hasInput ? 'enter-name' : 'delete', dialog: _dialog };
+	this.mPopup = { type: this.popupType(_dialog), dialog: _dialog };
 	this.mPopupIndex = -1;
 	$('.unseen-banner-focus').removeClass('unseen-banner-focus');
 
@@ -440,19 +494,64 @@ UnseenBannerMenuNav.prototype.openPopup = function (_dialog)
 		// (confirm) and Escape (cancel) are all handled natively by the field. We only
 		// speak the prompt and stay out of the way until the popup closes.
 		this.sendAnnouncement('menu.save.name_prompt', '', '', '');
+		this.notifyBackendPopupState(true);
+		return;
+	}
+
+	if (this.mPopup.type === 'retire')
+	{
+		// Retiring permanently ends the campaign, so read the warning vanilla shows
+		// rather than a wording of our own — Overhype's text is what a sighted player
+		// is looking at. detectPopup hands us the .popup-dialog itself, not the modal
+		// wrapper around it, so header and content are direct children here.
+		var title = _dialog.find('.header .title:first').text();
+		var warning = _dialog.find('.retire-campaign-container:first').text();
+		this.sendAnnouncement('menu.popup.retire', warning, title, '');
 	}
 	else
 	{
 		// The campaign name sits in the warning span of the confirmation text.
 		var name = _dialog.find('.font-color-label-warning:first').text();
 		this.sendAnnouncement('menu.popup.delete', name, '', '');
-		var items = this.getPopupItems();
-		if (items.length > 0)
-		{
-			this.mPopupIndex = 0; // Cancel
-			this.focusItem(items[0]);
-		}
 	}
+
+	var items = this.getPopupItems();
+	if (items.length > 0)
+	{
+		this.mPopupIndex = 0; // Cancel, so the destructive button is never the default
+		this.focusItem(items[0]);
+	}
+	this.notifyBackendPopupState(true);
+};
+
+// Click the popup's own Cancel button. That is vanilla's dismissal path — it runs
+// the dialog's cancel callback, which calls destroyPopupDialog and removes the DOM
+// — so nothing of the popup is left behind to be re-focused later.
+UnseenBannerMenuNav.prototype.cancelPopup = function ()
+{
+	if (this.mPopup === null)
+		return false;
+	var cancel = this.mPopup.dialog.find('.footer .l-cancel-button .button-1:first');
+	if (cancel.length === 0)
+		return false;
+	cancel.trigger('click');
+	this.closePopup(true);
+	return true;
+};
+
+// Dismiss a popup dialog found in the DOM whether or not the cursor was driving it.
+// This is the safety net for every path that tears the menu down without going
+// through our Enter: MainMenuModule hangs its Retire dialog off the module
+// container, and neither hide() nor the button rebuild ever removes it, so an
+// abandoned popup would come back visible the next time the menu is shown — with
+// its Ok still wired to retiring the company.
+UnseenBannerMenuNav.prototype.dismissStalePopup = function ()
+{
+	var cancel = this.getPopupHost().find('.footer .l-cancel-button .button-1:first');
+	if (cancel.length === 0)
+		return false;
+	cancel.trigger('click');
+	return true;
 };
 
 UnseenBannerMenuNav.prototype.closePopup = function (_reannounce)
@@ -460,10 +559,29 @@ UnseenBannerMenuNav.prototype.closePopup = function (_reannounce)
 	this.mPopup = null;
 	this.mPopupIndex = -1;
 	$('.unseen-banner-focus').removeClass('unseen-banner-focus');
-	if (_reannounce && (this.mActiveModule === 'LoadCampaignModule' || this.mActiveModule === 'SaveCampaignModule'))
+	this.notifyBackendPopupState(false);
+	if (!_reannounce)
+		return;
+
+	if (this.mActiveModule === 'LoadCampaignModule' || this.mActiveModule === 'SaveCampaignModule')
 	{
 		this.mIndices[this.mActiveModule] = -1;
 		this.announceCampaignScreen(this.mActiveModule);
+	}
+	else if (this.mActiveModule === 'MainMenuModule')
+	{
+		// Back on the pause menu, on the entry the popup was raised from (Retire),
+		// so the player is told where the cursor landed instead of guessing.
+		var items = this.getMainItems();
+		var index = this.mIndices.MainMenuModule;
+		if (index < 0 || index >= items.length)
+			index = 0;
+		this.mIndices.MainMenuModule = index;
+		if (items.length > 0)
+		{
+			this.focusItem(items[index]);
+			this.sendAnnouncement('menu.main', this.readButtonLabel(items[index].element), '', '');
+		}
 	}
 };
 
@@ -663,8 +781,13 @@ UnseenBannerMenuNav.prototype.activateItem = function (_item)
 	{
 		// Cancel dismisses; Ok confirms a delete (the game refreshes the list) — either
 		// way the popup is gone afterwards, so drop back to the module and re-read it.
+		// The one exception is Ok on the Retire dialog: it ends the campaign and raises
+		// the end-of-campaign screen, so re-reading the pause menu behind it would talk
+		// over the screen that now matters.
+		var endsCampaign = this.mPopup !== null && this.mPopup.type === 'retire' &&
+			_item.role === 'ok';
 		element.trigger('click');
-		this.closePopup(true);
+		this.closePopup(!endsCampaign);
 		return;
 	}
 
@@ -725,6 +848,19 @@ UnseenBannerMenuNav.prototype.activateItem = function (_item)
 			return;
 		}
 
+		if (this.mActiveModule === 'MainMenuModule')
+		{
+			element.trigger('click');
+			// Retire raises its confirmation synchronously. Resume, Load, Save, Options
+			// and Quit instead change module or state and leave no popup behind. Without
+			// this the cursor kept driving the buttons behind the dialog: nothing was
+			// announced, and a second Enter on Retire stacked a second popup on the first.
+			var mainPopup = this.detectPopup();
+			if (mainPopup !== null)
+				this.openPopup(mainPopup);
+			return;
+		}
+
 		if (this.mActiveModule === 'OptionsMenuModule')
 		{
 			var isApply = element.closest('.l-apply-button').length > 0;
@@ -758,10 +894,13 @@ UnseenBannerMenuNav.prototype.onModuleShown = function (_id)
 	this.mPopup = null;
 	this.mPopupIndex = -1;
 	this.mActiveModule = _id;
+	this.notifyBackendPopupState(false);
 	$('.unseen-banner-focus').removeClass('unseen-banner-focus');
 
 	if (_id === 'MainMenuModule')
 	{
+		this.dismissStalePopup();
+
 		var items = this.getMainItems();
 		var index = this.mIndices.MainMenuModule;
 		if (index < 0 || index >= items.length)
@@ -798,9 +937,17 @@ UnseenBannerMenuNav.prototype.onModuleHidden = function (_id)
 	if (this.mActiveModule === _id)
 	{
 		this.stopEditing();
+		// Whatever closed this menu, the popup goes with it. In the world and tactical
+		// pause menus Escape never reaches our Squirrel hook at all — MSU binds it to
+		// its own "toggleMenuScreen" keybind and its onKeyInput wrapper sits OUTSIDE
+		// ours, so it consumes the key first and hides the menu. That path ends here,
+		// and this is where the abandoned dialog has to be destroyed. Runs before
+		// mActiveModule is cleared, because getPopupHost needs it.
+		this.dismissStalePopup();
 		this.mPopup = null;
 		this.mPopupIndex = -1;
 		this.mActiveModule = null;
+		this.notifyBackendPopupState(false);
 		$('.unseen-banner-focus').removeClass('unseen-banner-focus');
 	}
 };
@@ -832,6 +979,15 @@ UnseenBannerMenuNav.prototype.onKeyForwarded = function (_name)
 	if (this.mPopup !== null && this.mPopup.dialog.closest('body').length === 0)
 	{
 		this.closePopup(true);
+	}
+
+	// Squirrel only forwards Escape while it believes a popup is up, so this is
+	// always a dismissal — never the menu-stack step back, which stays vanilla's.
+	if (_name === 'escape')
+	{
+		if (this.mPopup !== null)
+			this.cancelPopup();
+		return;
 	}
 
 	var inPopup = this.mPopup !== null;

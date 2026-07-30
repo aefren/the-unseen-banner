@@ -62,7 +62,46 @@
 	return out;
 }
 
-::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null, _acciones = null, _comparacion = null, _cadaver = null)
+// Vanilla joins several paragraphs of prose into one field with <br> breaks — the
+// harbour's destination blurb is a settlement description and a ship offer glued
+// together that way. Speaking the whole thing in one utterance is the dump the
+// "lists, not dumps" convention forbids, so it is cut here, in one place, into the
+// paragraphs a sub-list can walk. Runs of breaks collapse and blank pieces are
+// dropped, so "a<br><br>b" is two rows and never three. Whitespace inside a piece
+// is left alone: the companion's cleaner already normalizes it.
+::UnseenBanner.splitParagraphs <- function(_text)
+{
+	local result = [];
+	if (_text == null) return result;
+	local rest = "" + _text;
+
+	while (true)
+	{
+		local at = rest.find("<br");
+		local piece = at == null ? rest : rest.slice(0, at);
+		local hasContent = false;
+		for (local i = 0; i < piece.len(); i += 1)
+		{
+			local ch = piece.slice(i, i + 1);
+			if (ch != " " && ch != "\t" && ch != "\n" && ch != "\r")
+			{
+				hasContent = true;
+				break;
+			}
+		}
+		if (hasContent) result.push(piece);
+
+		if (at == null) break;
+		// Step past the tag itself, whichever spelling it uses: <br>, <br/>, <br />.
+		local close = rest.find(">", at);
+		if (close == null) break;
+		rest = rest.slice(close + 1);
+	}
+
+	return result;
+}
+
+::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null, _acciones = null, _comparacion = null, _cadaver = null, _talento = null)
 {
 	local json = "{\"canal\":\"" + ::UnseenBanner.jsonEscape(_canal) + "\",\"texto\":\"" + ::UnseenBanner.jsonEscape(_texto) + "\"";
 	if (_categoria != null) json += ",\"categoria\":\"" + ::UnseenBanner.jsonEscape(_categoria) + "\"";
@@ -74,6 +113,11 @@
 	if (_acciones != null) json += ",\"acciones\":\"" + ::UnseenBanner.jsonEscape(_acciones) + "\"";
 	if (_comparacion != null) json += ",\"comparacion\":\"" + ::UnseenBanner.jsonEscape(_comparacion) + "\"";
 	if (_cadaver != null) json += ",\"cadaver\":\"" + ::UnseenBanner.jsonEscape(_cadaver) + "\"";
+	// Talent stars (0-3) of an attribute row. Its own field rather than a token
+	// packed into detalle, because the two rows that carry a maximum (health,
+	// fatigue) already spend detalle on it, and because the companion appends the
+	// stars uniformly for every row that reports them.
+	if (_talento != null) json += ",\"talento\":\"" + ::UnseenBanner.jsonEscape(_talento) + "\"";
 	json += "}";
 	::logInfo("UB_MSG:" + json);
 }
@@ -291,7 +335,12 @@
 ::UnseenBanner.MenuNav = {
 	m = {
 		JSHandle = null,
-		ActiveModule = null
+		ActiveModule = null,
+		// Whether a popup dialog is up inside the active module (the Retire
+		// confirmation, the save-name prompt, the delete confirmation). Reported by
+		// menu_nav.js, because these popups fire no module lifecycle event of their
+		// own. It is the one condition under which Escape stops being vanilla's.
+		PopupOpen = false
 	},
 	// The menu modules this cursor drives across every surface that hosts them: the
 	// main menu (main_menu_state) and the world/tactical pause menus. OptionsMenuModule
@@ -324,8 +373,27 @@
 	{
 		return _code in ::UnseenBanner.KeyCodes
 			|| (this.m.ActiveModule == "OptionsMenuModule"
-				&& _code in ::UnseenBanner.OptionsKeyCodes);
+				&& _code in ::UnseenBanner.OptionsKeyCodes)
+			|| (this.m.PopupOpen && _code == this.CancelKey);
 	},
+	// Escape belongs to vanilla everywhere in these menus — it pops the menu stack,
+	// which is the whole back-navigation path — with one exception: while a popup is
+	// up it cancels the popup instead, through the dialog's own Cancel button. Vanilla
+	// cannot do this itself; its Escape-cancels-the-popup handler is a keyup bound on
+	// `document` (popup_dialog.js), and the engine never delivers keyboard to this DOM,
+	// so it has never fired for anybody.
+	//
+	// This only takes effect in the MAIN menu. In the world and tactical pause menus
+	// MSU binds escape to its own "toggleMenuScreen" keybind, and MSU's onKeyInput
+	// wrapper sits OUTSIDE ours (it registers in a queued function, after this
+	// preload's hooks), so it consumes the key before we ever run — the same trap that
+	// made consuming End useless against its wait-turn keybind. There Escape closes
+	// the whole pause menu, and menu_nav.js destroys the abandoned dialog from
+	// onModuleHidden instead. That is where the real hazard lived anyway: the Retire
+	// dialog hangs off the module container, which hide() only display-toggles and the
+	// button rebuild does not empty, so a popup left behind would come back visible
+	// with its Ok still wired to onRetireButtonPressed.
+	CancelKey = 41, // escape
 	ActionKey = 39, // enter
 	// Enter must never act on the press. Several menu rows open a text field — the
 	// company name in New Campaign, the name prompt when saving — and once an input
@@ -339,12 +407,17 @@
 	// So Enter waits for the release, once the press that triggered it is over —
 	// the same rule SheetNav applies to the rows that open a new state. The movement
 	// keys keep acting on the press, and that is where the reader latency was.
+	// Escape joins Enter on the release for the same reason, from the other side: it
+	// closes the popup, after which handlesKey stops claiming it — so a press-driven
+	// Escape would see its own release fall through to vanilla and pop the menu the
+	// popup was sitting on.
 	function isReleaseHandledKey(_code)
 	{
-		return _code == this.ActionKey;
+		return _code == this.ActionKey || _code == this.CancelKey;
 	},
 	function getKeyName(_code)
 	{
+		if (_code == this.CancelKey) return "escape";
 		if (_code in ::UnseenBanner.KeyCodes)
 		{
 			return ::UnseenBanner.KeyCodes[_code];
@@ -356,16 +429,26 @@
 	function reset()
 	{
 		this.m.ActiveModule = null;
+		this.m.PopupOpen = false;
 		if (this.m.JSHandle != null)
 		{
 			this.m.JSHandle.asyncCall("onStateExited", null);
 		}
+	},
+	// Reported by menu_nav.js as it takes over / hands back a popup dialog. Receives a
+	// single table, because SQ.call transports one args value.
+	function onPopupState(_data)
+	{
+		this.m.PopupOpen = _data != null && "abierto" in _data && _data.abierto == true;
+		::logInfo("UnseenBanner: menu popup "
+			+ (this.m.PopupOpen ? "opened" : "closed") + ".");
 	},
 	function onModuleShown(_id)
 	{
 		if (_id in this.RecognizedModules)
 		{
 			this.m.ActiveModule = _id;
+			this.m.PopupOpen = false;
 			if (this.m.JSHandle != null)
 			{
 				this.m.JSHandle.asyncCall("onModuleShown", _id);
@@ -380,6 +463,7 @@
 		if (this.m.ActiveModule == _id)
 		{
 			this.m.ActiveModule = null;
+			this.m.PopupOpen = false;
 		}
 		if (this.m.JSHandle != null)
 		{
@@ -1199,8 +1283,23 @@
 			"" + records.len()));
 		foreach( r in records )
 		{
+			// The owning faction is drawn on the map: setOwner hangs the owner's
+			// small banner on the settlement's own location_banner sprite, and it
+			// stays up for as long as the place does. This list only ever holds
+			// discovered places, which are exactly the ones showing that banner, so
+			// naming the faction here is the banner in words and nothing more.
+			// Locations and landmarks carry no such banner and get no faction.
+			// No `in` guard on getOwner: Squirrel's `in` does not follow an instance's
+			// class delegate, so it answers false for a method that resolves fine. The
+			// kind is the guard — collectSettlements only ever yields settlements.
+			local faction = "";
+			if (kind == "settlement")
+			{
+				local owner = r.e.getOwner();
+				if (owner != null) faction = owner.getName();
+			}
 			items.push(this.item("world.survey.item", r.e.getName(), kind,
-				this.posDetail(playerTile, r.e.getTile()), r.e));
+				this.posDetail(playerTile, r.e.getTile()) + "|" + faction, r.e));
 		}
 
 		this.m.Items = items;
@@ -2841,14 +2940,21 @@
 	m = {
 		Items = null,
 		ItemIndex = 0,
-		Active = false
+		Active = false,
+		// One-shot: swallow the next "back in town" re-read. Sailing from the harbour
+		// walks back through showMainDialog while the screen still points at the port
+		// town, and WorldTravel speaks the arrival itself — so that intermediate row
+		// would either talk over the arrival or contradict it, depending on whether
+		// vanilla's menu-stack pop lands before or after the destination is set.
+		SuppressAnnounce = false
 	},
 	Keys = {
 		[49] = "up",
 		[51] = "down",
 		[45] = "home",
 		[44] = "end",
-		[39] = "activate" // enter
+		[39] = "activate", // enter
+		[32] = "inspect"   // v
 	},
 	// Buildings without a trade stash that nonetheless have an accessible cursor.
 	// Anything not listed here (and not a shop) is still reported as unreachable
@@ -2858,7 +2964,17 @@
 		["building.tavern"] = true,
 		["building.temple"] = true,
 		["building.arena"] = true,
-		["building.taxidermist"] = true
+		["building.taxidermist"] = true,
+		["building.port"] = true,
+		["building.training_hall"] = true
+	},
+	// Buildings deliberately left undescribed. The barber only swaps sprite brushes
+	// (body, face, hair, beard, tattoo and hair colour) — no cost, no effect on play,
+	// and nothing nameable behind it but brush filenames like "hair_black_02". A
+	// cursor there would be real work for zero information, so it says so plainly
+	// instead of the "not accessible yet" that reads as an unkept promise.
+	CosmeticBuildings = {
+		["building.barber"] = true
 	},
 	// The arena is the one building whose native onClicked can refuse silently:
 	// it returns without opening anything at night, during its one-day cooldown,
@@ -2886,6 +3002,18 @@
 		local needed = (town != null && town.hasSituation("situation.arena_tournament") && free >= 5) ? 5 : 3;
 		return free >= needed ? null : "stash";
 	},
+	// The harbour has the same silent-refusal shape as the arena: port_building's own
+	// onClicked returns without opening anything while an escort-caravan contract is
+	// running (the caravan is the thing you are escorting overland — sailing off would
+	// abandon it). A mouse user watches the dialog simply not appear; this turns that
+	// into words. Every other harbour condition is not a refusal: an empty destination
+	// list still opens the dialog, and WorldTravel announces the emptiness itself.
+	function portBlockReason()
+	{
+		local active = ::World.Contracts.getActiveContract();
+		if (active != null && active.getType() == "contract.escort_caravan") return "caravan";
+		return null;
+	},
 	function isActive()
 	{
 		return this.m.Active;
@@ -2900,6 +3028,16 @@
 		this.m.ItemIndex = 0;
 		this.m.Active = false;
 	},
+	function suppressNextAnnounce()
+	{
+		this.m.SuppressAnnounce = true;
+	},
+	function consumeSuppressedAnnounce()
+	{
+		if (!this.m.SuppressAnnounce) return false;
+		this.m.SuppressAnnounce = false;
+		return true;
+	},
 	function item(_cat, _texto = "", _valor = "", _action = null, _payload = null)
 	{
 		return {
@@ -2910,7 +3048,7 @@
 			payload = _payload
 		};
 	},
-	function open(_town)
+	function open(_town, _announce = true)
 	{
 		this.reset();
 		if (_town == null) return;
@@ -2923,8 +3061,35 @@
 		local town = (_town instanceof ::WeakTableRef) ? _town.get() : _town;
 		if (town == null) return;
 
+		// Situations: the icons vanilla draws in the top-left corner of this very
+		// screen, unconditionally and with a tooltip each — cheap food from a good
+		// harvest, a siege, ambushed trade routes, a tournament. Several of them change
+		// how the town should be used, and they were the one thing on the screen with
+		// no voice at all. Mirror getUIInformation exactly: de-duplicate by ID, and do
+		// NOT apply the validity filter the MAP tooltip uses, because this screen does
+		// not apply it either.
+		//
+		// They come before the buildings, where the eye finds them, and V reads the
+		// description straight off the situation object.
+		local situations = [];
+		local seenSituations = {};
+		foreach( s in town.getSituations() )
+		{
+			if (s == null) continue;
+			local id = s.getID();
+			if (id in seenSituations) continue;
+			seenSituations[id] <- true;
+			situations.push(s);
+		}
+
 		local items = [];
-		items.push(this.item("world.town.screen", town.getName()));
+		items.push(this.item("world.town.screen", town.getName(), "" + situations.len()));
+		foreach( s in situations )
+		{
+			items.push(this.item("world.town.situation", s.getName(), "", "situation", {
+				situation = s
+			}));
+		}
 
 		// Buildings: retain the native slot index so accessible shops can enter through
 		// WorldTownScreen.onSlotClicked, the exact same funnel as a mouse click.
@@ -2970,7 +3135,7 @@
 		this.m.Items = items;
 		this.m.ItemIndex = 0;
 		this.m.Active = true;
-		this.announceItem();
+		if (_announce) this.announceItem();
 	},
 	function close()
 	{
@@ -2983,6 +3148,11 @@
 		if (what == "activate")
 		{
 			this.activate(_state);
+			return;
+		}
+		if (what == "inspect")
+		{
+			this.inspect();
 			return;
 		}
 
@@ -3021,6 +3191,10 @@
 			{
 				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
 			}
+			else if (building.getID() in ::UnseenBanner.WorldTown.CosmeticBuildings)
+			{
+				::UnseenBanner.sendMessage("interrupt", it.texto, "world.town.building.cosmetic");
+			}
 			else if (building.getID() == "building.arena")
 			{
 				local reason = ::UnseenBanner.WorldTown.arenaBlockReason(building);
@@ -3030,6 +3204,16 @@
 					return;
 				}
 				// Opens the arena contract's own event screen; EventNav takes over.
+				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
+			}
+			else if (building.getID() == "building.port")
+			{
+				local reason = ::UnseenBanner.WorldTown.portBlockReason();
+				if (reason != null)
+				{
+					::UnseenBanner.sendMessage("interrupt", it.texto, "world.town.port.closed", reason);
+					return;
+				}
 				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
 			}
 			else if (building.getID() in ::UnseenBanner.WorldTown.EnterableBuildings)
@@ -3047,8 +3231,26 @@
 		}
 		else
 		{
-			this.announceItem(); // header row: re-read
+			this.announceItem(); // header and situation rows: re-read
 		}
+	},
+	// V reads a situation's own description — one paragraph of game prose, so it is
+	// spoken as a single utterance rather than turned into a sub-list. Every other row
+	// answers with itself instead of with silence, which reads as a hang.
+	function inspect()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local it = this.m.Items[this.m.ItemIndex];
+		local situation = (it.action == "situation" && it.payload != null)
+			? it.payload.situation
+			: null;
+		if (situation == null)
+		{
+			this.announceItem();
+			return;
+		}
+		::UnseenBanner.sendMessage("interrupt", situation.getDescription(),
+			"world.town.situation.details", situation.getName());
 	},
 	function announceItem()
 	{
@@ -5100,6 +5302,656 @@
 
 		if (_code == this.ActionKey) this.openActions();
 		else if (_code == this.InspectKey) this.openDetails();
+		else if (_code in this.MoveKeys) this.move(_code);
+	}
+};
+
+// Harbour (the port building). Booking passage by ship is the map's only fast
+// travel: it turns a march of dozens of days into one payment, and vanilla hid it
+// behind a mouse-only list of destinations whose cost and description live in a
+// side panel. That made it, in practice, unavailable to a blind player — the one
+// building on this list whose absence changed how a whole campaign has to be
+// played.
+//
+// The destinations are not computed here: port_building.getUITravelRoster() has
+// already filtered them (other harbours only, allied with the player AND with this
+// settlement's owner, never this town itself) and priced each one, and
+// port_building.onClicked hands that table to the module before the dialog opens.
+// So this reads queryTravelInformation(), the module's own accessor, and Enter
+// calls its onTravel — the very endpoint the Travel button uses. Unlike the temple
+// and the taxidermist, onTravel does check the purse itself and answers with
+// Const.UI.Error.NotEnoughMoney, so the refusal is spoken from its result rather
+// than second-guessed here. The affordability of each row is still announced up
+// front, so nobody has to press Enter to find out.
+//
+// Sailing is not reversible and lands the company in another settlement, so Enter
+// asks once: it opens a one-row confirmation the way the taxidermist's craft action
+// does, and only a second Enter pays.
+::UnseenBanner.WorldTravel <- {
+	m = {
+		Screen = null,
+		Module = null,
+		Items = null,
+		ItemIndex = 0,
+		Details = null,
+		DetailIndex = 0,
+		DetailMode = false,
+		ConfirmMode = false,
+		Active = false
+	},
+	InspectKey = 32, // v
+	ActionKey = 39, // enter
+	EscapeKey = 41,
+	MoveKeys = {
+		[44] = "end",
+		[45] = "home",
+		[49] = "up",
+		[51] = "down"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function isCurrent(_screen)
+	{
+		return this.m.Active && _screen != null && this.m.Screen == _screen
+			&& _screen.m.LastActiveModule == this.m.Module;
+	},
+	function handles(_code)
+	{
+		if (!this.m.Active) return false;
+		return _code == this.InspectKey
+			|| _code == this.ActionKey
+			|| (_code == this.EscapeKey && (this.m.DetailMode || this.m.ConfirmMode))
+			|| _code in this.MoveKeys;
+	},
+	function reset()
+	{
+		this.m.Screen = null;
+		this.m.Module = null;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Details = null;
+		this.m.DetailIndex = 0;
+		this.m.DetailMode = false;
+		this.m.ConfirmMode = false;
+		this.m.Active = false;
+		::UnseenBanner.TooltipNav.hide();
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function open(_screen, _module)
+	{
+		this.reset();
+		if (_screen == null || _module == null) return;
+		this.m.Screen = _screen;
+		this.m.Module = _module;
+		this.m.Active = true;
+		this.buildItems();
+		this.announceItem(true);
+	},
+	function buildItems()
+	{
+		local rows = [];
+		if (this.m.Module != null)
+		{
+			local info = this.m.Module.queryTravelInformation();
+			// setData is what port_building.onClicked filled in; if the dialog was
+			// somehow raised without it, Data is null and the list is simply empty.
+			local data = (info != null && info.Data != null) ? info.Data : null;
+			local player = ::World.State.getPlayer();
+			local fromTile = player != null ? player.getTile() : null;
+			if (data != null && data.Roster != null)
+			{
+				foreach( entry in data.Roster )
+				{
+					if (entry == null) continue;
+					// The roster carries no faction and no position — only a banner
+					// image and a name — so resolve the settlement itself, the same way
+					// onTravel does with this very ID.
+					local dest = ::World.getEntityByID(entry.ID);
+					local owner = dest != null ? dest.getOwner() : null;
+					// Bearing and distance are what the map gives a sighted player, and
+					// they also make the fare legible: it is distance x company size x
+					// 0.5, rounded to tens. But ONLY for a settlement he has actually
+					// seen — the roster is filtered by alliance, not by discovery, so an
+					// allied harbour still under fog can be listed, and the map does not
+					// show him that one either.
+					local seen = dest != null && dest.isDiscovered();
+					local tile = dest != null ? dest.getTile() : null;
+					rows.push({
+						entryID = entry.EntryID,
+						name = entry.Name,
+						cost = entry.Cost,
+						faction = owner != null ? owner.getName() : "",
+						seen = seen,
+						// Same "dist|dir" encoding the B survey and the tactical cursor
+						// use, so the companion's ComposePosition is reused verbatim.
+						pos = (seen && tile != null && fromTile != null)
+							? ::UnseenBanner.WorldSurvey.posDetail(fromTile, tile)
+							: "0|-1",
+						// One blob of prose in vanilla: the settlement's own description
+						// and the ship offer, joined by <br><br>. Split on that seam so V
+						// answers with a two-row list instead of one long utterance.
+						description = ("BackgroundText" in entry) ? entry.BackgroundText : ""
+					});
+				}
+			}
+		}
+
+		this.m.Items = rows;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (rows.len() > 0 && this.m.ItemIndex >= rows.len())
+			this.m.ItemIndex = rows.len() - 1;
+	},
+	function currentRow()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return null;
+		if (this.m.ItemIndex < 0 || this.m.ItemIndex >= this.m.Items.len()) return null;
+		return this.m.Items[this.m.ItemIndex];
+	},
+	function move(_code)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0)
+		{
+			this.announceItem();
+			return;
+		}
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function openDetails()
+	{
+		local row = this.currentRow();
+		if (row == null)
+		{
+			this.announceItem();
+			return;
+		}
+
+		local details = ::UnseenBanner.splitParagraphs(row.description);
+		if (details.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", row.name, "world.travel.details.none");
+			return;
+		}
+
+		this.m.Details = details;
+		this.m.DetailIndex = 0;
+		this.m.DetailMode = true;
+		this.announceDetail(true);
+	},
+	function leaveDetails(_announceParent = false)
+	{
+		this.m.DetailMode = false;
+		this.m.Details = null;
+		this.m.DetailIndex = 0;
+		if (_announceParent) this.announceItem();
+	},
+	function moveDetail(_code)
+	{
+		if (this.m.Details == null || this.m.Details.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.DetailIndex -= 1;
+		else if (dir == "down") this.m.DetailIndex += 1;
+		else if (dir == "home") this.m.DetailIndex = 0;
+		else this.m.DetailIndex = this.m.Details.len() - 1;
+		if (this.m.DetailIndex < 0) this.m.DetailIndex = 0;
+		if (this.m.DetailIndex >= this.m.Details.len())
+			this.m.DetailIndex = this.m.Details.len() - 1;
+		this.announceDetail();
+	},
+	function announceDetail(_opened = false)
+	{
+		if (this.m.Details == null || this.m.Details.len() == 0) return;
+		local row = this.currentRow();
+		local detail = "" + (this.m.DetailIndex + 1) + "|" + this.m.Details.len()
+			+ "|" + (_opened ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", this.m.Details[this.m.DetailIndex],
+			"world.travel.detail", row != null ? row.name : "", detail);
+	},
+	function openConfirm()
+	{
+		local row = this.currentRow();
+		if (row == null)
+		{
+			this.announceItem();
+			return;
+		}
+		this.m.ConfirmMode = true;
+		this.announceConfirm(true);
+	},
+	function leaveConfirm(_announceParent = false)
+	{
+		this.m.ConfirmMode = false;
+		if (_announceParent) this.announceItem();
+	},
+	function announceConfirm(_opened = false)
+	{
+		local row = this.currentRow();
+		if (row == null) return;
+		local money = ::World.Assets.getMoney();
+		local detail = "" + money + "|" + (_opened ? "1" : "0")
+			+ "|" + (row.cost > money ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", row.name, "world.travel.confirm",
+			"" + row.cost, detail);
+	},
+	function executeTravel()
+	{
+		local row = this.currentRow();
+		if (row == null) return;
+		local screen = this.m.Screen;
+		local cost = row.cost;
+		local name = row.name;
+
+		// onTravel walks back through showMainDialog on success (fastTravelTo pops the
+		// harbour's own menu-stack backstep), and that funnel re-reads the settlement
+		// list. Arm the one-shot before calling in, since vanilla's pop is refused
+		// outright while the screen animates and may therefore land on either side of
+		// this call — or not at all.
+		::UnseenBanner.WorldTown.suppressNextAnnounce();
+		local result = this.m.Module.onTravel(row.entryID);
+		local code = (result != null && "Result" in result) ? result.Result : 0;
+		if (code != 0)
+		{
+			// onTravel refuses without charging, so the cursor stays where it was and
+			// the player can pick a nearer harbour.
+			local reason = code == ::Const.UI.Error.NotEnoughMoney ? "money" : "gone";
+			::UnseenBanner.WorldTown.consumeSuppressedAnnounce();
+			this.leaveConfirm(false);
+			::UnseenBanner.sendMessage("interrupt", name, "world.travel.error", reason,
+				"" + cost + "|" + ::World.Assets.getMoney());
+			return;
+		}
+
+		// fastTravelTo has already closed this dialog through onLeaveButtonPressed (our
+		// showMainDialog hook shut this cursor down with it) and then re-pointed the
+		// screen at the destination, so the settlement list underneath is stale. Rebuild
+		// it against the new town before speaking, or the first Up/Down would walk the
+		// buildings of the port left behind.
+		this.reset();
+		if (screen != null && screen.isVisible())
+		{
+			::UnseenBanner.WorldTown.open(screen.getTown(), false);
+		}
+		::UnseenBanner.sendMessage("interrupt", name, "world.travel.arrived",
+			"" + cost, "" + ::World.Assets.getMoney());
+	},
+	function announceItem(_opened = false)
+	{
+		local money = ::World.Assets.getMoney();
+		if (this.m.Items == null || this.m.Items.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.travel.empty", "" + money,
+				_opened ? "1" : "0");
+			return;
+		}
+		local row = this.currentRow();
+		if (row == null) return;
+		local detail = "" + row.cost + "|" + (this.m.ItemIndex + 1) + "|"
+			+ this.m.Items.len() + "|" + (_opened ? "1" : "0") + "|" + money
+			+ "|" + (row.cost > money ? "1" : "0")
+			+ "|" + (row.seen ? "1" : "0") + "|" + row.pos;
+		::UnseenBanner.sendMessage("interrupt", row.name, "world.travel.destination",
+			row.faction, detail);
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active) return;
+
+		if (this.m.ConfirmMode)
+		{
+			if (_code == this.ActionKey) this.executeTravel();
+			else if (_code == this.InspectKey || _code == this.EscapeKey)
+				this.leaveConfirm(true);
+			// One action only, so Up/Down have nowhere to go: re-read it rather than
+			// answer a keystroke with silence, which reads as a hang.
+			else if (_code in this.MoveKeys) this.announceConfirm();
+			return;
+		}
+
+		if (this.m.DetailMode)
+		{
+			if (_code == this.InspectKey || _code == this.EscapeKey)
+				this.leaveDetails(true);
+			else if (_code in this.MoveKeys) this.moveDetail(_code);
+			return;
+		}
+
+		if (_code == this.ActionKey) this.openConfirm();
+		else if (_code == this.InspectKey) this.openDetails();
+		else if (_code in this.MoveKeys) this.move(_code);
+	}
+};
+
+// Training hall. Vanilla offers three paid experience boosts per man, in a
+// mouse-only roster whose prices scale with level and whose only explanation of
+// what each one does is a hover tooltip. Those tooltips are the same ui-element
+// entries the rest of this mod already reads, so V hands over the real wording
+// instead of a description written here.
+//
+// Two traps this cursor has to cover, both because the endpoint is reached
+// directly instead of through the button:
+//
+//  1. onTrain charges the crowns with NO affordability check of its own — the only
+//     guard vanilla has is the JS disabling the button (its createTrainingControlDIV
+//     compares price against the purse). So the purse is checked here.
+//  2. queryRosterInformation silently drops the men who cannot train at all (level
+//     11 or more, already carrying effects.trained, and the Manhunters origin's
+//     slaves from level 7). A sighted player sees a short list and infers why; a
+//     blind one would just find brothers missing. So the full roster is listed and
+//     the ones who cannot train say so, with the reason.
+::UnseenBanner.WorldTraining <- {
+	m = {
+		Screen = null,
+		Module = null,
+		Items = null,
+		ItemIndex = 0,
+		Actions = null,
+		ActionIndex = 0,
+		ActionMode = false,
+		Active = false
+	},
+	InspectKey = 32, // v
+	ActionKey = 39, // enter
+	EscapeKey = 41,
+	MoveKeys = {
+		[44] = "end",
+		[45] = "home",
+		[49] = "up",
+		[51] = "down"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function isCurrent(_screen)
+	{
+		return this.m.Active && _screen != null && this.m.Screen == _screen
+			&& _screen.m.LastActiveModule == this.m.Module;
+	},
+	function handles(_code)
+	{
+		if (!this.m.Active) return false;
+		return _code == this.InspectKey
+			|| _code == this.ActionKey
+			|| (_code == this.EscapeKey && this.m.ActionMode)
+			|| _code in this.MoveKeys;
+	},
+	function reset()
+	{
+		this.m.Screen = null;
+		this.m.Module = null;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.Actions = null;
+		this.m.ActionIndex = 0;
+		this.m.ActionMode = false;
+		this.m.Active = false;
+		::UnseenBanner.TooltipNav.hide();
+	},
+	function close()
+	{
+		this.reset();
+	},
+	function open(_screen, _module)
+	{
+		this.reset();
+		if (_screen == null || _module == null) return;
+		this.m.Screen = _screen;
+		this.m.Module = _module;
+		this.m.Active = true;
+		this.buildItems();
+		this.announceItem(true);
+	},
+	// Why a man cannot train, mirroring the three tests queryRosterInformation
+	// applies before it drops him. Kept in the same order so the spoken reason is
+	// the one that actually excluded him.
+	function blockReason(_bro)
+	{
+		if (_bro.getLevel() >= 11) return "maxlevel";
+		if (_bro.getLevel() >= 7 && ::World.Assets.getOrigin().getID() == "scenario.manhunters"
+			&& _bro.getBackground().getID() == "background.slave") return "slave";
+		if (_bro.getSkills().hasSkill("effects.trained")) return "trained";
+		return null;
+	},
+	// The trainable men and their prices come from the module; the men who cannot
+	// train come from the roster, so nobody vanishes without a spoken reason.
+	// _preferredID keeps the cursor on the man being worked on across a rebuild.
+	function buildItems(_preferredID = null, _fallbackIndex = 0)
+	{
+		local offers = {};
+		if (this.m.Module != null)
+		{
+			local data = this.m.Module.queryRosterInformation();
+			if (data != null && data.Roster != null)
+			{
+				foreach( entry in data.Roster )
+				{
+					if (entry == null) continue;
+					local options = [];
+					foreach( option in entry.Training )
+					{
+						if (option == null) continue;
+						options.push({
+							id = option.id,
+							name = option.name,
+							price = option.price,
+							tooltip = option.tooltip
+						});
+					}
+					offers[entry.ID] <- options;
+				}
+			}
+		}
+
+		local rows = [];
+		local roster = ::World.getPlayerRoster().getAll();
+		if (roster != null)
+		{
+			foreach( bro in roster )
+			{
+				if (bro == null) continue;
+				local id = bro.getID();
+				rows.push({
+					entityID = id,
+					name = bro.getName(),
+					level = bro.getLevel(),
+					options = (id in offers) ? offers[id] : [],
+					reason = (id in offers) ? null : this.blockReason(bro)
+				});
+			}
+		}
+
+		this.m.Items = rows;
+		this.m.ItemIndex = _fallbackIndex;
+		if (_preferredID != null)
+		{
+			for (local i = 0; i < rows.len(); i += 1)
+			{
+				if (rows[i].entityID == _preferredID)
+				{
+					this.m.ItemIndex = i;
+					break;
+				}
+			}
+		}
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (rows.len() > 0 && this.m.ItemIndex >= rows.len())
+			this.m.ItemIndex = rows.len() - 1;
+	},
+	function currentRow()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return null;
+		if (this.m.ItemIndex < 0 || this.m.ItemIndex >= this.m.Items.len()) return null;
+		return this.m.Items[this.m.ItemIndex];
+	},
+	function move(_code)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0)
+		{
+			this.announceItem();
+			return;
+		}
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announceItem();
+	},
+	function openActions()
+	{
+		local row = this.currentRow();
+		if (row == null)
+		{
+			this.announceItem();
+			return;
+		}
+		if (row.options.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", row.name, "world.training.blocked",
+				row.reason != null ? row.reason : "none");
+			return;
+		}
+		this.m.Actions = row.options;
+		this.m.ActionMode = true;
+		this.m.ActionIndex = 0;
+		this.announceAction(true);
+	},
+	function leaveActions(_announceParent = false)
+	{
+		this.m.ActionMode = false;
+		this.m.Actions = null;
+		this.m.ActionIndex = 0;
+		if (_announceParent) this.announceItem();
+	},
+	function moveAction(_code)
+	{
+		if (this.m.Actions == null || this.m.Actions.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ActionIndex -= 1;
+		else if (dir == "down") this.m.ActionIndex += 1;
+		else if (dir == "home") this.m.ActionIndex = 0;
+		else this.m.ActionIndex = this.m.Actions.len() - 1;
+		if (this.m.ActionIndex < 0) this.m.ActionIndex = 0;
+		if (this.m.ActionIndex >= this.m.Actions.len())
+			this.m.ActionIndex = this.m.Actions.len() - 1;
+		this.announceAction();
+	},
+	function currentAction()
+	{
+		if (this.m.Actions == null || this.m.Actions.len() == 0) return null;
+		if (this.m.ActionIndex < 0 || this.m.ActionIndex >= this.m.Actions.len()) return null;
+		return this.m.Actions[this.m.ActionIndex];
+	},
+	// V on a training option opens vanilla's own tooltip for it, so the "+50%
+	// experience for the next battle" wording is the game's and needs no copy here.
+	function showActionDetail()
+	{
+		local option = this.currentAction();
+		if (option == null || option.tooltip == "")
+		{
+			this.announceAction();
+			return;
+		}
+		::UnseenBanner.TooltipNav.show({
+			contentType = "ui-element",
+			elementId = option.tooltip
+		}, 1, 1, "world.training");
+	},
+	function refreshNative()
+	{
+		if (this.m.Module == null || this.m.Screen == null) return;
+		local data = this.m.Module.queryRosterInformation();
+		this.m.Screen.updateAssets();
+		// The whole table: the training module's own loadFromData reads _data.Roster
+		// (and the two titles) itself, like the temple's and unlike the recruit one.
+		if (data != null && this.m.Module.m.JSHandle != null)
+			this.m.Module.m.JSHandle.asyncCall("loadFromData", data);
+	},
+	function executeAction()
+	{
+		local row = this.currentRow();
+		local option = this.currentAction();
+		if (row == null || option == null) return;
+
+		// The guard vanilla only ever applied in the UI layer (see the note above).
+		if (option.price > ::World.Assets.getMoney())
+		{
+			::UnseenBanner.sendMessage("interrupt", option.name, "world.training.error",
+				"money", "" + option.price + "|" + ::World.Assets.getMoney());
+			return;
+		}
+
+		local fallback = this.m.ItemIndex;
+		this.m.Module.onTrain([row.entityID, option.id]);
+		this.leaveActions(false);
+		this.refreshNative();
+		this.buildItems(row.entityID, fallback);
+		::UnseenBanner.sendMessage("interrupt", option.name, "world.training.result",
+			row.name, "" + option.price + "|" + ::World.Assets.getMoney());
+	},
+	function announceAction(_opened = false)
+	{
+		local option = this.currentAction();
+		if (option == null) return;
+		local row = this.currentRow();
+		local money = ::World.Assets.getMoney();
+		local detail = "" + option.price + "|" + (this.m.ActionIndex + 1)
+			+ "|" + this.m.Actions.len() + "|" + (_opened ? "1" : "0")
+			+ "|" + (option.price > money ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", option.name, "world.training.option",
+			row != null ? row.name : "", detail);
+	},
+	function announceItem(_opened = false)
+	{
+		local money = "" + ::World.Assets.getMoney();
+		if (this.m.Items == null || this.m.Items.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.training.empty", money,
+				_opened ? "1" : "0");
+			return;
+		}
+		local row = this.currentRow();
+		if (row == null) return;
+		local detail = "" + row.level + "|" + row.options.len() + "|"
+			+ (this.m.ItemIndex + 1) + "|" + this.m.Items.len() + "|"
+			+ (_opened ? "1" : "0") + "|" + money + "|"
+			+ (row.reason != null ? row.reason : "");
+		::UnseenBanner.sendMessage("interrupt", row.name, "world.training.man",
+			"", detail);
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active) return;
+
+		if (this.m.ActionMode)
+		{
+			if (_code == this.ActionKey) this.executeAction();
+			else if (_code == this.InspectKey) this.showActionDetail();
+			else if (_code == this.EscapeKey) this.leaveActions(true);
+			else if (_code in this.MoveKeys) this.moveAction(_code);
+			return;
+		}
+
+		if (_code == this.ActionKey) this.openActions();
+		// V belongs to the lesson sub-list. handles() claims it at roster level too, so
+		// it cannot leak into the town screen underneath; answer with the focused man
+		// rather than with silence, which a blind player reads as a hang.
+		else if (_code == this.InspectKey) this.announceItem();
 		else if (_code in this.MoveKeys) this.move(_code);
 	}
 };
@@ -8760,8 +9612,13 @@
 			context = section.id + "|" + (this.m.ItemIndex + 1) + "|" + this.m.Items.len()
 				+ "|" + (_includeSection ? "1" : "0");
 		}
+		// The talent star rides along only on the eight attribute rows; a formation
+		// target has borrowed this row's category and must not carry it.
+		local talent = ("talent" in it) && category == it.cat && it.talent != ""
+			? it.talent
+			: null;
 		::UnseenBanner.sendMessage("interrupt", text, category, value, detail,
-			name, "" + detailCount, context, "" + actionCount);
+			name, "" + detailCount, context, "" + actionCount, null, null, talent);
 	},
 	// V on a row with several native tooltips enters a nested list; V again backs
 	// out and re-announces the parent row. A single tooltip is shown/read directly
@@ -9150,7 +10007,10 @@
 		local isPlayer = ::isKindOf(bro, "player");
 		local p = bro.getCurrentProperties();
 
-		local function entry(_cat, _texto, _valor, _detalle, _details = null)
+		// _talent is the star count vanilla draws next to the eight attributes that
+		// grow on level up. Empty on every other row, which is what keeps the
+		// companion silent instead of saying "no stars" on two thirds of the sheet.
+		local function entry(_cat, _texto, _valor, _detalle, _details = null, _talent = "")
 		{
 			return {
 				key = _cat,
@@ -9158,8 +10018,18 @@
 				texto = _texto,
 				valor = _valor,
 				detalle = _detalle,
-				details = _details != null ? _details : []
+				details = _details != null ? _details : [],
+				talent = _talent
 			};
+		}
+
+		// The stars are indexed by ::Const.Attributes, and only those eight rows have
+		// one: data_helper hardwires the armour talents to 0 and gives action points
+		// and morale none at all, so the sheet must not invent stars for them either.
+		local talents = isPlayer ? bro.getTalents() : null;
+		local function star(_attribute)
+		{
+			return talents != null ? "" + talents[_attribute] : "";
 		}
 
 		items.push(entry("combat.sheet.identity", bro.getName(), "" + bro.getLevel(), ""));
@@ -9180,21 +10050,66 @@
 		}
 
 		items.push(entry("combat.sheet.hp", "", "" + bro.getHitpoints(),
-			"" + bro.getHitpointsMax(), [this.uiElementDetail(bro, "character-stats.Hitpoints")]));
+			"" + bro.getHitpointsMax(), [this.uiElementDetail(bro, "character-stats.Hitpoints")],
+			star(::Const.Attributes.Hitpoints)));
 		items.push(entry("combat.sheet.fatigue", "", "" + bro.getFatigue(),
-			"" + bro.getFatigueMax(), [this.uiElementDetail(bro, "character-stats.Fatigue")]));
+			"" + bro.getFatigueMax(), [this.uiElementDetail(bro, "character-stats.Fatigue")],
+			star(::Const.Attributes.Fatigue)));
 		items.push(entry("combat.sheet.resolve", "", "" + p.getBravery(), "",
-			[this.uiElementDetail(bro, "character-stats.Bravery")]));
+			[this.uiElementDetail(bro, "character-stats.Bravery")],
+			star(::Const.Attributes.Bravery)));
 		items.push(entry("combat.sheet.initiative", "", "" + p.getInitiative(), "",
-			[this.uiElementDetail(bro, "character-stats.Initiative")]));
+			[this.uiElementDetail(bro, "character-stats.Initiative")],
+			star(::Const.Attributes.Initiative)));
 		items.push(entry("combat.sheet.mskill", "", "" + p.getMeleeSkill(), "",
-			[this.uiElementDetail(bro, "character-stats.MeleeSkill")]));
+			[this.uiElementDetail(bro, "character-stats.MeleeSkill")],
+			star(::Const.Attributes.MeleeSkill)));
 		items.push(entry("combat.sheet.rskill", "", "" + p.getRangedSkill(), "",
-			[this.uiElementDetail(bro, "character-stats.RangeSkill")]));
+			[this.uiElementDetail(bro, "character-stats.RangeSkill")],
+			star(::Const.Attributes.RangedSkill)));
 		items.push(entry("combat.sheet.mdef", "", "" + p.getMeleeDefense(), "",
-			[this.uiElementDetail(bro, "character-stats.MeleeDefense")]));
+			[this.uiElementDetail(bro, "character-stats.MeleeDefense")],
+			star(::Const.Attributes.MeleeDefense)));
 		items.push(entry("combat.sheet.rdef", "", "" + p.getRangedDefense(), "",
-			[this.uiElementDetail(bro, "character-stats.RangeDefense")]));
+			[this.uiElementDetail(bro, "character-stats.RangeDefense")],
+			star(::Const.Attributes.RangedDefense)));
+
+		// The four weapon-dependent rows vanilla shows straight after ranged defense,
+		// in its own order. They are as visible to a sighted player as the skills
+		// above — no hover involved — so they belong on the list, not behind V.
+		//
+		// The numbers are data_helper.addStatsToUIData's, arithmetic included: the
+		// melee damage multiplier applies ONLY when a melee weapon is held (vanilla
+		// never applies it to a bow), and the two percentages come off the properties
+		// rather than from any weapon field, so perks and effects are already in them.
+		local dm = bro.isArmedWithMeleeWeapon() ? p.MeleeDamageMult : 1.0;
+		local dmgMin = ::Math.floor(p.getDamageRegularMin() * dm);
+		local dmgMax = ::Math.floor(p.getDamageRegularMax() * dm);
+		// Unarmed leaves DamageRegularMin/Max at 0, and vanilla duly paints "0 - 0".
+		// Spoken, that reads like a broken readout, so say what it means instead.
+		if (dmgMax <= 0)
+		{
+			items.push(entry("combat.sheet.damage.none", "", "", "",
+				[this.uiElementDetail(bro, "character-stats.RegularDamage")]));
+		}
+		else
+		{
+			items.push(entry("combat.sheet.damage", "", "" + dmgMin, "" + dmgMax,
+				[this.uiElementDetail(bro, "character-stats.RegularDamage")]));
+		}
+		items.push(entry("combat.sheet.armordamage", "",
+			"" + ::Math.floor(p.getDamageArmorMult() * 100), "",
+			[this.uiElementDetail(bro, "character-stats.CrushingDamage")]));
+		// getHitchance returns a float by construction (it ends in "* 1.0"), and a
+		// float reaches the reader as "25.000000". This is the head-hit chance, not
+		// the chance to hit a target at all — that one depends on the target and is
+		// reported by the skill readouts in battle.
+		items.push(entry("combat.sheet.headhit", "",
+			"" + p.getHitchance(::Const.BodyPart.Head).tointeger(), "",
+			[this.uiElementDetail(bro, "character-stats.ChanceToHitHead")]));
+		items.push(entry("combat.sheet.vision", "", "" + p.getVision(), "",
+			[this.uiElementDetail(bro, "character-stats.SightDistance")]));
+
 		items.push(entry("combat.sheet.armor.head", "",
 			"" + bro.getArmor(::Const.BodyPart.Head), "" + bro.getArmorMax(::Const.BodyPart.Head),
 			[this.uiElementDetail(bro, "character-stats.ArmorHead")]));
@@ -10196,12 +11111,14 @@
 		["world.survey"] = ["move", "details", "activate", "pages", "close"],
 		["world.status"] = ["move", "ambition", "close"],
 		["world.sheet"] = ["sections", "move", "details", "actions", "switch", "close"],
-		["world.town"] = ["move", "activate", "leave"],
+		["world.town"] = ["move", "activate", "situations", "leave"],
 		["world.market"] = ["pages", "move", "actions", "details", "compare", "back"],
 		["world.recruit"] = ["move", "details", "actions", "back"],
 		["world.tavern"] = ["move", "buy", "reread", "back"],
 		["world.temple"] = ["move", "injuries", "pay", "back"],
 		["world.craft"] = ["move", "details", "craft", "back"],
+		["world.travel"] = ["move", "details", "sail", "back"],
+		["world.training"] = ["move", "lessons", "pay", "details", "back"],
 		["world.retinue"] = ["move", "activate", "back"],
 		["world.list"] = ["move", "close"],
 		["world.event"] = ["move", "activate", "hotkeys"],
@@ -10332,6 +11249,8 @@
 		if (::UnseenBanner.WorldTavern.isCurrent(screen)) return "world.tavern";
 		if (::UnseenBanner.WorldTemple.isCurrent(screen)) return "world.temple";
 		if (::UnseenBanner.WorldTaxidermist.isCurrent(screen)) return "world.craft";
+		if (::UnseenBanner.WorldTravel.isCurrent(screen)) return "world.travel";
+		if (::UnseenBanner.WorldTraining.isCurrent(screen)) return "world.training";
 		return "world.town";
 	}
 	if (::UnseenBanner.WorldCursor.isActive()) return "world.explorer";
@@ -10721,6 +11640,8 @@
 		::UnseenBanner.WorldTavern.close();
 		::UnseenBanner.WorldTemple.close();
 		::UnseenBanner.WorldTaxidermist.close();
+		::UnseenBanner.WorldTravel.close();
+		::UnseenBanner.WorldTraining.close();
 		::UnseenBanner.WorldTown.open(this.getTown());
 	}
 
@@ -10732,6 +11653,8 @@
 		::UnseenBanner.WorldTavern.close();
 		::UnseenBanner.WorldTemple.close();
 		::UnseenBanner.WorldTaxidermist.close();
+		::UnseenBanner.WorldTravel.close();
+		::UnseenBanner.WorldTraining.close();
 		::UnseenBanner.WorldTown.close();
 	}
 
@@ -10786,6 +11709,27 @@
 		}
 	}
 
+	// The harbour's destination list. port_building.onClicked has already called
+	// setData with the roster it built, so queryTravelInformation is populated by the
+	// time we open — same ordering guarantee the tavern relies on.
+	q.showTravelDialog = @(__original) function()
+	{
+		__original();
+		if (this.isVisible() && this.m.TravelDialogModule != null)
+		{
+			::UnseenBanner.WorldTravel.open(this, this.m.TravelDialogModule);
+		}
+	}
+
+	q.showTrainingDialog = @(__original) function()
+	{
+		__original();
+		if (this.isVisible() && this.m.TrainingDialogModule != null)
+		{
+			::UnseenBanner.WorldTraining.open(this, this.m.TrainingDialogModule);
+		}
+	}
+
 	q.showMainDialog = @(__original) function()
 	{
 		local leavingShop = ::UnseenBanner.WorldShop.isCurrent(this);
@@ -10793,15 +11737,26 @@
 		local leavingTavern = ::UnseenBanner.WorldTavern.isCurrent(this);
 		local leavingTemple = ::UnseenBanner.WorldTemple.isCurrent(this);
 		local leavingCraft = ::UnseenBanner.WorldTaxidermist.isCurrent(this);
+		local leavingTravel = ::UnseenBanner.WorldTravel.isCurrent(this);
+		local leavingTraining = ::UnseenBanner.WorldTraining.isCurrent(this);
 		__original();
 		if (leavingShop) ::UnseenBanner.WorldShop.close();
 		if (leavingHire) ::UnseenBanner.WorldHire.close();
 		if (leavingTavern) ::UnseenBanner.WorldTavern.close();
 		if (leavingTemple) ::UnseenBanner.WorldTemple.close();
 		if (leavingCraft) ::UnseenBanner.WorldTaxidermist.close();
-		if (leavingShop || leavingHire || leavingTavern || leavingTemple || leavingCraft)
+		if (leavingTravel) ::UnseenBanner.WorldTravel.close();
+		if (leavingTraining) ::UnseenBanner.WorldTraining.close();
+		if (leavingShop || leavingHire || leavingTavern || leavingTemple || leavingCraft
+			|| leavingTravel || leavingTraining)
 		{
-			if (::UnseenBanner.WorldTown.isActive())
+			// Not after a successful sailing: fastTravelTo routes through this same
+			// funnel while the screen still points at the harbour town, and WorldTravel
+			// rebuilds the list against the destination and speaks the arrival itself.
+			// Consume unconditionally, so a one-shot armed for a sailing that then took
+			// another path cannot sit there and swallow a later, legitimate re-read.
+			local suppressed = ::UnseenBanner.WorldTown.consumeSuppressedAnnounce();
+			if (::UnseenBanner.WorldTown.isActive() && !suppressed)
 				::UnseenBanner.WorldTown.announceItem();
 		}
 	}
@@ -11497,6 +12452,49 @@
 			return true;
 		}
 
+		// Harbour: destination list, its V description sub-list and the sail
+		// confirmation. Same priority rule as the other building dialogs.
+		if (townFree
+			&& ::UnseenBanner.WorldTravel.isCurrent(this.m.WorldTownScreen)
+			&& ::UnseenBanner.WorldTravel.handles(code))
+		{
+			if (townPressed && !this.m.WorldTownScreen.isAnimating())
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldTravel.onKey(code);
+				}
+				::UnseenBanner.KeyGate.armSwallow(code);
+			}
+			else if (!townPressed)
+			{
+				::UnseenBanner.KeyGate.release(code);
+			}
+			return true;
+		}
+
+		// Training hall: the company roster and each man's three paid lessons. Escape
+		// is captured only inside the lesson sub-list; at roster level it leaves the
+		// building natively.
+		if (townFree
+			&& ::UnseenBanner.WorldTraining.isCurrent(this.m.WorldTownScreen)
+			&& ::UnseenBanner.WorldTraining.handles(code))
+		{
+			if (townPressed && !this.m.WorldTownScreen.isAnimating())
+			{
+				if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+				{
+					::UnseenBanner.WorldTraining.onKey(code);
+				}
+				::UnseenBanner.KeyGate.armSwallow(code);
+			}
+			else if (!townPressed)
+			{
+				::UnseenBanner.KeyGate.release(code);
+			}
+			return true;
+		}
+
 		// Taxidermist: blueprint list, its V detail sub-list and its craft action.
 		// Same priority rule as the other building dialogs — the town frame stays
 		// technically visible behind the module. Escape is captured only inside a
@@ -11530,6 +12528,8 @@
 			&& !::UnseenBanner.WorldTavern.isCurrent(this.m.WorldTownScreen)
 			&& !::UnseenBanner.WorldTemple.isCurrent(this.m.WorldTownScreen)
 			&& !::UnseenBanner.WorldTaxidermist.isCurrent(this.m.WorldTownScreen)
+			&& !::UnseenBanner.WorldTravel.isCurrent(this.m.WorldTownScreen)
+			&& !::UnseenBanner.WorldTraining.isCurrent(this.m.WorldTownScreen)
 			&& ::UnseenBanner.WorldTown.isActive()
 			&& ::UnseenBanner.WorldTown.handles(code))
 		{

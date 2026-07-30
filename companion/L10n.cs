@@ -107,6 +107,9 @@ namespace TheUnseenBanner.Companion
             ["menu.campaign.selected"] = "Selected.",
             ["menu.campaign.disabled"] = "Unavailable.",
             ["menu.popup.delete"] = "Delete {0}? Choose Cancel or Ok.",
+            // Retiring ends the campaign for good, so the warning read out is the
+            // game's own wording ({0}), not a paraphrase. {1} is the dialog title.
+            ["menu.popup.retire"] = "{1}. {0} Cancel is focused. Use Up and Down to choose Cancel or Ok, Enter to take it, Escape to cancel.",
             ["menu.save.name_prompt"] = "Type a name for the save, then press Enter to confirm or Escape to cancel.",
             // Options screen. Game-owned labels (tabs and setting names) arrive
             // from the rendered DOM; only the connective speech lives here.
@@ -302,6 +305,21 @@ namespace TheUnseenBanner.Companion
             ["combat.sheet.rskill"] = "Ranged skill {1}.",
             ["combat.sheet.mdef"] = "Melee defense {1}.",
             ["combat.sheet.rdef"] = "Ranged defense {1}.",
+            // The four weapon-dependent rows vanilla shows under ranged defense. Kept
+            // terse on purpose: they are read on every pass through the sheet.
+            ["combat.sheet.damage"] = "Damage {1} to {2}.",
+            ["combat.sheet.damage.none"] = "Unarmed.",
+            ["combat.sheet.armordamage"] = "Armor damage {1} percent.",
+            ["combat.sheet.headhit"] = "Head hit {1} percent.",
+            ["combat.sheet.vision"] = "Vision {1}.",
+            // Talent stars, appended to the eight attributes that grow on level up.
+            // Zero is silent: a brother always has exactly three talents, so the three
+            // rows that speak tell you the other five are empty, and saying "no stars"
+            // on five of eight rows every pass would be pure noise.
+            ["combat.sheet.talent.0"] = "",
+            ["combat.sheet.talent.1"] = "One star.",
+            ["combat.sheet.talent.2"] = "Two stars.",
+            ["combat.sheet.talent.3"] = "Three stars.",
             ["combat.sheet.armor.head"] = "Head armor {1} of {2}.",
             ["combat.sheet.armor.body"] = "Body armor {1} of {2}.",
             ["combat.sheet.skills"] = "Skills: {0}.",
@@ -717,6 +735,8 @@ namespace TheUnseenBanner.Companion
             ["world.survey.item.ally"] = "Allied party, {0}",
             ["world.survey.item.neutral"] = "Party, {0}",
             ["world.survey.item.settlement"] = "Settlement, {0}",
+            // The owning faction is the banner the map draws beside the settlement.
+            ["world.survey.item.settlement.owned"] = "Settlement, {0}, {1}",
             ["world.survey.item.location"] = "Location, {0}",
             ["world.survey.item.landmark"] = "Landmark, {0}",
             ["world.survey.here"] = "At your position",
@@ -937,8 +957,19 @@ namespace TheUnseenBanner.Companion
             // Town screen (phase 4.5), a navigable list of buildings and contracts.
             ["world.town.screen"] = "{0}. Use Up and Down to review, Enter to choose, Escape to leave.",
             ["world.town.building"] = "{0}, building.",
+            // Situations: the icons vanilla draws in this screen's corner. Named on the
+            // header so the player knows whether to bother walking to them.
+            ["world.town.situations.one"] = "{0}, 1 situation",
+            ["world.town.situations.many"] = "{0}, {1} situations",
+            ["world.town.situation"] = "Situation, {0}. Press V.",
+            ["world.town.situation.details"] = "{1}. {0}",
             ["world.town.building.locked"] = "{0}. Not accessible yet.",
             ["world.town.building.closed"] = "{0} is closed.",
+            // The barber only swaps sprites: no cost, no effect on play, and nothing
+            // behind it to describe. Say so, rather than promise it for later.
+            ["world.town.building.cosmetic"] = "{0}. Appearance only, with no effect in play, so this mod does not describe it.",
+            // The harbour refuses silently while a caravan is being escorted overland.
+            ["world.town.port.caravan"] = "{0} will not book passage while you are escorting a caravan.",
             // The arena refuses to open for four distinct reasons; vanilla shows a
             // closed sign for all of them, so each one is named here instead.
             ["world.town.arena.night"] = "{0} is closed for the night.",
@@ -1000,6 +1031,49 @@ namespace TheUnseenBanner.Companion
             ["world.craft.result"] = "{0} crafted for {1} crowns. {2} crowns remaining.",
             ["world.craft.error.money"] = "Not enough crowns to craft {0}.",
             ["world.craft.error.ingredients"] = "Missing ingredients for {0}.",
+            // Harbour. Booking passage is the map's only fast travel, so Enter asks
+            // once before it spends the crowns and moves the company.
+            ["world.travel.screen"] = "Harbor. {0} Use Up and Down to review the destinations, V for the details of one, Enter to book passage, Escape to return to town.",
+            // Name, owning faction (the banner a sighted player reads), fare. The
+            // bearing follows, or "not yet seen" for a harbour still under fog.
+            ["world.travel.destination"] = "{0}, {1}, {2} crowns.",
+            ["world.travel.unknown"] = "Not yet seen.",
+            ["world.travel.unaffordable"] = "Not enough crowns.",
+            ["world.travel.position"] = "Destination {0} of {1}.",
+            ["world.travel.empty"] = "No harbor can be reached from here. {0} crowns available.",
+            ["world.travel.empty.opened"] = "Harbor. {0} Press Escape to return to town.",
+            ["world.travel.detail"] = "{0}",
+            ["world.travel.detail.position"] = "Detail {0} of {1}.",
+            ["world.travel.detail.opened"] = "Details. {0} V or Escape to go back.",
+            ["world.travel.details.none"] = "No details for {0}.",
+            ["world.travel.confirm"] = "Sail to {0} for {1} crowns. {2} crowns available.",
+            ["world.travel.confirm.blocked"] = "Not enough crowns.",
+            ["world.travel.confirm.opened"] = "{0} Press Enter to confirm; V or Escape to go back.",
+            ["world.travel.error.money"] = "Not enough crowns to sail to {0}: {1} needed, {2} available.",
+            ["world.travel.error.gone"] = "{0} can no longer be reached from here.",
+            ["world.travel.arrived"] = "Sailed to {0} for {1} crowns. {2} crowns remaining.",
+            // Training hall. Three paid lessons per man, and a spoken reason for every
+            // man vanilla silently leaves out of its list.
+            ["world.training.screen"] = "Training Hall. {0} Use Up and Down to review your men, Enter to open a man's lessons, Escape to return to town.",
+            ["world.training.man"] = "{0}, level {1}.",
+            ["world.training.lessons"] = "{0} lessons.",
+            ["world.training.position"] = "Man {0} of {1}.",
+            ["world.training.reason.maxlevel"] = "Too experienced to learn here.",
+            ["world.training.reason.trained"] = "Already training.",
+            ["world.training.reason.slave"] = "A slave, and taught no further.",
+            ["world.training.reason.none"] = "Cannot train here.",
+            ["world.training.empty"] = "No one can train here. {0} crowns available.",
+            ["world.training.empty.opened"] = "Training Hall. {0} Press Escape to return to town.",
+            ["world.training.option"] = "{0}, {1} crowns, for {2}.",
+            ["world.training.option.unaffordable"] = "Not enough crowns.",
+            ["world.training.option.position"] = "Lesson {0} of {1}.",
+            ["world.training.option.opened"] = "Lessons. {0} Press Enter to pay, V for what it teaches, Escape to go back.",
+            ["world.training.blocked.maxlevel"] = "{0} is too experienced to learn anything here.",
+            ["world.training.blocked.trained"] = "{0} is already training.",
+            ["world.training.blocked.slave"] = "{0} is a slave, and will be taught no further.",
+            ["world.training.blocked.none"] = "{0} cannot train here.",
+            ["world.training.error.money"] = "Not enough crowns for {0}: {1} needed, {2} available.",
+            ["world.training.result"] = "{0} paid for {1}: {2} crowns. {3} crowns remaining.",
             // World-map terrain names, keyed by Const.World.TerrainType (config/world.nut).
             ["world.terrain.0"] = "Impassable",
             ["world.terrain.1"] = "Ocean",
@@ -1044,6 +1118,8 @@ namespace TheUnseenBanner.Companion
             ["help.context.world.tavern"] = "Tavern",
             ["help.context.world.temple"] = "Temple",
             ["help.context.world.craft"] = "Taxidermist",
+            ["help.context.world.travel"] = "Harbor",
+            ["help.context.world.training"] = "Training hall",
             ["help.context.world.retinue"] = "Retinue",
             ["help.context.world.list"] = "List",
             ["help.context.world.event"] = "Event",
@@ -1117,6 +1193,7 @@ namespace TheUnseenBanner.Companion
             ["help.world.sheet.close"] = "C, I or Escape closes the screen.",
             ["help.world.town.move"] = "Up, Down, Home and End walk the buildings and the contracts.",
             ["help.world.town.activate"] = "Enter opens the focused building or contract.",
+            ["help.world.town.situations"] = "V reads what a situation of the town means.",
             ["help.world.town.leave"] = "Escape leaves the settlement.",
             ["help.world.market.pages"] = "Page Down and Page Up switch between overview, stock and company stash.",
             ["help.world.market.move"] = "Up, Down, Home and End walk the items.",
@@ -1140,6 +1217,15 @@ namespace TheUnseenBanner.Companion
             ["help.world.craft.details"] = "V opens the recipe's description and ingredients.",
             ["help.world.craft.craft"] = "Enter opens the craft action; Enter again pays for it.",
             ["help.world.craft.back"] = "Escape returns to the settlement.",
+            ["help.world.travel.move"] = "Up, Down, Home and End walk the destinations.",
+            ["help.world.travel.details"] = "V opens the destination's description as a sub-list.",
+            ["help.world.travel.sail"] = "Enter asks to confirm the passage; Enter again pays and sails.",
+            ["help.world.travel.back"] = "Escape returns to the settlement.",
+            ["help.world.training.move"] = "Up, Down, Home and End walk your men.",
+            ["help.world.training.lessons"] = "Enter opens that man's three lessons, or says why he cannot train.",
+            ["help.world.training.pay"] = "Enter again pays for the focused lesson.",
+            ["help.world.training.details"] = "V reads what the focused lesson teaches.",
+            ["help.world.training.back"] = "Escape leaves the lessons, then the building.",
             ["help.world.retinue.move"] = "Up, Down, Home and End walk the seats or the candidates.",
             ["help.world.retinue.activate"] = "Enter hires, replaces or buys the focused one.",
             ["help.world.retinue.back"] = "P or Escape goes back.",

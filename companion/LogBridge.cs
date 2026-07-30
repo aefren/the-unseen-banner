@@ -117,6 +117,7 @@ namespace TheUnseenBanner.Companion
                 string acciones = GetOptionalString(root, "acciones");
                 string comparacion = GetOptionalString(root, "comparacion");
                 string cadaver = GetOptionalString(root, "cadaver");
+                string talento = GetOptionalString(root, "talento");
                 string spoken = categoria switch
                 {
                     "tile.readout" => ComposeTileReadout(valor, texto, detalle, cadaver, comparacion),
@@ -185,6 +186,17 @@ namespace TheUnseenBanner.Companion
                     "world.craft.action" => ComposeCraftAction(texto, valor, detalle),
                     "world.craft.result" => L10n.F(categoria, texto, valor, detalle),
                     "world.craft.error" => L10n.F("world.craft.error." + valor, texto),
+                    "world.travel.destination" => ComposeTravelDestination(texto, valor, detalle),
+                    "world.travel.empty" => ComposeTravelEmpty(valor, detalle),
+                    "world.travel.detail" => ComposeTravelDetail(texto, valor, detalle),
+                    "world.travel.confirm" => ComposeTravelConfirm(texto, valor, detalle),
+                    "world.travel.error" => ComposeTravelError(texto, valor, detalle),
+                    "world.training.man" => ComposeTrainingMan(texto, detalle),
+                    "world.training.empty" => ComposeTrainingEmpty(valor, detalle),
+                    "world.training.option" => ComposeTrainingOption(texto, valor, detalle),
+                    "world.training.blocked" => L10n.F("world.training.blocked." + valor, texto),
+                    "world.training.error" => ComposeTrainingError(texto, valor, detalle),
+                    "world.training.result" => ComposeTrainingResult(texto, valor, detalle),
                     string key when key.StartsWith("world.recruit.result.", StringComparison.Ordinal)
                         => L10n.F(key, texto, valor, detalle),
                     "world.character.perk" => ComposeWorldPerk(texto, valor, detalle),
@@ -239,7 +251,9 @@ namespace TheUnseenBanner.Companion
                     "tooltip.detail" => ComposeTooltipDetail(texto, valor, detalle),
                     "combat.result.stat" => ComposeResultStat(texto, valor, detalle),
                     "combat.result.loot.item" => ComposeResultLootItem(texto, valor, detalle),
+                    "world.town.screen" => ComposeTownScreen(texto, valor),
                     "world.town.arena.closed" => L10n.F("world.town.arena." + valor, texto),
+                    "world.town.port.closed" => L10n.F("world.town.port." + valor, texto),
                     "menu.campaign" => ComposeCampaignEntry(texto, valor, detalle),
                     "menu.campaign.screen" => ComposeCampaignScreen(texto, valor),
                     "world.survey.places.screen" => ComposeSurveyPlacesScreen(valor, detalle),
@@ -265,6 +279,7 @@ namespace TheUnseenBanner.Companion
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
                 };
+                spoken = AppendTalentStars(spoken, talento);
                 spoken = AppendDetailsHint(spoken, detalles);
                 spoken = AppendActionsHint(spoken, acciones);
                 spoken = AppendIdentityHints(spoken, categoria, detalle);
@@ -294,6 +309,19 @@ namespace TheUnseenBanner.Companion
         /// <summary>Add the discoverable V-key hint only to semantic rows that
         /// explicitly report one or more native tooltips. Rows with no details stay
         /// concise; pressing V on one still produces an audible unavailable cue.</summary>
+        /// <summary>The talent stars vanilla draws beside an attribute, spoken right
+        /// after its value. Zero maps to an empty string and is therefore silent: a
+        /// brother always carries exactly three talents, so the rows that do speak
+        /// already say which the other five are. Runs before the details and actions
+        /// hints, so the row reads value, stars, then what the keys do.</summary>
+        private static string AppendTalentStars(string spoken, string talent)
+        {
+            if (talent.Length == 0) return spoken;
+            string stars = L10n.T("combat.sheet.talent." + talent);
+            if (stars.Length == 0) return spoken;
+            return spoken.Length > 0 ? spoken + " " + stars : stars;
+        }
+
         private static string AppendDetailsHint(string spoken, string countText)
         {
             if (!int.TryParse(countText, out int count) || count <= 0)
@@ -810,6 +838,161 @@ namespace TheUnseenBanner.Companion
             string price = parts.Length > 0 ? parts[0] : "";
             string money = parts.Length > 1 ? parts[1] : "";
             return L10n.F("world.temple.result", injury, brother, price, money);
+        }
+
+        /// <summary>One harbour destination. Carries the two things the dialog does not
+        /// print but a sighted player has anyway: the owning faction, which he reads off
+        /// the banner, and where the place lies, which he reads off the map. A
+        /// destination still under fog says so instead of giving a bearing — the roster
+        /// is filtered by alliance, not by discovery, and the map would not show him an
+        /// undiscovered harbour either.</summary>
+        /// <summary>The settlement screen's opening line. The situation count rides on
+        /// the name rather than after the navigation hints, so it is heard before the
+        /// player decides whether to walk down to those rows at all.</summary>
+        private static string ComposeTownScreen(string name, string situations)
+        {
+            string head = name;
+            if (int.TryParse(situations, out int count) && count > 0)
+            {
+                head = count == 1
+                    ? L10n.F("world.town.situations.one", name)
+                    : L10n.F("world.town.situations.many", name, count);
+            }
+            return L10n.F("world.town.screen", head);
+        }
+
+        private static string ComposeTravelDestination(string name, string faction, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string cost = parts.Length > 0 ? parts[0] : "";
+            string index = parts.Length > 1 ? parts[1] : "1";
+            string total = parts.Length > 2 ? parts[2] : "1";
+            bool opened = parts.Length > 3 && parts[3] == "1";
+            string money = parts.Length > 4 ? parts[4] : "";
+            bool unaffordable = parts.Length > 5 && parts[5] == "1";
+            bool seen = parts.Length > 6 && parts[6] == "1";
+            string dist = parts.Length > 7 ? parts[7] : "0";
+            string dir = parts.Length > 8 ? parts[8] : "-1";
+
+            string result = L10n.F("world.travel.destination", name, faction, cost);
+            if (!seen)
+            {
+                result += " " + L10n.T("world.travel.unknown");
+            }
+            else
+            {
+                string position = ComposePosition(dist, dir);
+                if (position.Length > 0) result += " " + position + ".";
+            }
+            if (unaffordable) result += " " + L10n.T("world.travel.unaffordable");
+            result += " " + L10n.F("world.travel.position", index, total);
+            return opened
+                ? L10n.F("world.travel.screen",
+                    L10n.F("world.tavern.purse", money) + " " + result)
+                : result;
+        }
+
+        private static string ComposeTravelEmpty(string money, string detail)
+        {
+            string result = L10n.F("world.travel.empty", money);
+            return detail == "1" ? L10n.F("world.travel.empty.opened", result) : result;
+        }
+
+        private static string ComposeTravelDetail(string text, string destination, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string index = parts.Length > 0 ? parts[0] : "1";
+            string total = parts.Length > 1 ? parts[1] : "1";
+            bool opened = parts.Length > 2 && parts[2] == "1";
+
+            string result = L10n.F("world.travel.detail", text);
+            if (total != "1")
+                result += " " + L10n.F("world.travel.detail.position", index, total);
+            return opened ? L10n.F("world.travel.detail.opened", result) : result;
+        }
+
+        private static string ComposeTravelConfirm(string name, string cost, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string money = parts.Length > 0 ? parts[0] : "";
+            bool opened = parts.Length > 1 && parts[1] == "1";
+            bool unaffordable = parts.Length > 2 && parts[2] == "1";
+
+            string result = L10n.F("world.travel.confirm", name, cost, money);
+            if (unaffordable) result += " " + L10n.T("world.travel.confirm.blocked");
+            return opened ? L10n.F("world.travel.confirm.opened", result) : result;
+        }
+
+        private static string ComposeTravelError(string name, string reason, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string cost = parts.Length > 0 ? parts[0] : "";
+            string money = parts.Length > 1 ? parts[1] : "";
+            return L10n.F("world.travel.error." + reason, name, cost, money);
+        }
+
+        /// <summary>One man in the training hall. A man who cannot train says why:
+        /// vanilla simply leaves him out of its list, which reads as a man gone
+        /// missing when the list is heard rather than seen.
+        /// </summary>
+        private static string ComposeTrainingMan(string name, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string level = parts.Length > 0 ? parts[0] : "";
+            int lessons = parts.Length > 1 &&
+                int.TryParse(parts[1], out int parsedLessons) ? parsedLessons : 0;
+            string index = parts.Length > 2 ? parts[2] : "1";
+            string total = parts.Length > 3 ? parts[3] : "1";
+            bool opened = parts.Length > 4 && parts[4] == "1";
+            string money = parts.Length > 5 ? parts[5] : "";
+            string reason = parts.Length > 6 && parts[6].Length > 0 ? parts[6] : "none";
+
+            string result = L10n.F("world.training.man", name, level);
+            result += " " + (lessons > 0
+                ? L10n.F("world.training.lessons", lessons)
+                : L10n.T("world.training.reason." + reason));
+            result += " " + L10n.F("world.training.position", index, total);
+            return opened
+                ? L10n.F("world.training.screen",
+                    L10n.F("world.tavern.purse", money) + " " + result)
+                : result;
+        }
+
+        private static string ComposeTrainingEmpty(string money, string detail)
+        {
+            string result = L10n.F("world.training.empty", money);
+            return detail == "1" ? L10n.F("world.training.empty.opened", result) : result;
+        }
+
+        private static string ComposeTrainingOption(string lesson, string brother, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string price = parts.Length > 0 ? parts[0] : "";
+            string index = parts.Length > 1 ? parts[1] : "1";
+            string total = parts.Length > 2 ? parts[2] : "1";
+            bool opened = parts.Length > 3 && parts[3] == "1";
+            bool unaffordable = parts.Length > 4 && parts[4] == "1";
+
+            string result = L10n.F("world.training.option", lesson, price, brother);
+            if (unaffordable) result += " " + L10n.T("world.training.option.unaffordable");
+            result += " " + L10n.F("world.training.option.position", index, total);
+            return opened ? L10n.F("world.training.option.opened", result) : result;
+        }
+
+        private static string ComposeTrainingError(string lesson, string reason, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string price = parts.Length > 0 ? parts[0] : "";
+            string money = parts.Length > 1 ? parts[1] : "";
+            return L10n.F("world.training.error." + reason, lesson, price, money);
+        }
+
+        private static string ComposeTrainingResult(string lesson, string brother, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string price = parts.Length > 0 ? parts[0] : "";
+            string money = parts.Length > 1 ? parts[1] : "";
+            return L10n.F("world.training.result", brother, lesson, price, money);
         }
 
         /// <summary>One row of the F1 key help. Squirrel sends only the row key and
@@ -1552,13 +1735,18 @@ namespace TheUnseenBanner.Companion
             string[] p = detail.Split('|');
             string dist = p.Length > 0 ? p[0] : "0";
             string dir = p.Length > 1 ? p[1] : "-1";
+            // Only settlements carry a fourth token: the owning faction, which the map
+            // draws as the banner beside them. Empty for everything else.
+            string faction = p.Length > 2 ? p[2] : "";
 
             string head = kind switch
             {
                 "enemy" => L10n.F("world.survey.item.enemy", name),
                 "ally" => L10n.F("world.survey.item.ally", name),
                 "neutral" => L10n.F("world.survey.item.neutral", name),
-                "settlement" => L10n.F("world.survey.item.settlement", name),
+                "settlement" => faction.Length > 0
+                    ? L10n.F("world.survey.item.settlement.owned", name, faction)
+                    : L10n.F("world.survey.item.settlement", name),
                 "landmark" => L10n.F("world.survey.item.landmark", name),
                 _ => L10n.F("world.survey.item.location", name),
             };
