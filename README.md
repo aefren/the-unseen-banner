@@ -2,7 +2,7 @@
 
 **An accessibility mod for blind players of *Battle Brothers*.**
 
-**Version 0.8**
+**Version 0.9**
 
 *Battle Brothers* is a turn-based tactical RPG where you lead a medieval
 mercenary company: hire and equip fighters, take contracts across an open world
@@ -65,10 +65,11 @@ before starting a serious campaign:
   and ambitions are offered through this same screen, so taking, tracking and
   turning them in works end to end.
 - ✅ **Tactical combat.** The most complete part: tile cursor with terrain,
-  occupants and corpses, skills with valid targets and hit chance, spoken combat
-  log, brother status, turn order, enemy and ally cycling, character sheet with
-  in-battle equipment changes, retreat dialogs, and a result screen where loot
-  can be taken piece by piece.
+  height, enemy zone of control and what a step there would cost in action
+  points and fatigue, occupants and corpses, skills with valid targets and hit
+  chance, spoken combat log, brother status, turn order, enemy and ally cycling,
+  character sheet with in-battle equipment changes, retreat dialogs, and a
+  result screen where loot can be taken piece by piece.
 - ✅ **Before the battle**: the encounter report, the native engage/retreat
   actions and formation editing are keyboard-driven.
 - ✅ **World map**: directional movement, arrivals, camping, the map explorer
@@ -79,13 +80,15 @@ before starting a serious campaign:
   are announced the first time they come into sight, and enemy parties every
   time they do. Day changes, speed changes, pauses and brothers ready to level
   up are announced as they happen.
-- ✅ **Settlements**: the town screen as a list of buildings and contracts, plus
-  accessible market, recruitment, tavern, temple and arena.
+- ✅ **Settlements**: the town screen as a list of buildings, situations and
+  contracts, plus accessible market, recruitment, tavern, temple, taxidermist,
+  harbor, training hall and arena.
 - ✅ **Company management**: the character screen — sheet, equipped items,
-  backpack, stash, perks and formation — including perk acquisition, renaming,
-  dismissing a brother, inventory and stash actions, and the game's own native
-  details for backgrounds, statistics, skills, injuries, traits and items. The
-  Retinue, the obituary and factions/relations are navigable lists.
+  backpack, stash, perks and formation — including both halves of a level up
+  (attribute increases and perks), renaming, dismissing a brother, inventory and
+  stash actions, and the game's own native details for backgrounds, statistics,
+  skills, injuries, traits and items. The Retinue, the obituary and
+  factions/relations are navigable lists.
 - ✅ **End of campaign**: the victory/defeat screen is navigable.
 - ⚠️ **Company creation** (banner, company name, DLC origins) is only partly
   reachable from the menu cursor; the customization screen itself is not

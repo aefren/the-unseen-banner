@@ -7,16 +7,16 @@ cursor, the tile cursor reads the ground it lands on, `F1` answers "which keys
 work here" from inside the game, and the attribute half of every level up stops
 being lost in silence.
 
-### New: harbour, training hall and taxidermist
+### New: harbor, training hall and taxidermist
 
-The **harbour** is the one whose absence changed how a campaign had to be played:
+The **harbor** is the one whose absence changed how a campaign had to be played:
 booking passage is the map's only fast travel and it was mouse-only. Up/Down walk
 the destinations, `V` opens the destination's own description, and `Enter` asks to
 confirm before a second `Enter` pays and sails — sailing cannot be undone and
 lands the company somewhere else. Each row also carries the owning faction and the
 bearing and distance, both of which a sighted player has from the map, and which
 together make the fare legible: it is distance times company size. A destination
-still under fog says so instead of giving a bearing. When the harbour refuses —
+still under fog says so instead of giving a bearing. When the harbor refuses —
 you are escorting a caravan — the reason is spoken.
 
 The **training hall** lists your whole roster, not just the men who can train.
