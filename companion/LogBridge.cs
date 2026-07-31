@@ -261,6 +261,8 @@ namespace TheUnseenBanner.Companion
                     "world.survey.item" => ComposeSurveyItem(texto, valor, detalle),
                     "world.discovery.single" => ComposeDiscoverySighting(texto, valor, detalle),
                     "world.threat.closing" => ComposeThreatClosing(texto, valor, detalle),
+                    "world.upkeep.result" => ComposeUpkeepResult(valor),
+                    "world.upkeep.warning" => ComposeUpkeepWarning(valor, detalle),
                     "world.discovery.summary" => ComposeDiscoverySummary(valor),
                     "world.obituary.entry" => ComposeObituaryEntry(texto, detalle),
                     "world.retinue.slot.follower" => ComposeRetinueSlot(texto, valor, detalle),
@@ -628,10 +630,26 @@ namespace TheUnseenBanner.Companion
             bool comparisonApplies = parts.Length > 4 && parts[4] == "1";
             string section = isBuying ? "buy" : "sell";
 
+            // price packs "asked|worth|paid": what this town wants or offers, what the item
+            // is worth anywhere, and — for provisions and trading goods in your own stash —
+            // what you paid for it. The last two are what decided the deal in the tooltip,
+            // and needing V on every row to reach them made haggling by ear too slow.
+            string[] money = price.Split('|');
+            string asked = money.Length > 0 ? money[0] : price;
+            string worth = money.Length > 1 ? money[1] : "";
+            string paid = money.Length > 2 ? money[2] : "";
+
             string result = L10n.F(
                 isBuying ? "world.market.buy.item" : "world.market.sell.item",
                 WithItemAmount(name, amount),
-                price);
+                asked);
+
+            // "Worth nothing" adds nothing the price did not already say.
+            if (worth.Length > 0 && worth != "0")
+                result += " " + L10n.F("world.market.value", worth);
+            if (paid.Length > 0)
+                result += " " + L10n.F("world.market.bought", paid);
+
             if (comparisonApplies && brother.Length > 0)
             {
                 result += " " + (comparison.Length > 0
@@ -1849,6 +1867,51 @@ namespace TheUnseenBanner.Companion
             };
             string spoken = position.Length > 0 ? head + ". " + position + "." : head + ".";
             return action.Length > 0 ? spoken + " " + action : spoken;
+        }
+
+        /// <summary>Compose what the day's settlement cost the company: how many men
+        /// went hungry and how many went unpaid, packed as "hungry|unpaid". Only the
+        /// non-zero halves are spoken; the message is not sent at all when both are.
+        /// </summary>
+        private static string ComposeUpkeepResult(string packed)
+        {
+            string[] p = packed.Split('|');
+            var parts = new List<string>();
+
+            if (p.Length > 0 && int.TryParse(p[0], out int hungry) && hungry > 0)
+                parts.Add(hungry == 1
+                    ? L10n.T("world.upkeep.hungry.one")
+                    : L10n.F("world.upkeep.hungry", hungry));
+
+            if (p.Length > 1 && int.TryParse(p[1], out int unpaid) && unpaid > 0)
+                parts.Add(unpaid == 1
+                    ? L10n.T("world.upkeep.unpaid.one")
+                    : L10n.F("world.upkeep.unpaid", unpaid));
+
+            return string.Join(" ", parts);
+        }
+
+        /// <summary>Compose the warning for the day ahead. food is the days of rations
+        /// left, empty when there is nothing to warn about (or no upkeep at all); wages
+        /// packs "needed|purse" and is empty when tomorrow's payroll is covered.</summary>
+        private static string ComposeUpkeepWarning(string food, string wages)
+        {
+            var parts = new List<string>();
+
+            if (food.Length > 0 && int.TryParse(food, out int days))
+                parts.Add(days <= 0
+                    ? L10n.T("world.upkeep.food.none")
+                    : (days == 1 ? L10n.T("world.upkeep.food.one")
+                                 : L10n.F("world.upkeep.food", days)));
+
+            if (wages.Length > 0)
+            {
+                string[] w = wages.Split('|');
+                parts.Add(L10n.F("world.upkeep.wages", w.Length > 0 ? w[0] : "0",
+                    w.Length > 1 ? w[1] : "0"));
+            }
+
+            return string.Join(" ", parts);
         }
 
         /// <summary>Compose a threat proximity alert: a hostile party already in sight

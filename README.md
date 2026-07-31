@@ -81,7 +81,8 @@ before starting a serious campaign:
   time they do — and a hostile party already in sight says so again each time it
   closes the gap, so being run down is something you hear coming. Day changes,
   speed changes, pauses and brothers ready to level up are announced as they
-  happen.
+  happen, and the day the company settles its wages and rations says who went
+  unpaid or hungry and what tomorrow will cost if nothing changes.
 - ✅ **Settlements**: the town screen as a list of buildings, situations and
   contracts, plus accessible market, recruitment, tavern, temple, taxidermist,
   harbor, training hall and arena.
@@ -92,9 +93,9 @@ before starting a serious campaign:
   skills, injuries, traits and items. The Retinue, the obituary and
   factions/relations are navigable lists.
 - ✅ **End of campaign**: the victory/defeat screen is navigable.
-- ⚠️ **One silence left while travelling.** Food and wages are only known by
-  asking for them with `F2`; nothing warns you before either runs out. That is
-  the next thing being built.
+- ⚠️ **Newly built, not yet confirmed in play**: the daily warning about food
+  and wages. It only speaks when the company is in trouble, so a well-supplied
+  campaign will not hear it at all.
 - ⚠️ **Company creation** (banner, company name, DLC origins) is navigable from
   the menu cursor, but the banner is announced only by its number. **Scenarios**,
   the practice battles on the main menu, opens a screen the cursor does not
@@ -294,7 +295,7 @@ survey honours that gate, exactly as the game does.
 
 | Building | Keys |
 |---|---|
-| **Market** | Page Down/Page Up switch overview, stock and stash. Enter opens the actions for the focused item (buy, sell, repair, sort, filter), V reads its native tooltip and compares it against what a brother has equipped, and A/D (or Left/Right, or Tab) change which brother that comparison uses. Selling something unique or valuable asks for confirmation, with Cancel selected by default |
+| **Market** | Page Down/Page Up switch overview, stock and stash. Every row carries the price this town is asking or offering **and what the item is worth**, so a deal can be judged without opening anything; in your own stash, provisions and trading goods also say what you paid for them, which is the only place the game records it. Enter opens the actions for the focused item (buy, sell, repair, sort, filter), V reads its native tooltip and compares it against what a brother has equipped, and A/D (or Left/Right, or Tab) change which brother that comparison uses. Selling something unique or valuable asks for confirmation, with Cancel selected by default |
 | **Recruitment** | Up/Down walk the candidates with their live hiring and wage costs, V opens the native background and revealed-trait tooltips, and Enter offers hiring or paying for a tryout |
 | **Tavern** | Two paid actions — a round for the patrons, a round for your men — Enter performs the focused one, V re-reads the rumor or report it produced |
 | **Temple** | Up/Down walk the wounded, Enter opens that brother's treatable injuries, a second Enter pays for the treatment, V or Escape backs out |
@@ -444,8 +445,8 @@ in the real game.
 
 ### Pending
 
-- **A warning before the food or the wages run out**, rather than only on
-  request through `F2`.
+- Verify by ear the daily food and wages warning, which needs a company short of
+  one or the other to say anything at all.
 - **The Scenarios menu**: the game's own practice battles, so tactical combat
   can be learned without risking a campaign.
 - **Company creation**: name the banner by its emblem, and confirm by ear that

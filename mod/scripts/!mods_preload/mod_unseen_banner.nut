@@ -1777,6 +1777,97 @@
 	}
 };
 
+// Upkeep: food and wages (phase 4.9). Both were on-demand only, through F2, and the
+// company can starve or go unpaid without a single word — a sighted player watches the
+// topbar turn against him and the mood icons drop.
+//
+// The funnel is asset_manager.update, which settles the day once, past hour 8: it pays
+// each brother and worsens the mood of anyone it could not pay ("Did not get paid") or
+// feed ("Did go hungry"). Everything here hangs off that one moment rather than watching
+// the purse continuously, and that is the whole design: money moves constantly, so a
+// running watch would cross its thresholds three times while buying one suit of armour
+// and turn into an alarm nobody listens to. Once a day, when it actually matters.
+//
+// Two halves (user decision, jul 2026):
+//   - what just happened, counted the same way vanilla counts it, because the mood hit
+//     is the real damage and it was invisible;
+//   - what is coming, repeated every day the company stays in trouble — which is when
+//     the reminder is wanted, not only on the day it first crosses a line.
+::UnseenBanner.WorldUpkeep <- {
+	// Days of food left worth a warning. Thresholds, not crossings: at or under the
+	// widest one it speaks every day, since a company down to its last rations wants
+	// telling each morning. To config with the rest (5.1).
+	FoodWarnDays = 3,
+	// True on the one frame vanilla is about to settle the day: the same three tests
+	// its own branch makes, read before the original runs and moves LastDayPaid.
+	function isSettling(_assets)
+	{
+		return _assets.m.IsConsumingAssets
+			&& ::World.getTime().Days > _assets.m.LastDayPaid
+			&& ::World.getTime().Hours > 8;
+	},
+	// Who is about to go unpaid or hungry, replicating vanilla's own arithmetic rather
+	// than inspecting moods afterwards: the same tick also runs skills and other mood
+	// sources, so a before/after comparison would credit us with changes we did not
+	// cause. Money is walked down brother by brother exactly as the payday loop does
+	// (and, as there, it is allowed to go negative).
+	function measure(_assets)
+	{
+		local roster = ::World.getPlayerRoster().getAll();
+		local money = _assets.getMoney();
+		local food = _assets.getFood();
+		local unpaid = 0;
+		local hungry = 0;
+
+		foreach( bro in roster )
+		{
+			local cost = bro.getDailyCost();
+			if (cost > 0 && money < cost) unpaid += 1;
+			money -= cost;
+			// Food is not decremented here; vanilla consumes it hourly elsewhere and
+			// compares the whole larder against each man's ration, so this is usually
+			// all or nothing.
+			if (_assets.m.IsUsingProvisions && food < bro.getDailyFood()) hungry += 1;
+		}
+
+		return { unpaid = unpaid, hungry = hungry };
+	},
+	// Spoken after the original has settled, so the warning half reads the purse and the
+	// larder as they now stand. Queue channel: this lands while the player may be deep in
+	// a survey list, and an interrupt would cut it off.
+	function announce(_assets, _report)
+	{
+		if (_report.unpaid > 0 || _report.hungry > 0)
+		{
+			::UnseenBanner.sendMessage("queue", "", "world.upkeep.result",
+				_report.hungry + "|" + _report.unpaid);
+		}
+
+		// Days of food left, by the same division F2 speaks. It ignores the terrain
+		// multiplier vanilla applies when actually eating, so it is an estimate — but it
+		// is the estimate the player already has, and two readouts that disagree would be
+		// worse than one that rounds.
+		local dailyFood = _assets.getDailyFoodCost();
+		local foodPart = "";
+		if (_assets.m.IsUsingProvisions && dailyFood > 0)
+		{
+			local days = (_assets.getFood() / dailyFood).tointeger();
+			if (days <= this.FoodWarnDays) foodPart = "" + days;
+		}
+
+		// Wages: whether tomorrow's payroll is covered by what is left after today's.
+		local needed = _assets.getDailyMoneyCost();
+		local purse = _assets.getMoney();
+		local wagePart = needed > 0 && purse < needed ? needed + "|" + purse : "";
+
+		if (foodPart != "" || wagePart != "")
+		{
+			::UnseenBanner.sendMessage("queue", "", "world.upkeep.warning", foodPart,
+				wagePart);
+		}
+	}
+};
+
 // Camping is a world-map state, not a modal screen. Vanilla T and the topbar
 // button both funnel through world_state.onCamp(), but their only feedback is
 // visual: the party turns into a camp and the shared PAUSED label becomes
@@ -4119,6 +4210,25 @@
 		if (equipped != null && equipped != -1) result.item = equipped;
 		return result;
 	},
+	// What a haggler needs before deciding, without opening a tooltip for every row: the
+	// price this town is asking or offering, and the item's own worth to measure it
+	// against. Both are the numbers vanilla itself prints — getValue() is what the tooltip
+	// words as "Worth" — so this is reading the same sheet faster, not a valuation of ours.
+	//
+	// The price actually paid exists for exactly two families, and only in the player's own
+	// stash: provisions and trading goods record it on the way in (m.BoughtAtPrice, set in
+	// onAddedToStash for stashID "player"). Those are the two the game means you to trade
+	// on, and for them the profit is otherwise unknowable. Weapons and armour keep no such
+	// record anywhere, so nothing is invented for them. isKindOf gates the field access:
+	// reading .m.BoughtAtPrice off an item that has no such member would throw and take the
+	// whole row with it.
+	function boughtPrice(_source, _item)
+	{
+		if (_source != "sell") return "";
+		if (!::isKindOf(_item, "food_item") && !::isKindOf(_item, "trading_good_item"))
+			return "";
+		return _item.m.BoughtAtPrice > 0 ? "" + _item.m.BoughtAtPrice : "";
+	},
 	function marketItemRow(_source, _index, _item)
 	{
 		local owner = _source == "buy" ? this.ShopOwner : this.StashOwner;
@@ -4130,7 +4240,9 @@
 		return this.row(_source + ":" + _item.getInstanceID(),
 			_source == "buy" ? "world.market.buy.item" : "world.market.sell.item",
 			_item.getName(),
-			"" + (_source == "buy" ? _item.getBuyPrice() : _item.getSellPrice()),
+			"" + (_source == "buy" ? _item.getBuyPrice() : _item.getSellPrice())
+				+ "|" + _item.getValue()
+				+ "|" + this.boughtPrice(_source, _item),
 			this.itemAmount(_item),
 			details, {
 				source = _source,
@@ -11047,7 +11159,11 @@
 		}
 		else
 		{
-			items.push(this.item("combat.dialog.screen", this.m.Text, this.m.Title));
+			// A monologue has no No button and Escape confirms it, so it gets its own
+			// header rather than being told to cancel with a key that does the opposite.
+			items.push(this.item(this.m.IsMonologue
+				? "combat.dialog.screen.mono" : "combat.dialog.screen",
+				this.m.Text, this.m.Title));
 		}
 		if (this.m.IsMonologue)
 		{
@@ -11562,6 +11678,20 @@
 // Module lifecycle is the deterministic point at which the animated DOM is
 // ready. Hooking the common base avoids polling and keeps the announcement
 // aligned with the screen the player can actually interact with.
+// Daily upkeep (4.9). update() runs every frame, so the guard is three field reads and
+// a return on all but one frame a day; only when vanilla's own payday branch is about to
+// fire is anything measured. Measure before, announce after: the counts need the purse as
+// it was, the warning needs it as it ends up.
+::UnseenBanner.Mod.hook("scripts/states/world/asset_manager", function(q) {
+	q.update = @(__original) function( _worldState )
+	{
+		local report = ::UnseenBanner.WorldUpkeep.isSettling(this)
+			? ::UnseenBanner.WorldUpkeep.measure(this) : null;
+		__original(_worldState);
+		if (report != null) ::UnseenBanner.WorldUpkeep.announce(this, report);
+	}
+});
+
 ::UnseenBanner.Mod.hook("scripts/ui/screens/ui_module", function(q) {
 	q.onModuleShown = @(__original) function()
 	{
@@ -12024,16 +12154,27 @@
 		{
 			::UnseenBanner.DialogNav.prime(_title, _text, _isMonologue, "world.ambition");
 		}
+		else
+		{
+			// Everything else this modal is used for. It used to be the silent case, and
+			// silence here is the worst kind: the dialog pauses the map, takes the
+			// keyboard and waits, so a popup nobody announced reads as a frozen game. The
+			// one that arrives unasked is "Old Campaign Loaded", raised on loading a save
+			// made before a DLC was switched on (world_state), but the branch also catches
+			// anything a future DLC or another mod puts through the same screen.
+			//
+			// Nothing is context-specific below the wording: DialogNav already builds its
+			// rows from the live title, body and monologue flag and acts through
+			// DialogScreen's own onOkPressed/onCancelPressed, so a generic context is
+			// navigable with no further work.
+			::UnseenBanner.DialogNav.prime(_title, _text, _isMonologue, "world.dialog");
+		}
 	}
 
 	q.onScreenShown = @(__original) function()
 	{
 		__original();
-		if (::Tactical.isActive() || ::UnseenBanner.DialogNav.isContext("world.retinue")
-			|| ::UnseenBanner.DialogNav.isContext("world.ambition"))
-		{
-			::UnseenBanner.DialogNav.open();
-		}
+		::UnseenBanner.DialogNav.open();
 	}
 
 	q.onScreenHidden = @(__original) function()
@@ -12460,9 +12601,12 @@
 		// this must run before checking the P screen itself or the plain-map guards.
 		// Use the same keydown cadence as the lists that open them; P and Escape both
 		// cancel here.
+		// Any context, not just the two that open one on purpose: while this modal is up
+		// it owns the screen, the map underneath is paused and nothing else should be
+		// reading these keys. Dropping the context test also means a dialog raised by a
+		// DLC or another mod is navigable without naming it here — the same reason the
+		// tactical side has always routed it by isActive() alone.
 		if (::UnseenBanner.DialogNav.isActive()
-			&& (::UnseenBanner.DialogNav.isContext("world.retinue")
-				|| ::UnseenBanner.DialogNav.isContext("world.ambition"))
 			&& ::UnseenBanner.DialogNav.handles(code))
 		{
 			if (_key.getState() == 1)

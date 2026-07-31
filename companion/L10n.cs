@@ -441,6 +441,12 @@ namespace TheUnseenBanner.Companion
             ["world.market.section.sell"] = "Company stash",
             ["world.market.buy.item"] = "{0}. Buy price {1} crowns.",
             ["world.market.sell.item"] = "{0}. Sell price {1} crowns.",
+            // The two numbers that decide a deal, spoken with the row instead of waiting
+            // behind V: what the item is worth anywhere — the same figure the tooltip words
+            // as "Worth" — and, for provisions and trading goods, what this company paid
+            // for it. No other item records a purchase price, so none claims one.
+            ["world.market.value"] = "Worth {0}.",
+            ["world.market.bought"] = "Bought for {0}.",
             ["world.market.comparison.equipped"] = "Comparing for {0}: equipped {1}.",
             ["world.market.comparison.empty"] = "Comparing for {0}: nothing equipped in this slot.",
             ["world.market.position"] = "Item {0} of {1}.",
@@ -655,6 +661,10 @@ namespace TheUnseenBanner.Companion
             // as a navigable list. The message row carries the game's own title (valor)
             // and body (texto); the button labels mirror the visible Yes/No/Ok.
             ["combat.dialog.screen"] = "{1}. {0}. Use Up and Down to review, Enter to choose, Escape to cancel.",
+            // The same modal with a single Ok and no cancel path — the game's info popups,
+            // among them the "Old Campaign Loaded" one that arrives unasked after a load.
+            // Escape confirms it here, so it is not offered as a way to back out.
+            ["combat.dialog.screen.mono"] = "{1}. {0}. Press Enter or Escape to dismiss.",
             ["combat.dialog.button.confirm"] = "Yes, button.",
             ["combat.dialog.button.confirm.mono"] = "Ok, button.",
             ["combat.dialog.button.cancel"] = "No, button.",
@@ -769,6 +779,19 @@ namespace TheUnseenBanner.Companion
             // and not the intent: marching at a camped party crosses the same bands.
             ["world.threat.closing"] = "{0} closing in.",
             ["world.threat.contact"] = "{0} nearly on you.",
+            // Daily upkeep (phase 4.9), spoken once a day when the game settles wages and
+            // rations. Two halves: what the settlement just cost the company in mood — the
+            // real damage, and invisible until now — and what the next day will cost if
+            // nothing changes. The food estimate is the same division F2 speaks, so the two
+            // never contradict each other.
+            ["world.upkeep.hungry.one"] = "One man went hungry.",
+            ["world.upkeep.hungry"] = "{0} men went hungry.",
+            ["world.upkeep.unpaid.one"] = "One man went unpaid.",
+            ["world.upkeep.unpaid"] = "{0} men went unpaid.",
+            ["world.upkeep.food.none"] = "No food left.",
+            ["world.upkeep.food.one"] = "One day of food left.",
+            ["world.upkeep.food"] = "{0} days of food left.",
+            ["world.upkeep.wages"] = "Tomorrow's wages are not covered: {0} crowns needed, {1} in the purse.",
             // Contextual Enter on the focused B-survey entity. The actual order uses
             // world_state's AutoAttack/AutoEnterLocation funnels; these are only the
             // immediate confirmations and failure cues for a screen-reader user.
