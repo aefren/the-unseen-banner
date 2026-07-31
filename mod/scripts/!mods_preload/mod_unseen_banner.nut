@@ -1155,6 +1155,55 @@
 		local dir = dist > 0 ? _playerTile.getDirectionTo(_tile) : -1;
 		return dist + "|" + dir;
 	},
+	// Roads and rivers (phase 4.8). They are the world map's two travel-speed modifiers —
+	// Const.World.MovementSettings.RoadMult (1.5) and RiverMult (0.75), both applied to the
+	// company's speed in party.nut — and neither of them changes the tile's terrain type,
+	// so nothing the mod already said could give them away: not the terrain word, and not
+	// the terrain-change cue of a march.
+	//
+	// They are read exactly like a trail of footprints, and for the same reason: a road is
+	// only worth knowing about if you know which way it runs. The engine answers presence
+	// only, so the heading is reconstructed from the neighbouring tiles carrying the same
+	// feature, the way trailDirs does it for prints.
+	function tileHasPath(_tile, _river)
+	{
+		return _river ? _tile.HasRiver : _tile.HasRoad;
+	},
+	// The hex directions in which _tile's road (or river) continues, comma-separated. A
+	// tile that carries none itself still answers, and then the directions are where one
+	// starts — which is how a road is found at all while sweeping the map.
+	function pathDirs(_tile, _river)
+	{
+		local dirs = "";
+		for( local d = 0; d < 6; d += 1 )
+		{
+			if (!_tile.hasNextTile(d)) continue;
+			if (!this.tileHasPath(_tile.getNextTile(d), _river)) continue;
+			if (dirs != "") dirs += ",";
+			dirs += d;
+		}
+		return dirs;
+	},
+	// "kind:state:dirs" entries joined by ";", packed for one utterance the way footprints
+	// are: kind is road or river, state is "on" for a feature the tile itself carries (dirs
+	// = where it continues, empty = it ends here) or "near" for one only a neighbour has
+	// (dirs = which neighbours). The near half is asked for by the readouts the player
+	// requests — X and the V list — and not by the steps of a cursor sweep, where every
+	// hex beside a road would repeat it.
+	function pathSegment(_tile, _includeNear)
+	{
+		local out = "";
+		for( local i = 0; i < 2; i += 1 )
+		{
+			local river = i == 1;
+			local dirs = this.pathDirs(_tile, river);
+			local state = this.tileHasPath(_tile, river) ? "on" : (_includeNear && dirs != "" ? "near" : "");
+			if (state == "") continue;
+			if (out != "") out += ";";
+			out += (river ? "river:" : "road:") + state + ":" + dirs;
+		}
+		return out;
+	},
 	// Sort a list of { e, d } records nearest-first (ascending hex distance).
 	function sortByDistance(_scored)
 	{
@@ -1517,6 +1566,13 @@
 		VisibleEnemies = {}  // party id -> true, enemies in sight as of last scan
 	},
 	ScanInterval = 0.4, // seconds of real time between scans
+	// Threat proximity bands, in hex tiles, outermost first (phase 4.7). A hostile party
+	// crossing one of these inwards is announced; the innermost is the one that means
+	// contact is a step away. Everything here belongs in config once 5.1 lands.
+	Bands = [6, 4, 2],
+	// Tiles a party must put between itself and a band before it counts as having left it.
+	// Without this a party pacing the threshold alternates in and out, alerting every scan.
+	BandHysteresis = 1,
 	function reset()
 	{
 		this.m.LastScanTime = 0.0;
@@ -1558,11 +1614,23 @@
 				seen["l" + l.getID()] <- true;
 		this.m.SeenStatic = seen;
 
+		local playerTile = _player.getTile();
 		local enemies = {};
 		foreach( e in ::World.getAllEntitiesAtPos(_player.getPos(),
 			::UnseenBanner.WorldSurvey.ScanRadius) )
-			if (this.isEnemySighted(e, _player)) enemies["" + e.getID()] <- true;
+			if (this.isEnemySighted(e, _player))
+				enemies["" + e.getID()] <- this.bandOf(playerTile.getDistanceTo(e.getTile()));
 		this.m.VisibleEnemies = enemies;
+	},
+	// Which proximity band a distance falls in: 0 beyond the outermost, then 1 upwards as
+	// the gap closes. Crossing one inwards is what earns an alert (phase 4.7) — the sighting
+	// cue only ever fires once, and between it and the fight the map used to go silent no
+	// matter how directly the party came at the company.
+	function bandOf(_dist)
+	{
+		for( local i = this.Bands.len() - 1; i >= 0; i -= 1 )
+			if (_dist <= this.Bands[i]) return i + 1;
+		return 0;
 	},
 	function collectNewStatics(_playerTile, _out)
 	{
@@ -1588,7 +1656,14 @@
 	// Enemies only (user decision). Re-diffed against the previous scan every time, so
 	// a party that leaves sight and comes back announces again — unlike statics, which
 	// only ever announce once.
-	function collectNewEnemies(_player, _out)
+	//
+	// The stored value is the party's proximity band, not a bare "seen" flag: a sighting
+	// is one moment, and what kills a company is the twenty that follow it, with the party
+	// walking straight at you and the mod saying nothing. Each band crossed inwards is
+	// pushed to _closing; the band is measured, not the intent, so it also fires when the
+	// company is the one closing the gap — which is why the wording says the gap is
+	// closing rather than claiming the party is charging.
+	function collectNewEnemies(_player, _playerTile, _out, _closing)
 	{
 		local current = {};
 		foreach( e in ::World.getAllEntitiesAtPos(_player.getPos(),
@@ -1596,11 +1671,57 @@
 		{
 			if (!this.isEnemySighted(e, _player)) continue;
 			local id = "" + e.getID();
-			current[id] <- true;
-			if (id in this.m.VisibleEnemies) continue;
-			_out.push({ kind = "enemy", name = e.getName(), tile = e.getTile() });
+			local tile = e.getTile();
+			local dist = _playerTile.getDistanceTo(tile);
+			local band = this.bandOf(dist);
+
+			if (!(id in this.m.VisibleEnemies))
+			{
+				// First sight: the sighting cue already carries the distance, so no band
+				// alert on top of it. Its band is recorded so the next one is measured
+				// from here.
+				current[id] <- band;
+				_out.push({ kind = "enemy", name = e.getName(), tile = tile });
+				continue;
+			}
+
+			local was = this.m.VisibleEnemies[id];
+			if (band > was)
+			{
+				// Deliberately keeps the OLD band for now: only the alert actually spoken
+				// advances it (see announceClosing), so a second party closing in the same
+				// scan is said on the next one instead of being lost or piled up.
+				current[id] <- was;
+				_closing.push({ id = id, name = e.getName(), tile = tile, band = band,
+					dist = dist });
+				continue;
+			}
+
+			if (band < was && dist > this.Bands[was - 1] + this.BandHysteresis) was = band;
+			current[id] <- was;
 		}
 		this.m.VisibleEnemies = current;
+	},
+	// One alert per scan, the most urgent: the innermost band, and the nearest of those.
+	// Only this one commits its new band, so nothing said is forgotten and nothing unsaid
+	// is dropped. Queue channel, like every other game event — an interrupt here would cut
+	// off whatever list the player is reading, which is the F&H1 bug this project was
+	// built to avoid repeating.
+	function announceClosing(_playerTile, _closing)
+	{
+		if (_closing.len() == 0) return;
+
+		local best = _closing[0];
+		foreach( c in _closing )
+			if (c.band > best.band || (c.band == best.band && c.dist < best.dist)) best = c;
+
+		this.m.VisibleEnemies[best.id] = best.band;
+		// Semantics cross the bridge, never the band number: which band is the innermost
+		// is a fact of this table alone, and config will move it (5.1). The companion is
+		// told "contact" or "closing" and needs to know nothing about the thresholds.
+		::UnseenBanner.sendMessage("queue", best.name, "world.threat.closing",
+			best.band >= this.Bands.len() ? "contact" : "closing",
+			::UnseenBanner.WorldSurvey.posDetail(_playerTile, best.tile));
 	},
 	// A single sighting is read in full (name, kind, distance and bearing — the same
 	// posDetail packing the B survey and the tactical tile readout share); several at
@@ -1647,11 +1768,12 @@
 		}
 
 		local sightings = [];
+		local closing = [];
 		this.collectNewStatics(playerTile, sightings);
-		this.collectNewEnemies(player, sightings);
-		if (sightings.len() == 0) return;
+		this.collectNewEnemies(player, playerTile, sightings, closing);
 
-		this.announce(playerTile, sightings);
+		if (sightings.len() > 0) this.announce(playerTile, sightings);
+		this.announceClosing(playerTile, closing);
 	}
 };
 
@@ -1744,6 +1866,11 @@
 		Blocked = false,   // the current heading hit a wall; hold intent but stop trying
 		LastTileID = -1,   // global player-tile observer, including native/autowalk paths
 		LastTerrain = -1,  // last terrain type observed, so only changes are spoken
+		// Road and river are watched beside the terrain type and for the same reason, but
+		// they are their own transitions: neither changes Type, so stepping onto a road
+		// would otherwise pass in the same silence the terrain cue was built to break.
+		LastRoad = false,
+		LastRiver = false,
 		DestinationID = null, // entity the party is travelling to, sampled each frame
 		SelfUnpause = false // set while WE unpause to move, so the pause hook stays quiet
 	},
@@ -1788,6 +1915,8 @@
 		this.m.Blocked = false;
 		this.m.LastTileID = -1;
 		this.m.LastTerrain = -1;
+		this.m.LastRoad = false;
+		this.m.LastRiver = false;
 		this.m.DestinationID = null;
 		this.m.SelfUnpause = false;
 	},
@@ -1801,8 +1930,11 @@
 	function primeTerrain(_player)
 	{
 		if (_player == null || _player.getTile() == null) return;
-		this.m.LastTileID = _player.getTile().ID;
-		this.m.LastTerrain = _player.getTile().Type;
+		local tile = _player.getTile();
+		this.m.LastTileID = tile.ID;
+		this.m.LastTerrain = tile.Type;
+		this.m.LastRoad = tile.HasRoad;
+		this.m.LastRiver = tile.HasRiver;
 	},
 	// Start one hex step in _dir via the navigator, mirroring the mouse click's own
 	// settings. Returns true if a step is now in flight; false (with an announcement)
@@ -1962,6 +2094,27 @@
 	{
 		return _place != null && ::UnseenBanner.isLandmark(_place) ? "landmark" : "";
 	},
+	// Road/river transitions for the tile just entered, as the cursor's own
+	// "kind:state:dirs" entries with an added "off" state. Updates the watched flags, so it
+	// is called exactly once per tile change. The neighbour pass only runs on the frame a
+	// transition actually happens, which is a handful of times in a day's march.
+	function pathChange(_tile)
+	{
+		local out = "";
+		for( local i = 0; i < 2; i += 1 )
+		{
+			local river = i == 1;
+			local now = ::UnseenBanner.WorldSurvey.tileHasPath(_tile, river);
+			if (now == (river ? this.m.LastRiver : this.m.LastRoad)) continue;
+			if (river) this.m.LastRiver = now;
+			else this.m.LastRoad = now;
+
+			if (out != "") out += ";";
+			out += (river ? "river:" : "road:")
+				+ (now ? "on:" + ::UnseenBanner.WorldSurvey.pathDirs(_tile, river) : "off:");
+		}
+		return out;
+	},
 	// Polled from world_state.onUpdate every frame. Terrain observation is global, not
 	// conditional on Pending: paths started with B+Enter, mouse clicks, contracts or
 	// native pursuit all move the same player party and must announce transitions too.
@@ -1994,11 +2147,16 @@
 					this.m.LastTerrain = tile.Type;
 					terrain = "" + tile.Type;
 				}
+				// Crossing onto or off a road or a river, in the same shape the cursor
+				// packs them. Stepping ON carries the directions it runs, because that is
+				// the moment they are worth having and the alternative is stopping to press
+				// X; stepping OFF is one word, since where the road went no longer matters.
+				local paths = this.pathChange(tile);
 				local place = this.findPlace(player, tile);
-				if (terrain != "" || place != null)
+				if (terrain != "" || paths != "" || place != null)
 				{
 					::UnseenBanner.sendMessage("interrupt", this.placeName(place),
-						"world.move.step", terrain, this.placeKind(place));
+						"world.move.step", terrain, this.placeKind(place) + "|" + paths);
 				}
 			}
 		}
@@ -2539,7 +2697,7 @@
 		if (player == null || player.getTile() == null) return;
 		this.closeList(false);
 		this.m.Tile = player.getTile();
-		this.announceTile("world.cursor.recentered");
+		this.announceTile("world.cursor.recentered", true);
 	},
 	// Shift+X: how far the cursor has wandered and in which direction, without reading the
 	// tile again. Deliberately absent from every cursor step — a bearing on each hex of a
@@ -2575,7 +2733,8 @@
 		if (tile == null) return;
 
 		::UnseenBanner.sendMessage("interrupt", "", "world.cursor.here", "" + tile.Type,
-			this.trackSegment(tile) + "|" + this.lookoutFlag());
+			this.trackSegment(tile) + "|" + this.lookoutFlag()
+				+ "|" + ::UnseenBanner.WorldSurvey.pathSegment(tile, true));
 	},
 	// G: walk the company to the cursor tile, mirroring what a click on that hex does in
 	// world_state.onMouseInput — a straight-line march for anything very close or still
@@ -2788,7 +2947,7 @@
 	// tile holds is therefore packed into the two trailing fields and worded by the
 	// companion. Party and place names are game text and carry no pipes; the count and kind
 	// precede the name so a comma inside one is harmless.
-	function announceTile(_cat)
+	function announceTile(_cat, _includeNear = false)
 	{
 		if (this.m.Tile == null) return;
 		local tile = this.m.Tile;
@@ -2808,7 +2967,12 @@
 			+ "|" + (playerTile != null && playerTile.isSameTileAs(tile) ? "1" : "0")
 			+ "|" + partiesSeg
 			+ "|" + tracksSeg
-			+ "|" + this.lookoutFlag();
+			+ "|" + this.lookoutFlag()
+			// Roads and rivers ride last in the packing but are spoken right after the
+			// terrain: they are a property of the ground, like height on the tactical
+			// cursor. Only a readout the player asked for (X, recentring) reports one on a
+			// neighbouring tile; a sweep step reports the hex it landed on and no more.
+			+ "|" + ::UnseenBanner.WorldSurvey.pathSegment(tile, _includeNear);
 
 		::UnseenBanner.sendMessage("interrupt", place != null ? place.e.getName() : "",
 			_cat, "" + tile.Type, detail);
@@ -2834,6 +2998,20 @@
 		local rows = [];
 		rows.push(this.item("world.cursor.list.terrain", "", "" + tile.Type,
 			tile.IsDiscovered ? "0" : "1"));
+
+		// Road and river follow the terrain, being a property of the same ground, and each
+		// takes its own row: this is the surface where one fact at a time is the point, so
+		// it is also the one place that spells out what the feature does to travel speed.
+		for( local i = 0; i < 2; i += 1 )
+		{
+			local river = i == 1;
+			local dirs = ::UnseenBanner.WorldSurvey.pathDirs(tile, river);
+			local state = ::UnseenBanner.WorldSurvey.tileHasPath(tile, river)
+				? "on" : (dirs != "" ? "near" : "");
+			if (state == "") continue;
+			rows.push(this.item("world.cursor.list.path", "",
+				(river ? "river:" : "road:") + state + ":" + dirs));
+		}
 
 		if (playerTile != null && playerTile.isSameTileAs(tile))
 		{
@@ -2967,6 +3145,23 @@
 		["building.taxidermist"] = true,
 		["building.port"] = true,
 		["building.training_hall"] = true
+	},
+	// The southern cities of the Blazing Deserts DLC re-skin several buildings by
+	// subclassing them, and three of those subclasses give themselves their own ID:
+	// building.taxidermist_oriental, .armorsmith_oriental and .weaponsmith_oriental
+	// (crowd, marketplace, port and temple inherit theirs unchanged). The two smiths are
+	// shops, caught by the stash test before any ID is looked at, but the taxidermist has
+	// no stash — so keying the tables on the exact ID answered "not accessible yet" in
+	// every desert city for a building that has been accessible since 0.9, and its
+	// subclass changes nothing but the ID and two sprites.
+	//
+	// Normalising here rather than adding one more row to the tables: the suffix is the
+	// DLC's re-skin convention, so this also covers any variant we have not met.
+	function baseID( _building )
+	{
+		local id = _building.getID();
+		local cut = id.len() - 9; // "_oriental"
+		return cut > 0 && id.slice(cut) == "_oriental" ? id.slice(0, cut) : id;
 	},
 	// Buildings deliberately left undescribed. The barber only swaps sprite brushes
 	// (body, face, hair, beard, tattoo and hair colour) — no cost, no effect on play,
@@ -3191,11 +3386,11 @@
 			{
 				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
 			}
-			else if (building.getID() in ::UnseenBanner.WorldTown.CosmeticBuildings)
+			else if (::UnseenBanner.WorldTown.baseID(building) in ::UnseenBanner.WorldTown.CosmeticBuildings)
 			{
 				::UnseenBanner.sendMessage("interrupt", it.texto, "world.town.building.cosmetic");
 			}
-			else if (building.getID() == "building.arena")
+			else if (::UnseenBanner.WorldTown.baseID(building) == "building.arena")
 			{
 				local reason = ::UnseenBanner.WorldTown.arenaBlockReason(building);
 				if (reason != null)
@@ -3206,7 +3401,7 @@
 				// Opens the arena contract's own event screen; EventNav takes over.
 				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
 			}
-			else if (building.getID() == "building.port")
+			else if (::UnseenBanner.WorldTown.baseID(building) == "building.port")
 			{
 				local reason = ::UnseenBanner.WorldTown.portBlockReason();
 				if (reason != null)
@@ -3216,7 +3411,7 @@
 				}
 				_state.m.WorldTownScreen.onSlotClicked(it.payload.slot);
 			}
-			else if (building.getID() in ::UnseenBanner.WorldTown.EnterableBuildings)
+			else if (::UnseenBanner.WorldTown.baseID(building) in ::UnseenBanner.WorldTown.EnterableBuildings)
 			{
 				// Buildings with no trade stash but an accessible dialog of their
 				// own: the crowd (recruit roster), the tavern and the temple. Enter

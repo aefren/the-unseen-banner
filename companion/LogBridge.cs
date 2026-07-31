@@ -260,6 +260,7 @@ namespace TheUnseenBanner.Companion
                     "world.survey.parties.screen" => ComposeSurveyPartiesScreen(detalle),
                     "world.survey.item" => ComposeSurveyItem(texto, valor, detalle),
                     "world.discovery.single" => ComposeDiscoverySighting(texto, valor, detalle),
+                    "world.threat.closing" => ComposeThreatClosing(texto, valor, detalle),
                     "world.discovery.summary" => ComposeDiscoverySummary(valor),
                     "world.obituary.entry" => ComposeObituaryEntry(texto, detalle),
                     "world.retinue.slot.follower" => ComposeRetinueSlot(texto, valor, detalle),
@@ -273,6 +274,7 @@ namespace TheUnseenBanner.Companion
                     "world.cursor.travel" => ComposeCursorTravel(texto, valor, detalle),
                     "world.cursor.list.screen" => ComposeCursorListScreen(valor, detalle),
                     "world.cursor.list.terrain" => ComposeCursorTerrainRow(valor, detalle),
+                    "world.cursor.list.path" => ComposePaths(valor, moving: false, withEffect: true),
                     "world.cursor.list.tracks" => ComposeCursorTracksRow(valor, detalle),
                     "help.row" => ComposeHelpRow(valor, detalle),
                     _ => categoria.Length > 0
@@ -1448,12 +1450,22 @@ namespace TheUnseenBanner.Companion
         /// one. They arrive together and are spoken as one utterance on purpose: as two
         /// messages the second would either cut the first off or be discarded by the
         /// next interrupt.</summary>
-        private static string ComposeMoveStep(string place, string terrain, string kind)
+        private static string ComposeMoveStep(string place, string terrain, string detail)
         {
+            string[] p = detail.Split('|');
             string spoken = terrain.Length > 0
                 ? L10n.F("world.move.step", L10n.T("world.terrain." + terrain))
                 : string.Empty;
-            return AppendPlace(spoken, place, kind);
+
+            // Crossing onto or off a road or a river. Neither changes the terrain type, so
+            // this is the only thing that reports it while marching; it sits between the
+            // terrain and the place for the same reason height opens a tactical tile — it
+            // is a property of the ground underfoot.
+            string paths = ComposePaths(p.Length > 1 ? p[1] : "", moving: true);
+            if (paths.Length > 0)
+                spoken = spoken.Length > 0 ? spoken + " " + paths : paths;
+
+            return AppendPlace(spoken, place, p.Length > 0 ? p[0] : "");
         }
 
         /// <summary>As <see cref="ComposeMoveStep"/> for the cue that ends a movement
@@ -1579,6 +1591,69 @@ namespace TheUnseenBanner.Companion
             return string.Join(" ", parts);
         }
 
+        /// <summary>Word the roads and rivers of a tile. packed holds ';'-separated
+        /// "kind:state:dirs" entries — kind road or river, state "on" for a feature the
+        /// tile carries, "near" for one only a neighbour carries, "off" for one just left
+        /// behind while marching — and dirs the hex directions it runs, read as clock
+        /// hours the way a footprint trail is. An "on" entry with no directions is a road
+        /// that ends on this tile, which is said rather than left silent: it is the
+        /// difference between a junction and a dead end.
+        ///
+        /// <paramref name="moving"/> picks the wording for a company crossing onto one
+        /// rather than a cursor describing one. <paramref name="withEffect"/> adds what
+        /// the feature does to travel speed, and is used only by the V list, the one
+        /// surface built to take a single fact at a time.</summary>
+        private static string ComposePaths(string packed, bool moving, bool withEffect = false)
+        {
+            if (packed.Length == 0) return "";
+
+            var parts = new List<string>();
+            foreach (string entry in packed.Split(';'))
+            {
+                if (entry.Length == 0) continue;
+                string[] e = entry.Split(':', 3);
+                if (e.Length < 2) continue;
+
+                string kind = e[0];
+                if (kind != "road" && kind != "river") continue;
+                string state = e[1];
+
+                if (state == "off")
+                {
+                    parts.Add(L10n.T("world.path." + kind + ".left"));
+                    continue;
+                }
+
+                var hours = new List<string>();
+                foreach (string d in (e.Length > 2 ? e[2] : "").Split(','))
+                {
+                    if (int.TryParse(d, out int dir) && dir >= 0 && dir < ClockHours.Length)
+                        hours.Add(L10n.F("world.cursor.trail.hour", ClockHours[dir]));
+                }
+
+                string spoken;
+                if (state == "near")
+                {
+                    // A neighbouring road with no direction would be a claim with nothing
+                    // behind it; the tile itself carries none, so there is nothing to say.
+                    if (hours.Count == 0) continue;
+                    spoken = L10n.F("world.path." + kind + ".near", JoinWithAnd(hours));
+                }
+                else
+                {
+                    string stem = moving ? ".entered" : ".on";
+                    spoken = hours.Count == 0
+                        ? L10n.T("world.path." + kind + stem + ".end")
+                        : L10n.F("world.path." + kind + stem, JoinWithAnd(hours));
+                }
+
+                if (withEffect) spoken += " " + L10n.T("world.path." + kind + ".effect");
+                parts.Add(spoken);
+            }
+
+            return string.Join(" ", parts);
+        }
+
         /// <summary>Word the parties standing on the cursor tile: the nearest one by
         /// name and kind, and a count for the rest. Squirrel packs "count,kind,name"
         /// with the name last, so a comma inside a party name is harmless.</summary>
@@ -1618,6 +1693,10 @@ namespace TheUnseenBanner.Companion
             var parts = new List<string>();
             if (recentered) parts.Add(L10n.T("world.cursor.recentered"));
             parts.Add(TerrainWord(terrain, At(0) == "1") + ".");
+
+            string paths = ComposePaths(At(6), moving: false);
+            if (paths.Length > 0) parts.Add(paths);
+
             if (At(2) == "1") parts.Add(L10n.T("world.cursor.list.self"));
             if (place.Length > 0) parts.Add(ComposeCursorPlace(place, At(1)) + ".");
 
@@ -1632,7 +1711,7 @@ namespace TheUnseenBanner.Companion
 
         /// <summary>Compose the X readout on the plain map: the terrain the company
         /// stands on and, only when there are any, the footprints crossing that hex
-        /// with the direction each trail runs. detail packs "tracks|lookout". No fog
+        /// with the direction each trail runs. detail packs "tracks|lookout|paths". No fog
         /// clause — the company cannot be standing on an unexplored tile.</summary>
         private static string ComposeCursorHere(string terrain, string detail)
         {
@@ -1640,6 +1719,10 @@ namespace TheUnseenBanner.Companion
             string At(int i) => i < p.Length ? p[i] : "";
 
             var parts = new List<string> { TerrainWord(terrain, false) + "." };
+
+            string paths = ComposePaths(At(2), moving: false);
+            if (paths.Length > 0) parts.Add(paths);
+
             string tracks = ComposeCursorTracks(At(0), At(1) == "1");
             if (tracks.Length > 0) parts.Add(tracks);
 
@@ -1768,6 +1851,24 @@ namespace TheUnseenBanner.Companion
             return action.Length > 0 ? spoken + " " + action : spoken;
         }
 
+        /// <summary>Compose a threat proximity alert: a hostile party already in sight
+        /// that has crossed a proximity band inwards. valor says which kind of crossing it
+        /// was — "contact" for the innermost band, "closing" for the rest — rather than a
+        /// band number, so moving the thresholds never reaches this side. Only the
+        /// innermost changes the wording: the distance is spoken anyway, and the band's
+        /// job is the tone, not a gradation the player could act on differently.</summary>
+        private static string ComposeThreatClosing(string name, string band, string detail)
+        {
+            string[] p = detail.Split('|');
+            string head = band == "contact"
+                ? L10n.F("world.threat.contact", name)
+                : L10n.F("world.threat.closing", name);
+
+            string position = ComposePosition(p.Length > 0 ? p[0] : "0",
+                p.Length > 1 ? p[1] : "-1");
+            return position.Length > 0 ? head + " " + position + "." : head;
+        }
+
         /// <summary>Compose an ambient discovery ping: a settlement, location, landmark
         /// or enemy party newly entering the player's sight while travelling, queued so
         /// it never cuts off another announcement. texto is the entity's already-
@@ -1792,7 +1893,10 @@ namespace TheUnseenBanner.Companion
             if (position.Length == 0 && dist == "0")
                 position = L10n.T("world.survey.here");
 
-            return position.Length > 0 ? head + " " + position + "." : head + ".";
+            // Full stop between the sighting and where it is, not a space: the position
+            // is itself a comma phrase ("3 tiles, 10 o'clock"), so running the two
+            // together gave one long unpunctuated line that a screen reader reads flat.
+            return position.Length > 0 ? head + ". " + position + "." : head + ".";
         }
 
         /// <summary>Compose the short count used when several sightings land in the same

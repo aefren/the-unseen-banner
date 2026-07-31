@@ -68,11 +68,17 @@ pensado para que cambiar de puente no obligue a tocar los hooks.
 - Hallazgo clave: el motor **no** entrega teclado al DOM de Coherent; las
   teclas se capturan en Squirrel (`onKeyInput` del estado; códigos del enum
   del motor en `KeyMapSQ` de MSU) y se reenvían al JS vía `asyncCall`.
-- 1.2 parcial: cursor de teclado sobre el menú principal funcionando y
-  verificado (flechas + Enter, canal interrupt).
+- Release 0.9: una campaña ya es jugable de oído de principio a fin. Para 1.0
+  faltan, en este orden: los tres silencios del viaje (amenaza que se acerca,
+  caminos/ríos, aviso de comida y soldadas — items 4.7/4.8/4.9), el menú de
+  Escenarios (1.5), auditar de oído la creación de compañía antes de rehacerla
+  (5.2), cerrar la verificación auditiva pendiente y los bordes conocidos, y
+  añadir remapeo/configuración. El sonar y el beacon quedan expresamente para
+  después de 1.0 (fase 6).
 - 0.6: hecho, y 5.3 con él: `build-release.bat` + `packaging/build-release.ps1`
   arman `dist/TheUnseenBanner-<version>.zip` (mod + Modern Hooks + MSU +
-  compañera self-contained + instalador). Falta publicarlo en Nexus (5.4).
+  compañera self-contained + instalador). Las versiones se publican mediante
+  GitHub Releases (5.4); la 0.9 es la release actual.
 
 El log verificado está en `C:\Users\alfre\OneDrive\Documentos\Battle Brothers\log.html`.
 

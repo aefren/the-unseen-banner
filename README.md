@@ -73,13 +73,15 @@ before starting a serious campaign:
 - ✅ **Before the battle**: the encounter report, the native engage/retreat
   actions and formation editing are keyboard-driven.
 - ✅ **World map**: directional movement, arrivals, camping, the map explorer
-  cursor with travel-to-tile and footprint reading, the nearby survey of
+  cursor with travel-to-tile, road, river and footprint reading, the nearby survey of
   settlements, locations, landmarks and visible parties, and a company readout
   covering day and time, brothers, crowns, wages, food, the active contract with
   its objectives, and the current ambition. Settlements, locations and landmarks
   are announced the first time they come into sight, and enemy parties every
-  time they do. Day changes, speed changes, pauses and brothers ready to level
-  up are announced as they happen.
+  time they do — and a hostile party already in sight says so again each time it
+  closes the gap, so being run down is something you hear coming. Day changes,
+  speed changes, pauses and brothers ready to level up are announced as they
+  happen.
 - ✅ **Settlements**: the town screen as a list of buildings, situations and
   contracts, plus accessible market, recruitment, tavern, temple, taxidermist,
   harbor, training hall and arena.
@@ -90,18 +92,24 @@ before starting a serious campaign:
   skills, injuries, traits and items. The Retinue, the obituary and
   factions/relations are navigable lists.
 - ✅ **End of campaign**: the victory/defeat screen is navigable.
-- ⚠️ **Company creation** (banner, company name, DLC origins) is only partly
-  reachable from the menu cursor; the customization screen itself is not
-  covered yet.
-- ❌ **Positional sonar and destination beacon**: the world map speaks, but it
-  does not yet *sound*. Direction and distance are read as words, not as audio
-  cues.
+- ⚠️ **One silence left while travelling.** Food and wages are only known by
+  asking for them with `F2`; nothing warns you before either runs out. That is
+  the next thing being built.
+- ⚠️ **Company creation** (banner, company name, DLC origins) is navigable from
+  the menu cursor, but the banner is announced only by its number. **Scenarios**,
+  the practice battles on the main menu, opens a screen the cursor does not
+  drive: press Escape to leave it.
+- ⏭️ **After 1.0 — positional sonar and destination beacon**: the world map
+  speaks, but it does not yet *sound*. Direction and distance are read as words,
+  not as audio cues. This no longer blocks the 1.0 gameplay milestone.
 - ❌ **Configurable verbosity and key remapping**: the keys below are fixed for
   now.
 
 In short: a campaign is playable by ear from the main menu to the end screen.
-What is missing is polish — audio positioning and configurability — rather than
-whole surfaces.
+What 1.0 still owes you is the world map saying what it already knows — a threat
+closing in, a road underfoot, a company about to run out of food — plus the
+practice battles, key remapping and configurable verbosity. Audio positioning is
+deliberately scheduled after 1.0.
 
 ---
 
@@ -229,8 +237,8 @@ accident.
 |---|---|
 | Q W E / A S D | Move the company one neighbouring hex; hold Shift to keep marching; Space stops and pauses |
 | Enter | Enter the settlement or location the company is standing on, or engage a hostile party at contact range |
-| X | The hex the company stands on, in one breath: terrain, then each trail of footprints crossing it and the directions it runs. The quick version of V, meant to be tapped between marching steps |
-| V | The same hex as a navigable list: terrain, place, parties and trails, one row at a time, with Enter on a place or party |
+| X | The hex the company stands on, in one breath: terrain, any road or river and the way it runs, then each trail of footprints crossing it and the directions it runs. The quick version of V, meant to be tapped between marching steps |
+| V | The same hex as a navigable list: terrain, roads and rivers, place, parties and trails, one row at a time, with Enter on a place or party |
 | F2 | Company status: day and time, brothers, crowns, wages, food, active contract with its objectives, and current ambition. **Enter on the ambition row abandons it**, when the game allows it — the mouse-only click on the topbar banner, with its own confirmation |
 | F1 | The keys that work right here (see above) |
 | B | Known places: settlements, locations and landmarks. Page Down/Page Up switch category, V opens details, Enter travels there or enters, B closes |
@@ -244,16 +252,30 @@ accident.
 | 1 / 2 / 3 | Game speed (native; the change is now announced) |
 | Space | Pause / unpause (native; announced) |
 
+A hostile party you can already see is announced again each time it closes the
+gap — at six, four and two tiles, the last with a warning that contact is a step
+away — with the distance and bearing each time. It fires on the distance, not on
+who moved, so marching at a camped party says it too.
+
 **Map explorer (M)** is a cursor that walks the map without moving the company,
 so you can survey what is around before committing to a march:
 
 | Key | Action |
 |---|---|
-| Q W E / A S D | Move the cursor one hex (same directions as the company and the battlefield cursor) and read it: terrain, place, parties, and each trail of footprints with the directions it runs |
+| Q W E / A S D | Move the cursor one hex (same directions as the company and the battlefield cursor) and read it: terrain, any road or river with the way it runs, place, parties, and each trail of footprints with the directions it runs |
 | X | Bring the cursor back to the company and read that hex the same way; **Shift+X** reports the company's bearing and distance from it |
 | V | Read the cursor's tile as a list instead, one row at a time. Enter acts on the focused place or party |
 | G | Send the company to the cursor tile |
 | M | Leave the mode |
+
+**Roads and rivers are read like a trail**, with the directions they run — "on a
+road, running 2 o'clock and 8 o'clock" — because a road is only worth knowing
+about once you know which way it goes. They are the map's two travel-speed
+modifiers, a road moving the company half as fast again and a river slowing it by
+a quarter, and neither changes the terrain, so nothing else would tell you. `X`
+and the `V` list also report one on a neighbouring hex, which is how you find the
+road in the first place; while marching, stepping onto one is announced with its
+directions and stepping off it in a word.
 
 Footprints keep the game's own asymmetry: the family of whoever passed is always
 read, but the exact party type only if you have hired a Lookout — the same thing
@@ -414,24 +436,34 @@ in the real game.
 - **Phase 4 — World map.** Directional movement and arrivals; camping; the
   perception-safe survey of places and parties; the company and objectives
   readout, with abandoning an ambition; the map explorer cursor with
-  travel-to-tile and footprints; keyboard entry into settlements and the town
-  screen.
+  travel-to-tile, roads, rivers and footprints; threats announced again as they
+  close in; keyboard entry into settlements and the town screen.
 - **Phase 5 — Special screens.** Obituary, factions and relations, the Retinue
   with accessible confirmations, and the end-of-campaign screen.
 - **Contextual key help (F1)** on every surface the mod drives.
 
 ### Pending
 
-- **Positional sonar** (settlements, contracts, enemy parties, locations) and a
-  **persistent beacon** for the chosen destination — the world map's remaining
-  gap, and the reason direction is currently words rather than sound.
-- **Company creation**: banner, company name and DLC origins.
-- **Configurable verbosity**, and every tunable constant — cadences, ranges,
-  keys — moved into config with MSU keybinds for remapping.
+- **A warning before the food or the wages run out**, rather than only on
+  request through `F2`.
+- **The Scenarios menu**: the game's own practice battles, so tactical combat
+  can be learned without risking a campaign.
+- **Company creation**: name the banner by its emblem, and confirm by ear that
+  the rest of the screen leaves nothing out.
+- Verify by ear the already implemented actions that spend resources or change
+  the campaign, led by taxidermist crafting and abandoning an ambition.
 - **A keyboard-navigation review** for any event whose focus the generic event
   screen does not cover.
 - Verify by ear the flow of loading a save *during* a battle.
-- Publish on Nexus and audiogames.net, find blind testers and iterate.
+- Refresh the settlement contract list immediately after accepting a contract.
+- **Key remapping and configurable verbosity**, followed by the remaining
+  non-sonar tunable constants.
+
+After 1.0: **positional sonar** (settlements, contracts, enemy parties,
+locations) and a **persistent beacon** for the chosen destination.
+
+Releases are published through **GitHub Releases** after the downloadable zip
+has been tested on a clean installation and its new behavior verified by ear.
 
 ### Known limitations
 

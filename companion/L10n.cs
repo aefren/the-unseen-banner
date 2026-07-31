@@ -746,15 +746,29 @@ namespace TheUnseenBanner.Companion
             // newly entering the player's sight while travelling. Only enemy parties are
             // announced (user decision); a single sighting is read in full, several at
             // once collapse into the summary below.
-            ["world.discovery.enemy"] = "Enemy party sighted, {0}",
-            ["world.discovery.settlement"] = "Settlement discovered, {0}",
-            ["world.discovery.location"] = "Location discovered, {0}",
-            ["world.discovery.landmark"] = "Landmark discovered, {0}",
+            //
+            // The name comes first and the kind after it (user decision, jul 2026): the
+            // name is what the player is waiting to hear, and leading with the category
+            // buries it behind a word he already expects. "In sight" replaces
+            // "discovered" for accuracy — nothing is being discovered here, it has come
+            // into view, and an enemy party says it again every time it reappears.
+            ["world.discovery.enemy"] = "{0}, enemy party, in sight",
+            ["world.discovery.settlement"] = "{0}, settlement, in sight",
+            ["world.discovery.location"] = "{0}, location, in sight",
+            ["world.discovery.landmark"] = "{0}, landmark, in sight",
             ["world.discovery.summary"] = "{0}.",
-            ["world.discovery.summary.places.one"] = "1 place discovered",
-            ["world.discovery.summary.places"] = "{0} places discovered",
-            ["world.discovery.summary.enemies.one"] = "1 enemy party sighted",
-            ["world.discovery.summary.enemies"] = "{0} enemy parties sighted",
+            ["world.discovery.summary.places.one"] = "1 place now in sight",
+            ["world.discovery.summary.places"] = "{0} places now in sight",
+            ["world.discovery.summary.enemies.one"] = "1 enemy party now in sight",
+            ["world.discovery.summary.enemies"] = "{0} enemy parties now in sight",
+            // Threat proximity (phase 4.7). A sighting happens once; being run down happens
+            // over the twenty scans after it, and that stretch used to be silent however
+            // directly the party came on. Each proximity band crossed inwards says so, with
+            // the distance and bearing the survey would have given. The wording says the gap
+            // is closing rather than that the party is charging, because the band is measured
+            // and not the intent: marching at a camped party crosses the same bands.
+            ["world.threat.closing"] = "{0} closing in.",
+            ["world.threat.contact"] = "{0} nearly on you.",
             // Contextual Enter on the focused B-survey entity. The actual order uses
             // world_state's AutoAttack/AutoEnterLocation funnels; these are only the
             // immediate confirmations and failure cues for a screen-reader user.
@@ -823,6 +837,28 @@ namespace TheUnseenBanner.Companion
             ["world.cursor.trail"] = "The trail continues {0}.",
             ["world.cursor.trail.hour"] = "{0} o'clock",
             ["world.cursor.trail.none"] = "The trail does not continue into any neighbouring tile.",
+            // Roads and rivers (phase 4.8). The map's two travel-speed modifiers — a road
+            // moves the company at 1.5x and a river at 0.75x, both applied to its speed by
+            // the game itself — and neither of them changes the tile's terrain type, so no
+            // other readout could give them away. Worded like a footprint trail, with the
+            // directions the feature runs, because a road is only worth knowing about once
+            // you know which way it goes; the reading of the hex directions as clock hours
+            // is shared with the trails above. The speed effect is spelled out only in the
+            // V list, which takes one fact at a time; the one-breath readouts stay short.
+            ["world.path.road.on"] = "On a road, running {0}.",
+            ["world.path.road.on.end"] = "On a road that ends here.",
+            ["world.path.road.near"] = "A road one tile away, {0}.",
+            ["world.path.road.entered"] = "Onto a road, running {0}.",
+            ["world.path.road.entered.end"] = "Onto a road that ends here.",
+            ["world.path.road.left"] = "Off the road.",
+            ["world.path.road.effect"] = "A road moves the company half as fast again.",
+            ["world.path.river.on"] = "On a river, running {0}.",
+            ["world.path.river.on.end"] = "On a river that ends here.",
+            ["world.path.river.near"] = "A river one tile away, {0}.",
+            ["world.path.river.entered"] = "Into a river, running {0}.",
+            ["world.path.river.entered.end"] = "Into a river that ends here.",
+            ["world.path.river.left"] = "Out of the river.",
+            ["world.path.river.effect"] = "A river slows the company by a quarter.",
             // Exact party types, keyed by Const.World.FootprintsType (config/world.nut) and
             // worded after the game's own Const.Strings.FootprintsType. Spoken only with a
             // Lookout in the retinue.
