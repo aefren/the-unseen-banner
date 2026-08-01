@@ -97,6 +97,14 @@ namespace TheUnseenBanner.Companion
             ["menu.previous_banner"] = "Previous banner.",
             ["menu.next_banner"] = "Next banner.",
             ["menu.banner"] = "Banner {0}.",
+            // Scenarios: the main menu's prepared tactical battles. The description is
+            // what the row is for — it says what the battle teaches and how hard it is —
+            // so it is spoken with the name, the way a company origin is. Selecting a row
+            // is what the cursor does by standing on it; Play is a button of its own,
+            // past the last scenario, so no single keystroke starts a fight.
+            ["menu.scenario.screen"] = "Scenarios. {1} entries. Use Up and Down to review; the last two entries are Play and Cancel.",
+            ["menu.scenario"] = "{0}.",
+            ["menu.scenario.detail"] = "{0}. {2}",
             // Load / Save campaign screens.
             ["menu.button.disabled"] = "{0}, unavailable.",
             ["menu.campaign.screen"] = "{0}. {1}",

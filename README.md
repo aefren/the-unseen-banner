@@ -96,21 +96,22 @@ before starting a serious campaign:
 - ⚠️ **Newly built, not yet confirmed in play**: the daily warning about food
   and wages. It only speaks when the company is in trouble, so a well-supplied
   campaign will not hear it at all.
-- ⚠️ **Company creation** (banner, company name, DLC origins) is navigable from
-  the menu cursor, but the banner is announced only by its number. **Scenarios**,
-  the practice battles on the main menu, opens a screen the cursor does not
-  drive: press Escape to leave it.
+- ✅ **Company creation**: origin, company name, banner, both difficulties, the
+  late-game crisis, the seed and the remaining boxes. The banner is announced
+  only by its number, having no name of its own to read.
+- ✅ **Scenarios**: the nine prepared tactical battles are navigable from the
+  menu cursor. Each row reads the battle's name and description; Play remains a
+  separate entry after the scenarios, so reviewing one never starts it by accident.
 - ⏭️ **After 1.0 — positional sonar and destination beacon**: the world map
   speaks, but it does not yet *sound*. Direction and distance are read as words,
   not as audio cues. This no longer blocks the 1.0 gameplay milestone.
 - ❌ **Configurable verbosity and key remapping**: the keys below are fixed for
   now.
 
-In short: a campaign is playable by ear from the main menu to the end screen.
-What 1.0 still owes you is the world map saying what it already knows — a threat
-closing in, a road underfoot, a company about to run out of food — plus the
-practice battles, key remapping and configurable verbosity. Audio positioning is
-deliberately scheduled after 1.0.
+In short: a campaign is playable by ear from the main menu to the end screen,
+and the practice battles provide a repeatable place to learn its tactical combat.
+What 1.0 still owes you is verification of the remaining rare paths, key remapping
+and configurable verbosity. Audio positioning is deliberately scheduled after 1.0.
 
 ---
 
@@ -447,10 +448,8 @@ in the real game.
 
 - Verify by ear the daily food and wages warning, which needs a company short of
   one or the other to say anything at all.
-- **The Scenarios menu**: the game's own practice battles, so tactical combat
-  can be learned without risking a campaign.
-- **Company creation**: name the banner by its emblem, and confirm by ear that
-  the rest of the screen leaves nothing out.
+- **Name the banner by its emblem** rather than by its number, the one thing
+  company creation still leaves unsaid.
 - Verify by ear the already implemented actions that spend resources or change
   the campaign, led by taxidermist crafting and abandoning an ambition.
 - **A keyboard-navigation review** for any event whose focus the generic event

@@ -14,6 +14,7 @@ var UnseenBannerMenuNav = function ()
 	this.mIndices = {
 		MainMenuModule: -1,
 		NewCampaignModule: -1,
+		ScenarioMenuModule: -1,
 		LoadCampaignModule: -1,
 		SaveCampaignModule: -1,
 		OptionsMenuModule: -1
@@ -186,6 +187,73 @@ UnseenBannerMenuNav.prototype.getNewCampaignItems = function ()
 	});
 
 	return items;
+};
+
+// --- Scenarios ---------------------------------------------------------------
+// The main menu's third button, between Load Campaign and Options: nine prepared
+// tactical battles that start straight into TacticalState with their own troops, no
+// campaign involved and nothing at stake. Until now the cursor read the button, opened
+// the module and then went quiet, because this module was not in the list above — a
+// blind player landed on a silent screen whose only way out was a guessed Escape.
+//
+// It matters beyond closing that hole. These are the game's own teaching battles, and
+// their descriptions say what each one teaches: Swipe is lines of sight and ranged
+// combat, Defend the Hill is the height advantage the tile cursor reads out, Wolfriders
+// is being encircled, which is the question Shift+B answers. It is also the cheapest
+// place to test this mod's tactical work — two keystrokes from the main menu to a
+// repeatable fight against a chosen enemy, instead of loading a campaign and marching
+// until something attacks.
+//
+// The rows carry their data in jQuery's own store (entry.data('scenario') = the id,
+// name and description the backend sent), so the name and the description are read from
+// there rather than scraped: the description panel is a separate box that only the
+// mouse-hover handler ever fills.
+
+UnseenBannerMenuNav.prototype.getScenarioModule = function ()
+{
+	return $('.scenario-menu-module.display-block:first');
+};
+
+UnseenBannerMenuNav.prototype.getScenarioItems = function ()
+{
+	var self = this;
+	var module = this.getScenarioModule();
+	var items = [];
+
+	module.find('.l-list-container .list-entry').each(function ()
+	{
+		items.push({ type: 'scenario', element: $(this) });
+	});
+
+	// Play and Cancel. Play starts disabled and the module enables it as soon as a
+	// scenario is selected, which selectFirstScenario does before the screen is even
+	// shown — and our own focus keeps doing from then on.
+	module.find('.l-button-bar div.ui-control').each(function ()
+	{
+		if (self.isButton(this) && $(this).is(':visible'))
+			items.push({ type: 'button', element: $(this) });
+	});
+
+	return items;
+};
+
+// Selection follows focus, through the game's own two handlers: the click marks the row
+// and enables Play, the mouseenter refills the description box. Driving both means the
+// visible screen always matches what was just spoken, and Play acts on the row the
+// player is standing on without a second keystroke to "confirm" a selection.
+UnseenBannerMenuNav.prototype.selectScenario = function (_element)
+{
+	_element.trigger('click');
+	_element.trigger('mouseenter');
+};
+
+UnseenBannerMenuNav.prototype.readScenario = function (_element)
+{
+	var data = _element.data('scenario') || {};
+	return {
+		name: data.name || this.readButtonLabel(_element),
+		description: data.description || ''
+	};
 };
 
 // --- Load/Save campaign screens ---------------------------------------------
@@ -593,6 +661,8 @@ UnseenBannerMenuNav.prototype.getItems = function ()
 		return this.getMainItems();
 	if (this.mActiveModule === 'NewCampaignModule')
 		return this.getNewCampaignItems();
+	if (this.mActiveModule === 'ScenarioMenuModule')
+		return this.getScenarioItems();
 	if (this.mActiveModule === 'LoadCampaignModule' || this.mActiveModule === 'SaveCampaignModule')
 		return this.getCampaignItems(this.mActiveModule);
 	if (this.mActiveModule === 'OptionsMenuModule')
@@ -603,7 +673,11 @@ UnseenBannerMenuNav.prototype.getItems = function ()
 UnseenBannerMenuNav.prototype.focusItem = function (_item)
 {
 	var focusTarget = _item.element;
-	if (_item.type === 'radio' || _item.type === 'checkbox')
+	if (_item.type === 'scenario')
+	{
+		this.selectScenario(_item.element);
+	}
+	else if (_item.type === 'radio' || _item.type === 'checkbox')
 	{
 		focusTarget = _item.element.parent();
 	}
@@ -620,7 +694,13 @@ UnseenBannerMenuNav.prototype.focusItem = function (_item)
 	var list = _item.type === 'resolution' ? _item.list : _item.element.closest('.ui-control.list');
 	if (list.length > 0 && typeof list.scrollListToElement === 'function')
 	{
-		var scrollTarget = _item.type === 'resolution' ? _item.element : _item.element.closest('.control');
+		// A scenario row is its own scroll target: it sits in an .l-row, not in the
+		// .control wrapper the options controls use, so asking for that would hand
+		// scrollListToElement an empty set and leave a long list scrolled off-screen
+		// for anyone watching.
+		var scrollTarget = _item.element;
+		if (_item.type !== 'resolution' && _item.type !== 'scenario')
+			scrollTarget = _item.element.closest('.control');
 		list.scrollListToElement(scrollTarget);
 	}
 };
@@ -651,6 +731,17 @@ UnseenBannerMenuNav.prototype.announceItem = function (_item)
 		var entry = this.readCampaignEntry(element);
 		var state = entry.disabled ? 'dis' : (entry.selected ? 'sel' : '');
 		this.sendAnnouncement('menu.campaign', entry.name, state, entry.day + '|' + entry.date);
+	}
+	else if (_item.type === 'scenario')
+	{
+		// The description is what the row is for — it says what the battle teaches and
+		// how hard it is — so it rides with the name, as the campaign origins do. It
+		// arrives as raw BBCode; TextCleaner strips it companion-side, in the one place
+		// every game string is cleaned.
+		var scenario = this.readScenario(element);
+		this.sendAnnouncement(
+			scenario.description.length > 0 ? 'menu.scenario.detail' : 'menu.scenario',
+			scenario.name, '', scenario.description);
 	}
 	else if (_item.type === 'popup-button')
 	{
@@ -773,6 +864,16 @@ UnseenBannerMenuNav.prototype.activateItem = function (_item)
 		// footer buttons); the actual Load/Save is a separate press on that button,
 		// so a stray Enter never loads or overwrites by accident.
 		element.trigger('click');
+		this.announceItem(_item);
+		return;
+	}
+
+	if (_item.type === 'scenario')
+	{
+		// Focus already selected it, so there is nothing left for Enter to do here but
+		// repeat the row. Starting the battle stays on the Play button, one Down past
+		// the last scenario: the same separation the save list keeps between choosing a
+		// row and acting on it, so no single keystroke can drop you into a fight.
 		this.announceItem(_item);
 		return;
 	}
@@ -916,6 +1017,20 @@ UnseenBannerMenuNav.prototype.onModuleShown = function (_id)
 	{
 		this.mIndices.NewCampaignModule = -1;
 		this.announceNewCampaignPage();
+	}
+	else if (_id === 'ScenarioMenuModule')
+	{
+		// Open on the first scenario rather than on nothing: the module has already
+		// selected it for the eye (selectFirstScenario), so starting anywhere else
+		// would put the spoken cursor and the visible screen out of step.
+		this.mIndices.ScenarioMenuModule = 0;
+		var scenarioItems = this.getScenarioItems();
+		this.sendAnnouncement('menu.scenario.screen', '', '' + scenarioItems.length, '');
+		if (scenarioItems.length > 0)
+		{
+			this.focusItem(scenarioItems[0]);
+			this.announceItem(scenarioItems[0]);
+		}
 	}
 	else if (_id === 'OptionsMenuModule')
 	{

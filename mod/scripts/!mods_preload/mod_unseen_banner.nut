@@ -350,6 +350,7 @@
 	RecognizedModules = {
 		MainMenuModule = true,
 		NewCampaignModule = true,
+		ScenarioMenuModule = true,
 		LoadCampaignModule = true,
 		SaveCampaignModule = true,
 		OptionsMenuModule = true
