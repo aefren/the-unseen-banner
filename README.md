@@ -241,7 +241,7 @@ accident.
 | Enter | Enter the settlement or location the company is standing on, or engage a hostile party at contact range |
 | X | The hex the company stands on, in one breath: terrain, any road or river and the way it runs, then each trail of footprints crossing it and the directions it runs. The quick version of V, meant to be tapped between marching steps |
 | V | The same hex as a navigable list: terrain, roads and rivers, place, parties and trails, one row at a time, with Enter on a place or party |
-| F2 | Company status: day and time, brothers, crowns, wages, food, active contract with its objectives, and current ambition. **Enter on the ambition row abandons it**, when the game allows it — the mouse-only click on the topbar banner, with its own confirmation |
+| F2 | Two categories, switched with Page Down/Page Up. **Company status** has day and time, brothers, crowns with daily wages and days covered, food, supplies with total repair time, medicine with total healing time and cost, active contract with objectives, and ambition; Enter cancels the focused contract or ambition after its native confirmation. **Wounded brothers** lists each affected man with missing health, light-wound recovery and every temporary injury's remaining day or day range |
 | F1 | The keys that work right here (see above) |
 | B | Known places: settlements, locations and landmarks. Page Down/Page Up switch category, V opens details, Enter travels there or enters, B closes |
 | Shift+B | The parties currently in sight, same navigation |
@@ -350,10 +350,10 @@ the button.
 | X | Recenter the cursor on the active brother |
 | Z / Shift+Z | Cycle living, visible enemies by distance (Z farther, Shift+Z nearer) |
 | H / Shift+H | Cycle living allies by distance, excluding the active brother |
-| V | Inspect the unit under the cursor: health, armour, fatigue, morale, effects, when it acts |
+| V | Inspect the unit under the cursor: identity, health, armour, equipment, morale, effects and when it acts |
 | Shift+V | Open that same inspection as a navigable list, one fact per row (equipment included); V on a row opens its native tooltip (status effects and each worn item included) — on the equipment row with several pieces, V opens a second list to browse them and V again backs out; Shift+V or Escape closes (Escape backs out of that nested list first) |
 | G | Confirm on the cursor tile: move there, or use the armed skill |
-| T | Active brother's status (health, action points, fatigue, morale) |
+| T | Active brother's live resources: action points and fatigue |
 | Tab | Turn order for the round |
 | B | Visible enemies sorted by distance, with range |
 | Shift+B | Enemies adjacent to the cursor tile, each with its clock direction (would I be surrounded if I moved there?) |

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace TheUnseenBanner.Companion
 {
@@ -14,6 +15,9 @@ namespace TheUnseenBanner.Companion
     {
         private const string Marker = "UB_MSG:";
         private const string EntryEnd = "</div>";
+        private static readonly Regex CombatRollSuffix = new(
+            @" \(Chance:\s*(\d+),\s*Rolled:\s*(\d+)\)$",
+            RegexOptions.CultureInvariant);
 
         // How often we re-check the file for growth. Not yet in a config file
         // (see L10n's own TODO — roadmap 5.1 introduces one); revisit then.
@@ -121,9 +125,10 @@ namespace TheUnseenBanner.Companion
                 string spoken = categoria switch
                 {
                     "tile.readout" => ComposeTileReadout(valor, texto, detalle, cadaver, comparacion),
+                    "combat.log" => ComposeCombatLog(texto),
                     "combat.skill.selected" => ComposeSkillSelected(texto, valor, detalle),
                     "combat.move" => ComposeMove(valor),
-                    "combat.status" => ComposeStatus(texto, valor, detalle),
+                    "combat.status" => ComposeStatus(detalle),
                     "combat.turnorder" => ComposeTurnOrder(texto),
                     "combat.enemies" => ComposeEnemies(texto, valor),
                     "combat.engaged" => ComposeEngaged(texto, valor),
@@ -228,6 +233,10 @@ namespace TheUnseenBanner.Companion
                     string key when key.StartsWith("world.character.dismiss.option.",
                         StringComparison.Ordinal) => ComposeDismissOption(key, texto, valor, detalle),
                     "world.status.levelup.brother" => ComposeStatusLevelUp(texto, valor, detalle),
+                    "world.status.money" => ComposeWorldMoney(valor, detalle),
+                    "world.status.supplies" => ComposeWorldSupplies(valor, detalle),
+                    "world.status.medicine" => ComposeWorldMedicine(valor, detalle),
+                    "world.status.wounded.brother" => ComposeWoundedBrother(texto, detalle),
                     "world.character.formation.summary" => ComposeFormationSummary(valor, detalle),
                     "world.character.formation.slot" => ComposeFormationSlot(texto, valor, detalle),
                     "world.character.formation.target" => ComposeFormationTarget(texto, valor, detalle),
@@ -607,6 +616,141 @@ namespace TheUnseenBanner.Companion
                 "attributes" => L10n.F("world.status.levelup.brother", name, attributes),
                 _ => L10n.F("world.status.levelup.brother", name, perks),
             };
+        }
+
+        /// <summary>The supplies row includes vanilla's live estimate for every
+        /// equipped damaged item and every stash item marked for repair. Squirrel packs
+        /// "hours|required supplies" from AssetManager.getRepairRequired().</summary>
+        private static string ComposeWorldSupplies(string availableText, string detail)
+        {
+            // Preserve the historic {1} slot of world.status.supplies so existing
+            // language overrides keep working after the row gained repair details.
+            string result = L10n.F("world.status.supplies", "", availableText);
+            string[] parts = detail.Split('|');
+            if (parts.Length < 2 || !int.TryParse(parts[0], out int hours) ||
+                !int.TryParse(parts[1], out int required) || required <= 0)
+                return result;
+
+            string duration = hours == 1
+                ? L10n.T("world.status.repair.hour.one")
+                : L10n.F("world.status.repair.hours", hours);
+            result += " " + L10n.F("world.status.repair", duration, required);
+
+            if (int.TryParse(availableText, out int available) && available < required)
+                result += " " + L10n.T("world.status.repair.insufficient");
+            return result;
+        }
+
+        /// <summary>The crowns row mirrors vanilla's topbar tooltip: daily wages and
+        /// the floored number of complete payroll days covered by the current purse.
+        /// Squirrel packs "daily wages|days"; -1 days means there is no wage upkeep.</summary>
+        private static string ComposeWorldMoney(string availableText, string detail)
+        {
+            // Keep the historic {1} slot for existing language overrides.
+            string result = L10n.F("world.status.money", "", availableText);
+            string[] parts = detail.Split('|');
+            if (parts.Length < 2 || !int.TryParse(parts[0], out int dailyWages) ||
+                !int.TryParse(parts[1], out int days))
+                return result;
+
+            if (dailyWages <= 0)
+                return result + " " + L10n.T("world.status.money.no_wages");
+
+            result += " " + L10n.F("world.status.money.daily", dailyWages);
+            result += " " + (days switch
+            {
+                <= 0 => L10n.T("world.status.money.insufficient"),
+                1 => L10n.T("world.status.money.day.one"),
+                _ => L10n.F("world.status.money.days", days),
+            });
+            return result;
+        }
+
+        /// <summary>The medicine row mirrors AssetManager.getHealingRequired(), the
+        /// source of vanilla's topbar tooltip. Its estimate covers temporary injuries
+        /// and sickness, not ordinary lost hitpoints. Squirrel packs
+        /// "minimum days|maximum days|minimum medicine|maximum medicine".</summary>
+        private static string ComposeWorldMedicine(string availableText, string detail)
+        {
+            // Keep the historic {1} slot for existing language overrides.
+            string result = L10n.F("world.status.medicine", "", availableText);
+            string[] parts = detail.Split('|');
+            if (parts.Length < 4 || !int.TryParse(parts[0], out int daysMin) ||
+                !int.TryParse(parts[1], out int daysMax) ||
+                !int.TryParse(parts[2], out int medicineMin) ||
+                !int.TryParse(parts[3], out int medicineMax) || medicineMin <= 0)
+                return result;
+
+            string duration = FormatDayRange(daysMin, daysMax);
+            string required = medicineMin == medicineMax
+                ? medicineMin.ToString()
+                : L10n.F("world.status.healing.medicine.range", medicineMin, medicineMax);
+            result += " " + L10n.F("world.status.healing", duration, required);
+
+            if (int.TryParse(availableText, out int available))
+            {
+                if (available < medicineMin)
+                    result += " " + L10n.T("world.status.healing.insufficient");
+                else if (available < medicineMax)
+                    result += " " + L10n.T("world.status.healing.possibly_insufficient");
+            }
+            return result;
+        }
+
+        private static string FormatDayRange(int minimum, int maximum)
+        {
+            if (minimum == maximum)
+                return minimum == 1
+                    ? L10n.T("world.status.healing.day.one")
+                    : L10n.F("world.status.healing.days", minimum);
+            return L10n.F("world.status.healing.days.range", minimum, maximum);
+        }
+
+        /// <summary>One row in F2's wounded-brothers category. detail is
+        /// "hp|hpMax|light-wound days|injury lines"; each line is name, minimum days
+        /// maximum days and any healing blocker separated by tabs, all read from the
+        /// same APIs and conditions as vanilla's character and status-effect tooltips.</summary>
+        private static string ComposeWoundedBrother(string name, string detail)
+        {
+            string[] parts = detail.Split(new[] { '|' }, 4);
+            string hp = parts.Length > 0 ? parts[0] : "0";
+            string hpMax = parts.Length > 1 ? parts[1] : "0";
+            string lightDays = parts.Length > 2 ? parts[2] : "0";
+            var facts = new List<string> { name + "." };
+
+            if (hp != hpMax)
+            {
+                facts.Add(L10n.F("world.status.wounded.health", hp, hpMax));
+                facts.Add(lightDays == "1"
+                    ? L10n.T("world.status.wounded.light.tomorrow")
+                    : L10n.F("world.status.wounded.light.days", lightDays));
+            }
+
+            if (parts.Length > 3 && parts[3].Length > 0)
+            {
+                foreach (string line in parts[3].Split('\n', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    string[] injury = line.Split('\t');
+                    if (injury.Length < 3) continue;
+                    string blocker = injury.Length > 3 ? injury[3] : "ok";
+                    string healing = blocker switch
+                    {
+                        "medicine" => L10n.F(
+                            "world.status.wounded.injury.no_medicine", injury[0]),
+                        "oath" => L10n.F(
+                            "world.status.wounded.injury.oath", injury[0]),
+                        _ when injury[1] == "1" && injury[2] == "1"
+                            => L10n.F("world.status.wounded.injury.tomorrow", injury[0]),
+                        _ when injury[1] == injury[2]
+                            => L10n.F("world.status.wounded.injury.days", injury[0], injury[1]),
+                        _ => L10n.F("world.status.wounded.injury.range",
+                            injury[0], injury[1], injury[2]),
+                    };
+                    facts.Add(healing);
+                }
+            }
+
+            return string.Join(" ", facts);
         }
 
         private static string ComposeMarketScreen(string name, string money, string description)
@@ -1380,6 +1524,17 @@ namespace TheUnseenBanner.Companion
                 : basePart;
         }
 
+        /// <summary>Shorten only the vanilla hit-roll suffix while preserving the
+        /// already-rendered combat sentence. Unrecognized lines pass through unchanged.</summary>
+        private static string ComposeCombatLog(string text)
+        {
+            Match match = CombatRollSuffix.Match(text);
+            if (!match.Success) return text;
+
+            return text[..match.Index] + " " + L10n.F("combat.log.rolls",
+                match.Groups[1].Value, match.Groups[2].Value);
+        }
+
         /// <summary>Compose a movement announcement (phase 3.3): the tile count the
         /// active man will actually travel this turn, singular-aware.</summary>
         private static string ComposeMove(string tilesText)
@@ -1403,11 +1558,10 @@ namespace TheUnseenBanner.Companion
                 : L10n.F("tile.position", dist, hour);
         }
 
-        /// <summary>Compose the active man's status readout (phase 3.4): the T key.
-        /// detail is "hp/hpmax|ap/apmax|fat/fatmax"; valor is the morale index the
-        /// Squirrel side sends, mapped to a word here so it stays translatable.
-        /// </summary>
-        private static string ComposeStatus(string name, string moraleIndex, string detail)
+        /// <summary>Compose the active man's terse live-resource readout: the T key.
+        /// detail is "ap/apmax|fat/fatmax". V owns identity and the slower-changing
+        /// combat facts, so T answers only what is spent repeatedly during a turn.</summary>
+        private static string ComposeStatus(string detail)
         {
             string[] parts = detail.Split('|');
             (string cur, string max) Pair(int i)
@@ -1417,12 +1571,10 @@ namespace TheUnseenBanner.Companion
                 return (p.Length > 0 ? p[0] : "0", p.Length > 1 ? p[1] : "0");
             }
 
-            var (hp, hpMax) = Pair(0);
-            var (ap, apMax) = Pair(1);
-            var (fat, fatMax) = Pair(2);
-            string morale = L10n.T("combat.morale." + moraleIndex);
+            var (ap, apMax) = Pair(0);
+            var (fat, fatMax) = Pair(1);
 
-            return L10n.F("combat.status", name, hp, hpMax, ap, apMax, fat, fatMax, morale);
+            return L10n.F("combat.status", ap, apMax, fat, fatMax);
         }
 
         /// <summary>Compose one row of the Load/Save campaign list. The name is
@@ -2185,9 +2337,9 @@ namespace TheUnseenBanner.Companion
         /// <summary>Compose the on-demand unit inspection (the v key): the same facts
         /// the mouse tooltip shows for any unit on the field, respecting fog of war.
         /// valor is "sight" (discovered but out of sight, name only) or "ok" (full).
-        /// For the full case detail packs "kind|level|timing|hp|hpMax|fat|fatMax|
-        /// armHead|armHeadMax|armBody|armBodyMax|morale|effects", where effects is
-        /// a newline-separated list of already-localized names (possibly empty).
+        /// For the full case detail packs "kind|level|timing|hp|hpMax|armHead|
+        /// armHeadMax|armBody|armBodyMax|equipment|morale|effects". Equipment and
+        /// effects are newline-separated lists of game-owned names (possibly empty).
         /// The corpse name is a separate JSON field because character names are
         /// player-editable and may contain the packed detail delimiter.</summary>
         private static string ComposeInspect(
@@ -2207,9 +2359,14 @@ namespace TheUnseenBanner.Companion
                 _ => L10n.F("combat.inspect.header.enemy", name, At(1)),
             };
 
-            string morale = L10n.T("combat.morale." + At(11));
+            string morale = L10n.T("combat.morale." + At(10));
             string body = L10n.F("combat.inspect.body",
-                At(3), At(4), At(7), At(8), At(9), At(10), At(5), At(6), morale);
+                At(3), At(4), At(5), At(6), At(7), At(8));
+            string equipment = JoinNames(At(9));
+            string equipmentText = equipment.Length > 0
+                ? L10n.F("combat.sheet.equipment", equipment)
+                : L10n.T("combat.sheet.equipment.none");
+            string moraleText = L10n.F("combat.inspect.morale", morale);
 
             string timing = At(2) switch
             {
@@ -2221,10 +2378,10 @@ namespace TheUnseenBanner.Companion
                 string t => L10n.F("combat.inspect.timing.turns", t),
             };
 
-            string result = header + " " + body;
+            string result = header + " " + body + " " + equipmentText + " " + moraleText;
             if (timing.Length > 0) result += " " + timing;
 
-            string effects = JoinNames(At(12));
+            string effects = JoinNames(At(11));
             if (effects.Length > 0) result += " " + L10n.F("combat.inspect.effects", effects);
             if (corpseName.Length > 0)
                 result += " " + L10n.F("combat.inspect.corpse", corpseName);

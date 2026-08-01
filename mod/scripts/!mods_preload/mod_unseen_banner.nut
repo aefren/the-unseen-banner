@@ -684,13 +684,15 @@
 // remappable through MSU keybinds (roadmap fase 5).
 ::UnseenBanner.WorldStatus <- {
 	m = {
+		Sections = null,
+		SectionIndex = 0,
 		Items = null,
 		ItemIndex = 0,
 		Active = false,
-		// True from the moment Enter asks to abandon the ambition until the native
-		// confirmation closes, so the dialog_screen hook knows the popup coming up is
-		// ours to narrate (same handshake the Retinue uses for its own confirmations).
-		DialogPending = false
+		// Non-empty from the moment Enter requests an ambition or contract cancellation
+		// until the native confirmation closes. The dialog hook uses the value as its
+		// context, the same handshake the Retinue uses for its confirmations.
+		DialogContext = ""
 	},
 	ToggleKey = 72, // f2
 	ActionKey = 39, // enter
@@ -700,17 +702,25 @@
 		[45] = "home",
 		[44] = "end"
 	},
+	SectionKeys = {
+		[46] = "prev", // Page Up
+		[47] = "next"  // Page Down
+	},
 	function isActive()
 	{
 		return this.m.Active;
 	},
 	function isDialogPending()
 	{
-		return this.m.DialogPending;
+		return this.m.DialogContext != "";
+	},
+	function getDialogContext()
+	{
+		return this.m.DialogContext;
 	},
 	function onDialogClosed()
 	{
-		this.m.DialogPending = false;
+		this.m.DialogContext = "";
 	},
 	function handles(_code)
 	{
@@ -718,18 +728,58 @@
 		if (!this.m.Active) return false;
 		// Enter is only ours while the list is open; on the plain map it belongs to
 		// WorldEnter (enter a settlement) and, failing that, to vanilla's zoom reset.
-		return _code == this.ActionKey || _code in this.MoveKeys;
+		return _code == this.ActionKey || _code in this.MoveKeys
+			|| _code in this.SectionKeys;
 	},
 	function reset()
 	{
+		this.m.Sections = null;
+		this.m.SectionIndex = 0;
 		this.m.Items = null;
 		this.m.ItemIndex = 0;
 		this.m.Active = false;
+		this.m.DialogContext = "";
 	},
 	function item(_cat, _texto = "", _valor = "", _detalle = "", _action = "")
 	{
 		return { cat = _cat, texto = _texto, valor = _valor, detalle = _detalle,
 			action = _action };
+	},
+	function section(_id, _items)
+	{
+		return { id = _id, items = _items, index = 0 };
+	},
+	function currentSection()
+	{
+		if (this.m.Sections == null || this.m.Sections.len() == 0) return null;
+		if (this.m.SectionIndex < 0 || this.m.SectionIndex >= this.m.Sections.len())
+			return null;
+		return this.m.Sections[this.m.SectionIndex];
+	},
+	function activateSection(_index, _announce = true, _saveOld = true)
+	{
+		if (this.m.Sections == null || this.m.Sections.len() == 0) return;
+		local old = this.currentSection();
+		if (_saveOld && old != null) old.index = this.m.ItemIndex;
+		if (_index < 0) _index = 0;
+		if (_index >= this.m.Sections.len()) _index = this.m.Sections.len() - 1;
+		this.m.SectionIndex = _index;
+		local section = this.m.Sections[_index];
+		this.m.Items = section.items;
+		this.m.ItemIndex = section.index;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
+		section.index = this.m.ItemIndex;
+		if (_announce) this.announceItem();
+	},
+	function moveSection(_code)
+	{
+		local index = this.m.SectionIndex
+			+ (this.SectionKeys[_code] == "next" ? 1 : -1);
+		// Clamp so the first and last categories are audible boundaries.
+		if (index < 0) index = 0;
+		if (index >= this.m.Sections.len()) index = this.m.Sections.len() - 1;
+		this.activateSection(index);
 	},
 	// Which of the topbar's four time buttons is lit, named. The test is copied from
 	// world_state.updateTopBarButtonState, exact float comparison included, so the
@@ -764,6 +814,10 @@
 		local assets = ::World.Assets;
 		local money = assets.getMoney();
 		local dailyMoney = assets.getDailyMoneyCost();
+		// The crowns tooltip uses this exact floored division to estimate how many
+		// full payrolls the current purse covers. A zero cost is kept separate so
+		// the companion can say that nobody is drawing wages without dividing.
+		local moneyDays = dailyMoney > 0 ? (money / dailyMoney).tointeger() : -1;
 		local food = assets.getFood();
 		local dailyFood = assets.getDailyFoodCost();
 		// Days of food left at the current rate; -1 signals "no upkeep" (an empty
@@ -771,6 +825,8 @@
 		local foodDays = dailyFood > 0 ? (food / dailyFood).tointeger() : -1;
 		local brothers = ::World.getPlayerRoster().getSize();
 		local brothersMax = assets.getBrothersMax();
+		local repair = assets.getRepairRequired();
+		local healing = assets.getHealingRequired();
 
 		local time = ::World.getTime();
 		local day = time.Days;
@@ -837,54 +893,104 @@
 		local contract = ::World.Contracts.getActiveContract();
 		local title = contract != null ? contract.getTitle() : "";
 
-		local items = [];
-		items.push(this.item("world.status.screen"));
-		items.push(this.item(timeCat, timeName, "" + day));
+		local general = [];
+		general.push(this.item("world.status.screen"));
+		general.push(this.item(timeCat, timeName, "" + day));
 		// No speed row: pausing and the 1/2/3 keys already announce the speed the
 		// moment it changes (see the setPause and setNormal/Fast/VeryFastTime hooks),
 		// so a row repeating it here is one more thing to walk past.
-		items.push(this.item(brothers == 1 ? "world.status.brothers.one" : "world.status.brothers", "", "" + brothers, "" + brothersMax));
+		general.push(this.item(brothers == 1 ? "world.status.brothers.one" : "world.status.brothers", "", "" + brothers, "" + brothersMax));
 		// Pending level ups are listed only when there are any. "Nobody is waiting"
 		// is not news: the answer to "who can level up" is a list, and an empty list
 		// is best said by not being there.
 		if (leveled.len() != 0)
 		{
-			items.push(this.item(leveled.len() == 1 ? "world.status.levelup.one" : "world.status.levelup", "", "" + leveled.len()));
+			general.push(this.item(leveled.len() == 1 ? "world.status.levelup.one" : "world.status.levelup", "", "" + leveled.len()));
 			foreach( entry in leveled )
-				items.push(this.item("world.status.levelup.brother", entry.name,
+				general.push(this.item("world.status.levelup.brother", entry.name,
 					entry.what, entry.detail));
 		}
-		items.push(this.item("world.status.money", "", "" + money));
-		items.push(this.item("world.status.wages", "", "" + dailyMoney));
-		items.push(this.item("world.status.food", "", "" + food));
-		if (foodDays < 0) items.push(this.item("world.status.food.none"));
-		else items.push(this.item(foodDays == 1 ? "world.status.food.day" : "world.status.food.days", "", "" + foodDays));
+		general.push(this.item("world.status.money", "", "" + money,
+			dailyMoney + "|" + moneyDays));
+		general.push(this.item("world.status.food", "", "" + food));
+		if (foodDays < 0) general.push(this.item("world.status.food.none"));
+		else general.push(this.item(foodDays == 1 ? "world.status.food.day" : "world.status.food.days", "", "" + foodDays));
 		// The three consumables the topbar shows next to crowns and food. Vanilla's own
 		// UI data names armor parts "Supplies" (data_helper.convertAssetsInformationToUIData),
 		// so the spoken name follows the screen rather than the internal getter.
-		items.push(this.item("world.status.supplies", "", "" + assets.getArmorParts()));
-		items.push(this.item("world.status.ammo", "", "" + assets.getAmmo()));
-		items.push(this.item("world.status.medicine", "", "" + assets.getMedicine()));
+		general.push(this.item("world.status.supplies", "", "" + assets.getArmorParts(),
+			repair.Hours + "|" + repair.ArmorParts));
+		general.push(this.item("world.status.ammo", "", "" + assets.getAmmo()));
+		general.push(this.item("world.status.medicine", "", "" + assets.getMedicine(),
+			healing.DaysMin + "|" + healing.DaysMax + "|"
+				+ healing.MedicineMin + "|" + healing.MedicineMax));
 		local ambitionCat = ambition == ""
 			? "world.status.ambition.none"
 			: (ambitionCancelable ? "world.status.ambition.cancelable" : "world.status.ambition");
-		items.push(this.item(ambitionCat, ambition, "", "",
+		general.push(this.item(ambitionCat, ambition, "", "",
 			ambitionCancelable ? "ambition.cancel" : ""));
-		items.push(this.item(contract != null ? "world.status.contract" : "world.status.contract.none", title));
+		general.push(this.item(contract != null ? "world.status.contract.cancelable" : "world.status.contract.none",
+			title, "", "", contract != null ? "contract.cancel" : ""));
 		if (contract != null)
 		{
 			local objectives = ::UnseenBanner.ContractObjectives.getTexts(contract);
 			if (objectives.len() == 0)
-				items.push(this.item("world.status.objectives.none"));
+				general.push(this.item("world.status.objectives.none"));
 			else
 				foreach( objective in objectives )
-					items.push(this.item("world.status.objective", objective));
+					general.push(this.item("world.status.objective", objective));
 		}
 
-		this.m.Items = items;
-		this.m.ItemIndex = 0;
+		// The second category is one row per brother who is missing hitpoints or has
+		// a temporary injury. Hitpoint recovery uses getDaysWounded(), the exact rounded
+		// value vanilla paints as Light Wounds. Each injury uses getHealingTime(), the
+		// same remaining min/max range its native tooltip displays.
+		local woundedRows = [];
+		foreach( bro in ::World.getPlayerRoster().getAll() )
+		{
+			if (bro == null) continue;
+			local injuries = bro.getSkills().query(::Const.SkillType.TemporaryInjury);
+			if (bro.getSkills().hasSkill("injury.sickness"))
+			{
+				local sickness = bro.getSkills().getSkillByID("injury.sickness");
+				if (sickness != null && injuries.find(sickness) == null) injuries.push(sickness);
+			}
+
+			local lightDays = bro.getDaysWounded();
+			if (lightDays <= 0 && injuries.len() == 0) continue;
+
+			local healingState = assets.getMedicine() <= 0 ? "medicine"
+				: (bro.getSkills().hasSkill("trait.oath_of_sacrifice") ? "oath" : "ok");
+			local injuryData = "";
+			foreach( injury in injuries )
+			{
+				if (injury == null) continue;
+				local healing = injury.getHealingTime();
+				if (injuryData != "") injuryData += "\n";
+				injuryData += injury.getName() + "\t" + healing.Min + "\t"
+					+ healing.Max + "\t" + healingState;
+			}
+			local detail = bro.getHitpoints() + "|" + bro.getHitpointsMax()
+				+ "|" + lightDays + "|" + injuryData;
+			woundedRows.push(this.item("world.status.wounded.brother",
+				bro.getName(), "", detail));
+		}
+
+		local wounded = [];
+		wounded.push(this.item(woundedRows.len() == 1
+			? "world.status.wounded.screen.one" : "world.status.wounded.screen",
+			"", "" + woundedRows.len()));
+		if (woundedRows.len() == 0)
+			wounded.push(this.item("world.status.wounded.none"));
+		else
+			foreach( row in woundedRows ) wounded.push(row);
+
+		this.m.Sections = [
+			this.section("general", general),
+			this.section("wounded", wounded)
+		];
 		this.m.Active = true;
-		this.announceItem();
+		this.activateSection(0, true, false);
 	},
 	function close(_announce = false)
 	{
@@ -900,13 +1006,20 @@
 			return;
 		}
 
+		if (!this.m.Active) return;
+		if (_code in this.SectionKeys)
+		{
+			this.moveSection(_code);
+			return;
+		}
+
 		if (_code == this.ActionKey)
 		{
 			this.activate();
 			return;
 		}
 
-		if (!this.m.Active || !(_code in this.MoveKeys)) return;
+		if (!(_code in this.MoveKeys)) return;
 		local dir = this.MoveKeys[_code];
 		if (dir == "up") this.m.ItemIndex -= 1;
 		else if (dir == "down") this.m.ItemIndex += 1;
@@ -917,21 +1030,20 @@
 		if (this.m.ItemIndex >= this.m.Items.len()) this.m.ItemIndex = this.m.Items.len() - 1;
 		this.announceItem();
 	},
-	// Enter on a row that offers an action. Only the ambition row does today: it runs
-	// the topbar module's own onRequestCancel, which re-checks that an ambition is
-	// active and cancelable and then raises vanilla's confirmation popup — the same
-	// path, guards included, as clicking the banner. DialogNav narrates that popup,
-	// and the game's own "ambition failed" event reports the outcome afterwards, so
-	// nothing here invents feedback for something that has not happened yet.
+	// Enter on an actionable row always calls the same native endpoint as its mouse
+	// control. Both cancellation paths raise the shared confirmation dialog, which
+	// DialogNav narrates and operates; no reputation, relation or payment rule is
+	// reproduced here.
 	function activate()
 	{
 		if (this.m.Items == null || this.m.Items.len() == 0) return;
 		local it = this.m.Items[this.m.ItemIndex];
-		if (it.action != "ambition.cancel")
-		{
-			this.announceItem(); // no action on this row: re-read it
-			return;
-		}
+		if (it.action == "ambition.cancel") this.cancelAmbition();
+		else if (it.action == "contract.cancel") this.cancelContract();
+		else this.announceItem(); // no action on this row: re-read it
+	},
+	function cancelAmbition()
+	{
 
 		local module = ("TopbarAmbitionModule" in ::World) ? ::World.TopbarAmbitionModule : null;
 		if (module == null || ::World.Ambitions == null
@@ -946,8 +1058,26 @@
 		// describing an ambition that may be gone by the time it comes back. Close the
 		// list rather than leave a stale row under the cursor; F2 rebuilds it fresh.
 		this.reset();
-		this.m.DialogPending = true;
+		this.m.DialogContext = "world.ambition";
 		module.onRequestCancel();
+	},
+	function cancelContract()
+	{
+		local contract = ::World.Contracts.getActiveContract();
+		local screen = ::World.State.getWorldScreen();
+		local module = screen != null ? screen.getActiveContractPanelModule() : null;
+		if (contract == null || module == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.status.contract.none");
+			return;
+		}
+
+		// onShowContractDetails is the misleadingly named click endpoint of the visible
+		// contract panel. It opens vanilla's Cancel Contract warning; accepting it calls
+		// ContractManager.removeContract, which owns every consequence of abandonment.
+		this.reset();
+		this.m.DialogContext = "world.contract";
+		module.onShowContractDetails();
 	},
 	function announceItem()
 	{
@@ -7511,13 +7641,14 @@
 			effects += s.getName();
 			ec += 1;
 		}
+		local equipment = this.equipmentItem(e).texto;
 
 		local detail = kind + "|" + e.getLevel()
 			+ "|" + timing
 			+ "|" + e.getHitpoints() + "|" + e.getHitpointsMax()
-			+ "|" + e.getFatigue() + "|" + e.getFatigueMax()
 			+ "|" + e.getArmor(::Const.BodyPart.Head) + "|" + e.getArmorMax(::Const.BodyPart.Head)
 			+ "|" + e.getArmor(::Const.BodyPart.Body) + "|" + e.getArmorMax(::Const.BodyPart.Body)
+			+ "|" + equipment
 			+ "|" + e.getMoraleState()
 			+ "|" + effects;
 
@@ -7871,11 +8002,12 @@
 
 // Combat log (phase 3.1). The tactical event log is the funnel every combat
 // line already flows through as fully rendered, localized text ("X uses Y and
-// hits Z", deaths, morale, round starts...). We forward each line verbatim on
-// the queue channel — the FIFO lesson from F&H1: combat lines must all be
-// spoken, in order, nothing dropped. No JS: the text is already in Squirrel,
-// so this reads it at the source instead of re-scraping the DOM. BBCode color
-// tags in the text are stripped by TextCleaner on the companion side.
+// hits Z", deaths, morale, round starts...). We forward each line on the queue
+// channel — the FIFO lesson from F&H1: combat lines must all be spoken, in
+// order, nothing dropped. The category lets the companion shorten the standard
+// Chance/Rolled suffix without reconstructing the rest of the rendered line.
+// No JS: the text is already in Squirrel, so this reads it at the source instead
+// of re-scraping the DOM. BBCode color tags are stripped by TextCleaner there.
 ::UnseenBanner.CombatLog = {
 	function onLine(_text)
 	{
@@ -7883,7 +8015,7 @@
 		// Skip the blank spacer lines the log uses between blocks; they carry
 		// no words and would only add dead air to the speech queue.
 		if (typeof _text != "string" || this.strip(_text) == "") return;
-		::UnseenBanner.sendMessage("queue", _text);
+		::UnseenBanner.sendMessage("queue", _text, "combat.log");
 	}
 	// Whitespace-only check without a regex dependency (plain Squirrel).
 	function strip(_s)
@@ -8034,7 +8166,7 @@
 // pack their entries newline-separated in the message text (game names never
 // contain newlines), each line tagged so the companion can localize the framing.
 ::UnseenBanner.Readout = {
-	// t = active man's status, tab = turn order, b = visible enemies, k = active
+	// t = active man's live action resources, tab = turn order, b = visible enemies, k = active
 	// man's usable skills. Shift+b is a second, closely related readout: the
 	// enemies hex-adjacent to the cursor tile ("who is around here"), so it lives
 	// on the same key as b (nearby enemies) with the modifier. t and b are bound
@@ -8065,14 +8197,12 @@
 	},
 	function status(_active)
 	{
-		// Health, action points, fatigue as current/max pairs plus the morale
-		// index (the companion maps it to a word). This is the readout that
-		// answers "how many action points do I have left" without a screen.
-		local detail = _active.getHitpoints() + "/" + _active.getHitpointsMax()
-			+ "|" + _active.getActionPoints() + "/" + _active.getActionPointsMax()
+		// T is the terse live-resource answer: action points and fatigue only.
+		// Identity, health, armour, equipment, morale and effects belong to V's
+		// unit inspection, so repeating them here only makes every combat check slower.
+		local detail = _active.getActionPoints() + "/" + _active.getActionPointsMax()
 			+ "|" + _active.getFatigue() + "/" + _active.getFatigueMax();
-		::UnseenBanner.sendMessage("interrupt", _active.getName(), "combat.status",
-			"" + _active.getMoraleState(), detail);
+		::UnseenBanner.sendMessage("interrupt", "", "combat.status", "", detail);
 	},
 	function turnOrder(_active)
 	{
@@ -11421,7 +11551,7 @@
 			"relations", "retinue", "menu"],
 		["world.explorer"] = ["move", "recenter", "list", "travel", "leave"],
 		["world.survey"] = ["move", "details", "activate", "pages", "close"],
-		["world.status"] = ["move", "ambition", "close"],
+		["world.status"] = ["move", "sections", "ambition", "contract", "close"],
 		["world.sheet"] = ["sections", "move", "details", "actions", "switch", "close"],
 		["world.town"] = ["move", "activate", "situations", "leave"],
 		["world.market"] = ["pages", "move", "actions", "details", "compare", "back"],
@@ -12153,7 +12283,8 @@
 		}
 		else if (::UnseenBanner.WorldStatus.isDialogPending())
 		{
-			::UnseenBanner.DialogNav.prime(_title, _text, _isMonologue, "world.ambition");
+			::UnseenBanner.DialogNav.prime(_title, _text, _isMonologue,
+				::UnseenBanner.WorldStatus.getDialogContext());
 		}
 		else
 		{
@@ -12182,16 +12313,36 @@
 	{
 		__original();
 		local wasRetinue = ::UnseenBanner.DialogNav.isContext("world.retinue");
-		local wasAmbition = ::UnseenBanner.DialogNav.isContext("world.ambition");
+		local wasStatus = ::UnseenBanner.DialogNav.isContext("world.ambition")
+			|| ::UnseenBanner.DialogNav.isContext("world.contract");
 		::UnseenBanner.DialogNav.close();
 		if (wasRetinue)
 		{
 			::UnseenBanner.WorldRetinue.onDialogClosed();
 		}
-		if (wasAmbition)
+		if (wasStatus)
 		{
 			::UnseenBanner.WorldStatus.onDialogClosed();
 		}
+	}
+});
+
+// The native contract panel owns cancellation and all its consequences. Announce
+// success only after that callback has actually removed the active contract; this
+// also covers a mouse activation without duplicating any contract logic in the mod.
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/modules/world_contract_screen/world_active_contract_panel_module", function(q) {
+	q.onContractCancelled = @(__original) function()
+	{
+		local contract = ::World.Contracts.getActiveContract();
+		local title = "";
+		if (contract != null)
+		{
+			try { title = contract.getTitle(); }
+			catch (error) { title = contract.getName(); }
+		}
+		__original();
+		::UnseenBanner.sendMessage("queue", title,
+			title == "" ? "world.status.contract.cancelled" : "world.status.contract.cancelled.named");
 	}
 });
 
@@ -13160,6 +13311,23 @@
 	{
 		local code = _key.getKey();
 		local shift = (_key.getModifier() & 1) != 0;
+
+		// Starting a practice scenario goes straight from MainMenuState to this
+		// TacticalState. The scenario module can survive that hand-off as MenuNav's
+		// active module because the whole main-menu screen is hidden without the
+		// module completing its own onModuleHidden callback. Up/Down/Enter were then
+		// claimed here as menu keys and forwarded to a hidden ScenarioMenuModule;
+		// Home/End still reached the tactical lists because MenuNav does not own them.
+		//
+		// The tactical pause menu is the only legitimate menu owner in this state.
+		// Drop any other residual ownership before dispatch, then keep processing this
+		// very key so the first Up/Down reaches the character or inspect list.
+		if (::UnseenBanner.MenuNav.isActive()
+			&& (this.m.TacticalMenuScreen == null
+				|| !this.m.TacticalMenuScreen.isVisible()))
+		{
+			::UnseenBanner.MenuNav.reset();
+		}
 
 		// Before any dispatch, and whatever the key ends up doing: a release ends
 		// the physical press of V, so the auto-repeat latch is cleared here for
