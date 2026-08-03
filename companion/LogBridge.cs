@@ -1959,8 +1959,8 @@ namespace TheUnseenBanner.Companion
 
         /// <summary>Compose the static-place explorer header. B starts on settlements;
         /// Page Up/Down cycle <paramref name="section"/> through locations and landmarks.
-        /// The landmark category carries an extra warning, since none of its entries can
-        /// be entered — saying it once here keeps the rows themselves short.</summary>
+        /// The landmark category carries an extra note: its entries are travel targets,
+        /// but unlike settlements and locations they cannot be entered.</summary>
         private static string ComposeSurveyPlacesScreen(string section, string countText)
         {
             string label = L10n.T("world.survey.section." + section);
@@ -1981,8 +1981,8 @@ namespace TheUnseenBanner.Companion
         /// localized game name; valor is the kind (ally/enemy/neutral party, settlement,
         /// location, landmark); detalle is the "dist|dir" pair shared with the tactical
         /// tile readout, so <see cref="ComposePosition"/> is reused for "3 tiles, 2
-        /// o'clock". Landmarks deliberately get no action hint: the category header
-        /// already says the whole list is unreachable.</summary>
+        /// o'clock". Landmarks get their own approach-only action hint because travelling
+        /// to one does not attempt to enter it.</summary>
         private static string ComposeSurveyItem(string name, string kind, string detail)
         {
             string[] p = detail.Split('|');
@@ -2019,6 +2019,7 @@ namespace TheUnseenBanner.Companion
             {
                 "enemy" => L10n.T("world.survey.action.enemy"),
                 "settlement" or "location" => L10n.T("world.survey.action.place"),
+                "landmark" => L10n.T("world.survey.action.landmark"),
                 _ => string.Empty,
             };
             string spoken = position.Length > 0 ? head + ". " + position + "." : head + ".";

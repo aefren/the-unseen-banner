@@ -1403,19 +1403,27 @@
 		this.sortByDistance(locations);
 		return locations;
 	},
+	// Attached locations mark themselves discovered during onInit, before the player has
+	// seen any of them. Their owning settlement carries the persistent discovery state a
+	// sighted player actually earns by exploring that part of the map.
+	function isLandmarkDiscovered(_landmark)
+	{
+		if (_landmark == null || !::UnseenBanner.isLandmark(_landmark)) return false;
+		local settlement = _landmark.getSettlement();
+		return settlement != null && !settlement.isNull() && settlement.isDiscovered();
+	},
 
 	function collectLandmarks(_playerTile)
 	{
-		// Attached locations, same discovery gate as the other two categories. Unlike
-		// collectLocations this keeps the inactive ones: a burned-down farm still stands
-		// on the map (getName() turns it into "Ruins") and orients just as well as an
-		// intact one, which is all this category is for.
+		// Attached locations whose owning settlement is known. Unlike collectLocations
+		// this keeps the inactive ones: a burned-down farm still stands on the map
+		// (getName() turns it into "Ruins") and remains a valid destination.
 		local landmarks = [];
 		foreach( l in ::World.EntityManager.getLocations() )
 		{
 			if (l == null || !l.isAlive() || l.getTile() == null) continue;
 			if (!::UnseenBanner.isLandmark(l)) continue;
-			if (!l.isDiscovered()) continue;
+			if (!this.isLandmarkDiscovered(l)) continue;
 			landmarks.push({ e = l, d = _playerTile.getDistanceTo(l.getTile()) });
 		}
 		this.sortByDistance(landmarks);
@@ -2298,6 +2306,8 @@
 			if (e == null || !e.isAlive() || !e.isLocation()) continue;
 			if (e.getTile() == null || !e.getTile().isSameTileAs(_tile)) continue;
 			if (!e.isDiscovered()) continue;
+			if (::UnseenBanner.isLandmark(e)
+				&& !::UnseenBanner.WorldSurvey.isLandmarkDiscovered(e)) continue;
 			// Reaching what we were travelling to: the entry flow either opens a screen
 			// that announces itself or reports the arrival, so naming it here as well
 			// would say it twice in a row.
@@ -2524,7 +2534,56 @@
 		}
 
 		if (_entity.isParty()) return this.tryAttackParty(_state, _entity);
+		if (::UnseenBanner.isLandmark(_entity)) return this.tryApproachLandmark(_state, _entity);
 		return this.tryEnterLocation(_state, _entity);
+	},
+	// Landmarks are scenery: they cannot be entered, but they are useful navigation
+	// targets. Track this as an ordinary movement order rather than AutoEnterLocation,
+	// which would call enterLocation on arrival and mark the scenery visited for no gain.
+	function tryApproachLandmark(_state, _landmark)
+	{
+		local player = _state.m.Player;
+		if (player == null
+			|| !::UnseenBanner.WorldSurvey.isLandmarkDiscovered(_landmark))
+		{
+			this.announceUnavailable("world.interact.gone");
+			return false;
+		}
+		if (this.isEscorting(_state))
+		{
+			this.announceUnavailable("world.interact.escorting");
+			return false;
+		}
+
+		local sameTile = _landmark.getTile().isSameTileAs(player.getTile());
+		local inRange = player.getDistanceTo(_landmark)
+			<= ::Const.World.CombatSettings.CombatPlayerDistance;
+		if (sameTile && inRange)
+		{
+			this.stopCurrentOrder(_state);
+			::UnseenBanner.sendMessage("interrupt", _landmark.getName(),
+				"world.interact.already_there");
+			return true;
+		}
+
+		this.stopCurrentOrder(_state);
+		if (!this.routeTo(_state, _landmark))
+		{
+			this.announceUnavailable("world.interact.no_route", _landmark.getName());
+			return false;
+		}
+
+		// routeTo chooses either the engine's short direct march or a navigator path.
+		// WorldMove needs the matching completion flag because no AutoEnterLocation will
+		// remain armed to own and announce this journey's arrival.
+		if (player.m.Destination != null)
+			::UnseenBanner.WorldMove.m.PendingDirect = true;
+		else
+			::UnseenBanner.WorldMove.m.Pending = true;
+		this.ensureTravelRunning(_state);
+		::UnseenBanner.sendMessage("interrupt", _landmark.getName(),
+			"world.interact.approaching");
+		return true;
 	},
 	function tryAttackParty(_state, _party)
 	{
@@ -2567,19 +2626,6 @@
 		if (player == null || !_location.isDiscovered())
 		{
 			this.announceUnavailable("world.interact.gone");
-			return false;
-		}
-
-		// Landmarks are refused outright, ahead of the mouse's eligibility test below,
-		// which lets an attached location through on its first visit purely because
-		// isVisited() is still false. That is how travelling to a "Blast Furnace" ended
-		// in a walk across the map, a silent arrival that opened nothing, and a second
-		// attempt that finally said "cannot be interacted with" — the flag had been set
-		// by the pointless first entry. Nothing of this kind is ever enterable, so say
-		// so before spending the journey.
-		if (::UnseenBanner.isLandmark(_location))
-		{
-			this.announceUnavailable();
 			return false;
 		}
 
@@ -3065,8 +3111,14 @@
 		foreach( l in ::World.EntityManager.getLocations() )
 		{
 			if (l == null || !l.isAlive() || l.getTile() == null) continue;
-			if (!l.isDiscovered() || !l.getTile().isSameTileAs(_tile)) continue;
-			if (::UnseenBanner.isLandmark(l)) return { e = l, kind = "landmark" };
+			if (!l.getTile().isSameTileAs(_tile)) continue;
+			if (::UnseenBanner.isLandmark(l))
+			{
+				if (::UnseenBanner.WorldSurvey.isLandmarkDiscovered(l))
+					return { e = l, kind = "landmark" };
+				continue;
+			}
+			if (!l.isDiscovered()) continue;
 			if (l.isActive()) return { e = l, kind = "location" };
 		}
 		return null;

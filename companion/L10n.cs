@@ -778,9 +778,9 @@ namespace TheUnseenBanner.Companion
             ["world.survey.section.locations"] = "Locations",
             ["world.survey.section.landmarks"] = "Landmarks",
             // Appended to the landmark category header only: the whole list is scenery,
-            // so say once at the top that Enter will get you nowhere, rather than
-            // repeating a refusal on every row the player walks through.
-            ["world.survey.section.landmarks.note"] = "Nothing in this list can be entered or attacked; these are the farms, mines and workshops around a settlement, listed only to orient by.",
+            // but each entry is now a valid travel destination even though it cannot be
+            // entered or attacked on arrival.
+            ["world.survey.section.landmarks.note"] = "These are the farms, mines and workshops around a settlement. They cannot be entered or attacked, but Enter travels to the selected landmark.",
             ["world.survey.closed"] = "Survey closed.",
             ["world.survey.item.enemy"] = "Enemy party, {0}",
             ["world.survey.item.ally"] = "Allied party, {0}",
@@ -797,6 +797,7 @@ namespace TheUnseenBanner.Companion
             ["world.survey.here"] = "At your position",
             ["world.survey.action.enemy"] = "Press Enter to engage or pursue.",
             ["world.survey.action.place"] = "Press Enter to approach or enter.",
+            ["world.survey.action.landmark"] = "Press Enter to approach.",
             // Ambient discovery pings: a settlement, location, landmark or enemy party
             // newly entering the player's sight while travelling. Only enemy parties are
             // announced (user decision); a single sighting is read in full, several at
@@ -844,7 +845,8 @@ namespace TheUnseenBanner.Companion
             ["world.interact.pursuing"] = "Pursuing {0}.",
             ["world.interact.entering"] = "Entering {0}.",
             ["world.interact.approaching"] = "Approaching {0}.",
-            ["world.interact.none"] = "Select an enemy party, settlement, or location first.",
+            ["world.interact.already_there"] = "Your company is already at {0}.",
+            ["world.interact.none"] = "Select an enemy party, settlement, location, or landmark first.",
             ["world.interact.gone"] = "That target is no longer available.",
             ["world.interact.unavailable"] = "That target cannot be interacted with.",
             ["world.interact.escorting"] = "You cannot do that while escorting another party.",
