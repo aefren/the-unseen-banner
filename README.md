@@ -73,7 +73,8 @@ before starting a serious campaign:
 - ✅ **Before the battle**: the encounter report, the native engage/retreat
   actions and formation editing are keyboard-driven.
 - ✅ **World map**: directional movement, arrivals, camping, the map explorer
-  cursor with travel-to-tile, road, river and footprint reading, the nearby survey of
+  cursor with travel-to-tile, road, river and footprint reading, a directional
+  summary of the tracks currently in sight, the nearby survey of
   settlements, locations, landmarks and visible parties, and a company readout
   covering day and time, brothers, crowns, wages, food, the active contract with
   its objectives, and the current ambition. Settlements, locations and landmarks
@@ -245,6 +246,7 @@ accident.
 | F1 | The keys that work right here (see above) |
 | B | Known places: settlements, locations and landmarks. Page Down/Page Up switch category, V opens details, Enter travels there or enters, B closes |
 | Shift+B | The parties currently in sight, same navigation |
+| Shift+F | Count the tracks currently inside the company's vision and group them by direction; plain F keeps its native show/hide-tracking action |
 | M | Map explorer on/off (see below) |
 | T | Make or break camp (native); **Shift+T** explains the current camp state without changing it |
 | C / I | Company management and character screen (see below) |
@@ -281,7 +283,11 @@ directions and stepping off it in a word.
 
 Footprints keep the game's own asymmetry: the family of whoever passed is always
 read, but the exact party type only if you have hired a Lookout — the same thing
-a sighted player gets from the sprite.
+a sighted player gets from the sprite. `Shift+F` is the quick overview: it scans
+only the company's current vision circle — including night, terrain, camp and
+Lookout modifiers — and says, for example, "3 tracks to the northeast and 1 track
+to the southwest." One count is one live trail type on one tile, the finest count
+the game's footprint query exposes.
 
 ### Settlements
 

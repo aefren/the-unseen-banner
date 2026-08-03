@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Visible tracks by direction
+
+`Shift+F` now answers where the tracks around the company are without making the
+player inspect the map one hex at a time. It scans only the company's current
+vision circle, using the live radius after night, terrain, camping and Lookout
+modifiers, and groups the surviving footprint segments into north, northeast,
+southeast, south, southwest and northwest. Several directions stay in one
+interruptible utterance. Plain `F` retains the game's show/hide-tracking action;
+`Shift+T` retains the existing camp explanation.
+
+Verified in game with NVDA.
+
 ## 0.9
 
 Three of the four buildings that still answered "not accessible yet" now have a

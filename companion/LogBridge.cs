@@ -287,6 +287,7 @@ namespace TheUnseenBanner.Companion
                     "world.cursor.list.terrain" => ComposeCursorTerrainRow(valor, detalle),
                     "world.cursor.list.path" => ComposePaths(valor, moving: false, withEffect: true),
                     "world.cursor.list.tracks" => ComposeCursorTracksRow(valor, detalle),
+                    "world.tracks.summary" => ComposeTracksSummary(valor),
                     "help.row" => ComposeHelpRow(valor, detalle),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
@@ -1955,6 +1956,39 @@ namespace TheUnseenBanner.Companion
             return hours.Count == 0
                 ? spoken + " " + L10n.T("world.cursor.trail.none")
                 : spoken + " " + L10n.F("world.cursor.trail", JoinWithAnd(hours));
+        }
+
+        /// <summary>Compose Shift+F's footprint overview. The Squirrel side packs
+        /// "here|north,northeast,southeast,south,southwest,northwest" counts, using
+        /// the same 0-5 direction order as every world hex. Each count is a live
+        /// footprint type on one visible tile; malformed or empty input safely
+        /// degrades to the no-tracks result.</summary>
+        private static string ComposeTracksSummary(string packed)
+        {
+            string[] fields = packed.Split('|', 2);
+            int.TryParse(fields.Length > 0 ? fields[0] : "", out int here);
+            string[] counts = fields.Length > 1 ? fields[1].Split(',') : Array.Empty<string>();
+            var parts = new List<string>();
+
+            if (here > 0)
+            {
+                parts.Add(here == 1
+                    ? L10n.T("world.tracks.here.one")
+                    : L10n.F("world.tracks.here.many", here));
+            }
+
+            for (int dir = 0; dir < ClockHours.Length && dir < counts.Length; dir++)
+            {
+                if (!int.TryParse(counts[dir], out int count) || count <= 0) continue;
+                string direction = L10n.T("world.tracks.direction." + dir);
+                parts.Add(count == 1
+                    ? L10n.F("world.tracks.one", direction)
+                    : L10n.F("world.tracks.many", count, direction));
+            }
+
+            return parts.Count == 0
+                ? L10n.T("world.tracks.none")
+                : L10n.F("world.tracks.summary", JoinWithAnd(parts));
         }
 
         /// <summary>Compose the static-place explorer header. B starts on settlements;

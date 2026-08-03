@@ -907,6 +907,22 @@ namespace TheUnseenBanner.Companion
             ["world.cursor.trail"] = "The trail continues {0}.",
             ["world.cursor.trail.hour"] = "{0} o'clock",
             ["world.cursor.trail.none"] = "The trail does not continue into any neighbouring tile.",
+            // Shift+F: all currently visible trail segments grouped around the company.
+            // Squirrel sends only six direction counts; every spoken word stays here so a
+            // translation can change both the compass vocabulary and singular/plural form.
+            ["world.tracks.summary"] = "{0}.",
+            ["world.tracks.none"] = "No tracks are visible.",
+            ["world.tracks.unavailable"] = "Tracks cannot be checked right now.",
+            ["world.tracks.one"] = "1 track to the {0}",
+            ["world.tracks.many"] = "{0} tracks to the {1}",
+            ["world.tracks.here.one"] = "1 track at your position",
+            ["world.tracks.here.many"] = "{0} tracks at your position",
+            ["world.tracks.direction.0"] = "north",
+            ["world.tracks.direction.1"] = "northeast",
+            ["world.tracks.direction.2"] = "southeast",
+            ["world.tracks.direction.3"] = "south",
+            ["world.tracks.direction.4"] = "southwest",
+            ["world.tracks.direction.5"] = "northwest",
             // Roads and rivers (phase 4.8). The map's two travel-speed modifiers — a road
             // moves the company at 1.5x and a river at 0.75x, both applied to its speed by
             // the game itself — and neither of them changes the tile's terrain type, so no
@@ -1269,6 +1285,7 @@ namespace TheUnseenBanner.Companion
             ["help.world.enter"] = "Enter enters the place you are standing on, or engages a party at contact range.",
             ["help.world.places"] = "B lists the settlements and locations you know of.",
             ["help.world.parties"] = "Shift plus B lists the parties in sight.",
+            ["help.world.tracks"] = "Shift plus F counts the visible tracks in each direction.",
             ["help.world.status"] = "F2 opens company status and wounded brothers, including repair and healing times.",
             ["help.world.explorer"] = "M turns the map explorer on and off.",
             ["help.world.camp"] = "T makes or breaks camp.",

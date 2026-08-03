@@ -3381,6 +3381,101 @@
 	}
 };
 
+// Visible footprint summary. Vanilla F toggles the footprint overlay; Shift+F is its
+// spoken counterpart and answers the quick strategic question "which way are the tracks?"
+// without opening the map cursor or reading one hex at a time. It scans only the current
+// vision circle of the company — player_party.getVisionRadius already includes daytime,
+// terrain, camping and Lookout modifiers — then groups every live footprint type found on
+// those tiles by the six world-map directions. getAllFootprintsAtPos remains the authority
+// for whether a footprint still exists; expired prints never enter the count.
+//
+// The native query exposes footprint TYPES present at a position, not its individual sprite
+// instances. One count therefore means one visible trail segment of one type on one tile.
+// That is also the granularity used by the existing tile readout and the Lookout tooltip.
+::UnseenBanner.WorldTracks <- {
+	Key = 16, // f; plain F keeps vanilla's show/hide-tracking toggle
+	m = {
+		Held = false
+	},
+	function reset()
+	{
+		this.m.Held = false;
+	},
+	function onPress(_state)
+	{
+		if (this.m.Held) return;
+		this.m.Held = true;
+		this.announce(_state);
+	},
+	function consumeRelease()
+	{
+		if (!this.m.Held) return false;
+		this.m.Held = false;
+		return true;
+	},
+	function announce(_state)
+	{
+		local player = _state != null ? _state.getPlayer() : null;
+		local playerTile = player != null ? player.getTile() : null;
+		if (playerTile == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.tracks.unavailable");
+			return;
+		}
+
+		local counts = [0, 0, 0, 0, 0, 0];
+		local here = 0;
+		local radius = player.getVisionRadius();
+		local radiusSq = radius * radius;
+		local origin = player.getPos();
+		local tiles = [playerTile];
+		local visited = { [playerTile.ID] = true };
+
+		// A world-unit circle is convex on the hex grid: every tile centre inside it can
+		// be reached from the player's tile through other centres inside it. That lets this
+		// breadth-first walk stop at the vision edge instead of touching the 140x140 map.
+		for( local i = 0; i < tiles.len(); i += 1 )
+		{
+			local tile = tiles[i];
+			local dx = tile.Pos.X - origin.X;
+			local dy = tile.Pos.Y - origin.Y;
+			if (dx * dx + dy * dy > radiusSq) continue;
+
+			// Current vision should already have discovered the tile, but keep the flag as
+			// a second, conservative fog guard during the first frame after moving/loading.
+			local tracks = tile.IsDiscovered
+				? ::UnseenBanner.WorldCursor.readFootprints(tile)
+				: [];
+			if (tracks.len() > 0)
+			{
+				if (tile.isSameTileAs(playerTile)) here += tracks.len();
+				else
+				{
+					local dir = playerTile.getDirectionTo(tile);
+					if (dir >= 0 && dir < counts.len()) counts[dir] += tracks.len();
+				}
+			}
+
+			for( local d = 0; d < 6; d += 1 )
+			{
+				if (!tile.hasNextTile(d)) continue;
+				local next = tile.getNextTile(d);
+				if (next.ID in visited) continue;
+				visited[next.ID] <- true;
+				tiles.push(next);
+			}
+		}
+
+		local packed = "" + here + "|";
+		for( local d = 0; d < counts.len(); d += 1 )
+		{
+			if (d > 0) packed += ",";
+			packed += counts[d];
+		}
+		::UnseenBanner.sendMessage("interrupt", "", "world.tracks.summary", packed);
+	}
+};
+
 // Town screen (phase 4.5). The settlement screen is a mouse-only grid of building
 // slots plus a list of contracts; vanilla renders it to a texture no screen reader
 // can see. Flatten it into one navigable list: the town name, each building by name,
@@ -11603,7 +11698,7 @@
 		["combat.inspect"] = ["move", "details", "close"],
 		["combat.result"] = ["move", "activate", "details", "lootall", "repeat"],
 		["world"] = ["move", "march", "brake", "enter", "places", "parties",
-			"status", "explorer", "camp", "campdetails", "sheet", "obituary",
+			"tracks", "status", "explorer", "camp", "campdetails", "sheet", "obituary",
 			"relations", "retinue", "menu"],
 		["world.explorer"] = ["move", "recenter", "list", "travel", "leave"],
 		["world.survey"] = ["move", "details", "activate", "pages", "close"],
@@ -12425,6 +12520,7 @@
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldDiscovery.reset();
 		::UnseenBanner.WorldCamp.reset();
+		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -12448,6 +12544,7 @@
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldDiscovery.reset();
 		::UnseenBanner.WorldCamp.reset();
+		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -12471,6 +12568,7 @@
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldDiscovery.reset();
 		::UnseenBanner.WorldCamp.reset();
+		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -13142,6 +13240,37 @@
 			}
 		}
 
+		// F is vanilla's footprint-overlay toggle. Shift+F reads the visible overlay as
+		// one directional summary instead, and consumes the eventual release even when
+		// Shift was released first so vanilla cannot toggle the overlay by accident.
+		if (code == ::UnseenBanner.WorldTracks.Key
+			&& (mapFree || ::UnseenBanner.WorldTracks.m.Held))
+		{
+			local shift = (_key.getModifier() & 1) != 0;
+			if (_key.getState() == 1 && shift && mapFree)
+			{
+				::UnseenBanner.WorldStatus.reset();
+				::UnseenBanner.WorldSurvey.reset();
+				::UnseenBanner.WorldCursor.closeList();
+				::UnseenBanner.WorldTracks.onPress(this);
+				return true;
+			}
+			else if (_key.getState() == 0
+				&& ::UnseenBanner.WorldTracks.consumeRelease())
+			{
+				return true;
+			}
+			else if (_key.getState() == 0 && shift && mapFree)
+			{
+				// Defensive fallback for wrappers that deliver only the native keyup.
+				::UnseenBanner.WorldStatus.reset();
+				::UnseenBanner.WorldSurvey.reset();
+				::UnseenBanner.WorldCursor.closeList();
+				::UnseenBanner.WorldTracks.announce(this);
+				return true;
+			}
+		}
+
 		// Map explorer (phase 4.6). M toggles the mode; while it is on the cursor owns
 		// Q/W/E/A/S/D, X and G, and while its tile list is up it owns Up/Down/Home/End and
 		// Enter. Every one of those keys is acted on at PRESS and consumed in both states:
@@ -13302,6 +13431,19 @@
 	}
 });
 
+// MSU re-registers vanilla F as a release-driven keybind outside world_state's hook.
+// If Shift is released before F, MSU sees the final key as plain F and calls this funnel
+// without ever delivering that release to our state hook. Consume the native toggle here
+// while a Shift+F readout is latched; with every other invocation (plain F or a mouse click)
+// the original show/hide action remains untouched.
+::UnseenBanner.Mod.hook("scripts/ui/screens/world/modules/topbar/world_screen_topbar_options_module", function(q) {
+	q.onTrackingButtonPressed = @(__original) function()
+	{
+		if (::UnseenBanner.WorldTracks.consumeRelease()) return;
+		__original();
+	}
+});
+
 // Combat log funnel (phase 3.1). Every combat line the game writes to the
 // tactical event log passes through log() / logEx() on this module, so we tap
 // both and forward the text to the companion. log_newline() is left alone: it
@@ -13345,6 +13487,7 @@
 		::UnseenBanner.TacticalDialogNav.reset();
 		::UnseenBanner.KeyHelp.close(false);
 		::UnseenBanner.KeyGate.reset();
+		::UnseenBanner.WorldTracks.reset();
 		// A battle starting clears the party's world path, so drop any in-flight world
 		// march here — otherwise Pending would be left stale and fire a spurious
 		// "Stopped" (or resume the march) on returning to the map.
