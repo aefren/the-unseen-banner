@@ -206,6 +206,8 @@ namespace TheUnseenBanner.Companion
             ["tile.object"] = "{0}",
             ["tile.health"] = "health {0} of {1}",
             ["tile.corpse"] = "Corpse: {0}",
+            ["tile.ground.one"] = "Ground item: {0}",
+            ["tile.ground.many"] = "Ground items: {0}",
             ["tile.edge"] = "Edge of the battlefield.",
             ["tile.position"] = "{0} tiles, {1} o'clock",
             ["tile.position.one"] = "1 tile, {0} o'clock",

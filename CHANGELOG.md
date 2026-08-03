@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Ground items in the tactical tile readout
+
+The tactical cursor now names every item physically lying on a discovered hex.
+These are the game's live `tile.Items`: weapons, shields and other objects that a
+brother standing there can equip or put in his bag during battle. Items retained
+only inside `Corpse.Items` remain post-combat loot candidates and are not falsely
+described as recoverable from the ground.
+
+Verified in game with NVDA.
+
 ### Visible tracks by direction
 
 `Shift+F` now answers where the tracks around the company are without making the

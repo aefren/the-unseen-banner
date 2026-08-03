@@ -66,8 +66,8 @@ before starting a serious campaign:
   turning them in works end to end.
 - ✅ **Tactical combat.** The most complete part: tile cursor with terrain,
   height, enemy zone of control and what a step there would cost in action
-  points and fatigue, occupants and corpses, skills with valid targets and hit
-  chance, spoken combat log, brother status, turn order, enemy and ally cycling,
+  points and fatigue, occupants, corpses and ground items, skills with valid
+  targets and hit chance, spoken combat log, brother status, turn order, enemy and ally cycling,
   character sheet with in-battle equipment changes, retreat dialogs, and a
   result screen where loot can be taken piece by piece.
 - ✅ **Before the battle**: the encounter report, the native engage/retreat
@@ -388,8 +388,11 @@ With a **targeted skill armed**, the tile cursor adds "valid target, N% to hit" 
 steps aside there, since the question has already been answered. Arming and
 cancelling a skill are both announced.
 
-The cursor also reads corpses, cover and decorations standing on a tile, so
-skills that consume bodies can be aimed by ear.
+The cursor also reads corpses, cover, decorations and every item lying on a tile,
+so skills that consume bodies can be aimed by ear and recoverable weapons or
+shields can be found. Ground items are the live `tile.Items` collection shown as
+icons by the game; armour retained inside a corpse for the post-battle loot roll
+is not described as something that can be picked up during combat.
 
 ### Before and after the battle
 

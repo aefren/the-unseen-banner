@@ -101,7 +101,7 @@
 	return result;
 }
 
-::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null, _acciones = null, _comparacion = null, _cadaver = null, _talento = null)
+::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null, _acciones = null, _comparacion = null, _cadaver = null, _talento = null, _suelo = null)
 {
 	local json = "{\"canal\":\"" + ::UnseenBanner.jsonEscape(_canal) + "\",\"texto\":\"" + ::UnseenBanner.jsonEscape(_texto) + "\"";
 	if (_categoria != null) json += ",\"categoria\":\"" + ::UnseenBanner.jsonEscape(_categoria) + "\"";
@@ -118,6 +118,10 @@
 	// fatigue) already spend detalle on it, and because the companion appends the
 	// stars uniformly for every row that reports them.
 	if (_talento != null) json += ",\"talento\":\"" + ::UnseenBanner.jsonEscape(_talento) + "\"";
+	// Names of the live item objects lying on a tactical tile. This is deliberately
+	// separate from `cadaver`: tile.Items can be picked up during battle, whereas
+	// Corpse.Items is only evaluated for the post-combat loot screen.
+	if (_suelo != null) json += ",\"suelo\":\"" + ::UnseenBanner.jsonEscape(_suelo) + "\"";
 	json += "}";
 	::logInfo("UB_MSG:" + json);
 }
@@ -7600,6 +7604,32 @@
 			? corpse.CorpseName
 			: "";
 	},
+	// Item icons rendered on a tactical hex are backed by tile.Items, not by the
+	// corpse container. They are the exact ground inventory an actor standing on
+	// the tile can equip or put in a bag. The native tile tooltip exposes these
+	// icons only after IsDiscovered, so use the same fog boundary and never inspect
+	// Corpse.Items (armour there is merely a candidate for post-combat loot).
+	// Names are newline-separated in their own JSON field: names may be localized
+	// game text, while every piece of connecting speech remains in companion L10n.
+	function getGroundItemNames(_tile)
+	{
+		if (_tile == null || !_tile.IsDiscovered || !_tile.IsContainingItems
+			|| _tile.Items == null)
+		{
+			return "";
+		}
+
+		local out = "";
+		foreach( item in _tile.Items )
+		{
+			if (item == null) continue;
+			local name = item.getName();
+			if (name == null || name == "") continue;
+			if (out != "") out += "\n";
+			out += name;
+		}
+		return out;
+	},
 	function announce(_active)
 	{
 		local tile = this.m.CursorTile;
@@ -7608,6 +7638,7 @@
 		local hp = "";
 		local hpMax = "";
 		local corpseName = this.getCorpseName(tile);
+		local groundItems = this.getGroundItemNames(tile);
 
 		// A non-empty tile can hold an actor OR a non-actor object (cover and
 		// decorations such as a brush), so the actor-only API must be gated by an
@@ -7685,11 +7716,12 @@
 		// NB: the extras ride in `comparacion`, not in `contexto`. `contexto` is not a
 		// free field: every message passes through ComposeCharacterContext, which
 		// turns whatever is in it into "Entry N of M" — a tile readout sent there came
-		// out with a bogus position glued to its tail. `comparacion` and `cadaver` are
-		// the two fields with no such global post-processing.
+		// out with a bogus position glued to its tail. Ground items use their dedicated
+		// `suelo` field rather than overloading another globally post-processed field.
 		::UnseenBanner.sendMessage("interrupt", name, "tile.readout", "" + tile.Type,
 			detail, null, null, null, null, this.extras(_active, tile),
-			corpseName != "" ? corpseName : null);
+			corpseName != "" ? corpseName : null, null,
+			groundItems != "" ? groundItems : null);
 	},
 	// On-demand detail for whatever stands on the cursor tile (the v key). Reads the
 	// same funnel the mouse tooltip is built from (actor.getTooltip), honouring fog

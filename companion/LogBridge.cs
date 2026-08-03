@@ -122,9 +122,11 @@ namespace TheUnseenBanner.Companion
                 string comparacion = GetOptionalString(root, "comparacion");
                 string cadaver = GetOptionalString(root, "cadaver");
                 string talento = GetOptionalString(root, "talento");
+                string suelo = GetOptionalString(root, "suelo");
                 string spoken = categoria switch
                 {
-                    "tile.readout" => ComposeTileReadout(valor, texto, detalle, cadaver, comparacion),
+                    "tile.readout" => ComposeTileReadout(
+                        valor, texto, detalle, cadaver, comparacion, suelo),
                     "combat.log" => ComposeCombatLog(texto),
                     "combat.skill.selected" => ComposeSkillSelected(texto, valor, detalle),
                     "combat.move" => ComposeMove(valor),
@@ -1382,14 +1384,20 @@ namespace TheUnseenBanner.Companion
         /// <summary>Compose a tactical tile readout (phase 3.2). The Squirrel side
         /// sends only semantics — terrain as an enum integer, the occupant's
         /// already-localized game name, a packed
-        /// "kind|distance|direction|hp|hpMax" detail, and the corpse name as its
-        /// own JSON field (names are player-editable and may contain delimiters) —
+        /// "kind|distance|direction|hp|hpMax" detail, the corpse name as its
+        /// own JSON field (names are player-editable and may contain delimiters),
+        /// and newline-separated names of the live items in tile.Items —
         /// so every spoken word here (terrain names, "ally"/"enemy", the
         /// clock position) stays in <see cref="L10n"/>. Kinds: "self", "ally",
         /// "enemy", anything else is empty. direction is -1 on the active man's
         /// own tile.</summary>
         private static string ComposeTileReadout(
-            string terrain, string name, string detail, string corpseName, string extras)
+            string terrain,
+            string name,
+            string detail,
+            string corpseName,
+            string extras,
+            string groundItems)
         {
             string[] parts = detail.Split('|');
             string kind = parts.Length > 0 ? parts[0] : "";
@@ -1422,6 +1430,8 @@ namespace TheUnseenBanner.Companion
             if (elevation.Length > 0) readout = elevation + " " + readout;
             if (corpseName.Length > 0)
                 readout += " " + L10n.F("tile.corpse", corpseName) + ".";
+            string ground = ComposeTileGroundItems(groundItems);
+            if (ground.Length > 0) readout += " " + ground + ".";
             if (position.Length > 0)
                 readout += " " + position + ".";
 
@@ -1437,6 +1447,26 @@ namespace TheUnseenBanner.Companion
             // interrupts through them, he does not wait for them.
             string more = ComposeTileExtras(extras);
             return more.Length > 0 ? readout + " " + more : readout;
+        }
+
+        /// <summary>Name the objects the engine currently renders on this hex and
+        /// exposes as its ground inventory. Unlike Corpse.Items, these can be picked
+        /// up during battle by an actor standing on the tile.</summary>
+        private static string ComposeTileGroundItems(string packed)
+        {
+            if (string.IsNullOrEmpty(packed)) return "";
+
+            var names = new List<string>();
+            foreach (string raw in packed.Split('\n'))
+            {
+                string name = raw.TrimEnd('\r');
+                if (name.Length > 0) names.Add(name);
+            }
+
+            if (names.Count == 0) return "";
+            return names.Count == 1
+                ? L10n.F("tile.ground.one", names[0])
+                : L10n.F("tile.ground.many", JoinWithAnd(names));
         }
 
         /// <summary>The height clause that opens a tile readout. Relative to the
