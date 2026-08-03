@@ -359,6 +359,7 @@ the button.
 | V | Inspect the unit under the cursor: identity, health, armour, equipment, morale, effects and when it acts |
 | Shift+V | Open that same inspection as a navigable list, one fact per row (equipment included); V on a row opens its native tooltip (status effects and each worn item included) — on the equipment row with several pieces, V opens a second list to browse them and V again backs out; Shift+V or Escape closes (Escape backs out of that nested list first) |
 | G | Confirm on the cursor tile: move there, or use the armed skill |
+| P | Open the pickable items under the active brother; Up/Down chooses one, Enter moves it to the backpack, P or Escape closes |
 | T | Active brother's live resources: action points and fatigue |
 | Tab | Turn order for the round |
 | B | Visible enemies sorted by distance, with range |
@@ -393,6 +394,11 @@ so skills that consume bodies can be aimed by ear and recoverable weapons or
 shields can be found. Ground items are the live `tile.Items` collection shown as
 icons by the game; armour retained inside a corpse for the post-battle loot roll
 is not described as something that can be picked up during combat.
+
+To recover one during battle, first move the active brother onto its hex and press
+`P`. Up/Down chooses an item and Enter sends that exact instance through the
+game's native ground-to-backpack action. Its Action Point cost, Quick Hands, free
+bag space and every ordinary inventory restriction are therefore unchanged.
 
 ### Before and after the battle
 

@@ -130,6 +130,7 @@ namespace TheUnseenBanner.Companion
                     "combat.log" => ComposeCombatLog(texto),
                     "combat.skill.selected" => ComposeSkillSelected(texto, valor, detalle),
                     "combat.move" => ComposeMove(valor),
+                    "combat.ground.item" => ComposeGroundItem(texto, valor, detalle),
                     "combat.status" => ComposeStatus(detalle),
                     "combat.turnorder" => ComposeTurnOrder(texto),
                     "combat.enemies" => ComposeEnemies(texto, valor),
@@ -492,6 +493,17 @@ namespace TheUnseenBanner.Companion
 
             bool opened = parts.Length > 2 && parts[2] == "1";
             return opened ? L10n.F("world.inventory.action.opened", result) : result;
+        }
+
+        private static string ComposeGroundItem(string name, string cost, string detail)
+        {
+            string[] parts = detail.Split('|');
+            string index = parts.Length > 0 ? parts[0] : "1";
+            string total = parts.Length > 1 ? parts[1] : "1";
+            bool opened = parts.Length > 2 && parts[2] == "1";
+            string result = L10n.F("combat.ground.item", name, cost)
+                + " " + L10n.F("combat.ground.position", index, total);
+            return opened ? L10n.F("combat.ground.opened", result) : result;
         }
 
         /// <summary>Attribute names live here, not in the game: the native level-up

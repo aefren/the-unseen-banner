@@ -12,6 +12,13 @@ described as recoverable from the ground.
 
 Verified in game with NVDA.
 
+`P` now opens the pickable objects under the active brother as a short list.
+Up/Down selects one and Enter moves it to the backpack through the native
+ground-inventory endpoint, preserving Action Point costs, Quick Hands, capacity
+checks and rollback.
+
+Verified in game with NVDA.
+
 ### Visible tracks by direction
 
 `Shift+F` now answers where the tracks around the company are without making the

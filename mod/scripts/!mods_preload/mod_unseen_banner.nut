@@ -8340,6 +8340,211 @@
 	}
 };
 
+// Ground-item pickup (tactical). P opens the objects physically lying under the
+// active brother, Up/Down selects one and Enter moves exactly that object into the
+// first free bag slot. The mutation goes through CharacterScreen's native
+// onDropInventoryItemIntoBag endpoint rather than moving item references here: that
+// funnel enforces active-brother ownership, action-point cost, Quick Hands, bag
+// capacity, isChangeableInBattle/isAllowedInBag and rollback on every failure.
+//
+// This list deliberately reads the ACTIVE brother's tile, not TileCursor.m.CursorTile.
+// Battle Brothers only permits ground inventory changes where the actor stands, so
+// allowing the survey cursor to pick something five tiles away would invent a power
+// the mouse interface does not have. P is unbound in vanilla tactical mode (it opens
+// the Retinue only on the world map).
+::UnseenBanner.GroundPickup <- {
+	m = {
+		Active = false,
+		Items = null,
+		ItemIndex = 0,
+		ActorID = -1,
+		PendingRelease = -1
+	},
+	ToggleKey = 26, // p
+	ActionKey = 39, // enter
+	CancelKey = 41, // escape
+	MoveKeys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end"
+	},
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	function handles(_code)
+	{
+		if (this.m.PendingRelease == _code) return true;
+		if (!this.m.Active) return _code == this.ToggleKey;
+		return _code == this.ToggleKey || _code == this.ActionKey
+			|| _code == this.CancelKey || (_code in this.MoveKeys);
+	},
+	function clear()
+	{
+		this.m.Active = false;
+		this.m.Items = null;
+		this.m.ItemIndex = 0;
+		this.m.ActorID = -1;
+	},
+	function reset()
+	{
+		this.clear();
+		this.m.PendingRelease = -1;
+	},
+	function close(_announce = false, _release = -1)
+	{
+		local was = this.m.Active;
+		this.clear();
+		if (_release >= 0) this.m.PendingRelease = _release;
+		if (was && _announce)
+			::UnseenBanner.sendMessage("interrupt", "", "combat.ground.closed");
+	},
+	function consumeRelease(_code)
+	{
+		if (this.m.PendingRelease != _code) return false;
+		this.m.PendingRelease = -1;
+		return true;
+	},
+	// Only list objects the native ground->bag path can ever accept. AP and free
+	// space are dynamic constraints and remain visible as a cost / native error;
+	// intrinsic non-bag or non-changeable objects are not offered as pickable.
+	function build(_active)
+	{
+		local rows = [];
+		local tile = _active != null ? _active.getTile() : null;
+		if (tile != null && tile.Items != null)
+		{
+			foreach( item in tile.Items )
+			{
+				if (item == null || !item.isChangeableInBattle()
+					|| !item.isAllowedInBag()) continue;
+				rows.push({
+					item = item,
+					id = item.getInstanceID(),
+					name = item.getName()
+				});
+			}
+		}
+		this.m.Items = rows;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (rows.len() > 0 && this.m.ItemIndex >= rows.len())
+			this.m.ItemIndex = rows.len() - 1;
+	},
+	function current()
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return null;
+		if (this.m.ItemIndex < 0 || this.m.ItemIndex >= this.m.Items.len()) return null;
+		return this.m.Items[this.m.ItemIndex];
+	},
+	function open(_active, _state)
+	{
+		if (_active == null || _active.getTile() == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.ground.none");
+			return;
+		}
+		if (_state != null && _state.getSelectedSkillID() != null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.ground.skill_armed");
+			return;
+		}
+
+		this.m.ItemIndex = 0;
+		this.build(_active);
+		if (this.m.Items.len() == 0)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.ground.none");
+			return;
+		}
+
+		this.m.Active = true;
+		this.m.ActorID = _active.getID();
+		this.announce(true, _active);
+	},
+	function announce(_opened, _active)
+	{
+		local row = this.current();
+		if (row == null || _active == null) return;
+		local cost = _active.getItems().getActionCost([row.item]);
+		local detail = (this.m.ItemIndex + 1) + "|" + this.m.Items.len()
+			+ "|" + (_opened ? "1" : "0");
+		::UnseenBanner.sendMessage("interrupt", row.name, "combat.ground.item",
+			"" + cost, detail);
+	},
+	function move(_code, _active)
+	{
+		if (this.m.Items == null || this.m.Items.len() == 0) return;
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.m.ItemIndex -= 1;
+		else if (dir == "down") this.m.ItemIndex += 1;
+		else if (dir == "home") this.m.ItemIndex = 0;
+		else this.m.ItemIndex = this.m.Items.len() - 1;
+		if (this.m.ItemIndex < 0) this.m.ItemIndex = 0;
+		if (this.m.ItemIndex >= this.m.Items.len())
+			this.m.ItemIndex = this.m.Items.len() - 1;
+		this.announce(false, _active);
+	},
+	function errorCode(_result)
+	{
+		if (typeof _result == "table" && "error" in _result)
+			return "code" in _result ? "" + _result.code : "0";
+		return "0";
+	},
+	function take(_active, _screen)
+	{
+		local row = this.current();
+		if (row == null || _active == null || _active.getID() != this.m.ActorID
+			|| _screen == null || !_screen.isInGroundMode())
+		{
+			this.close(false, this.ActionKey);
+			::UnseenBanner.sendMessage("interrupt", "", "world.inventory.error", "0");
+			return;
+		}
+
+		// Null source/target indices ask the native endpoint for this instance ID and
+		// the first empty bag slot; it still verifies that the item remains on this
+		// actor's current tile before spending anything.
+		local result = _screen.onDropInventoryItemIntoBag([
+			_active.getID(), row.id, null, null
+		]);
+		if (typeof result != "table" || "error" in result)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.inventory.error",
+				this.errorCode(result));
+			return;
+		}
+
+		local name = row.name;
+		this.build(_active);
+		if (this.m.Items.len() == 0) this.close(false, this.ActionKey);
+		::UnseenBanner.sendMessage("interrupt", name, "combat.ground.taken",
+			"" + _active.getActionPoints());
+	},
+	function onKey(_code, _active, _state, _screen)
+	{
+		if (_code == this.ToggleKey)
+		{
+			if (this.m.Active) this.close(true, _code);
+			else this.open(_active, _state);
+			return;
+		}
+		if (!this.m.Active) return;
+		if (_code == this.CancelKey)
+		{
+			this.close(true, _code);
+			return;
+		}
+		if (_active == null || _active.getID() != this.m.ActorID)
+		{
+			this.close(true, _code);
+			return;
+		}
+		if (_code in this.MoveKeys) this.move(_code, _active);
+		else if (_code == this.ActionKey) this.take(_active, _screen);
+	}
+};
+
 // On-demand readouts (phase 3.4) and the character-sheet readout for the C/I
 // screen. Everything here is pull, not push: dedicated keys speak the active
 // man's live resources, the turn order, or the visible enemies, and opening the
@@ -11724,10 +11929,11 @@
 	// still answers F1 with something true rather than with silence.
 	Contexts = {
 		["combat"] = ["cursor", "recenter", "enemies", "allies", "inspect",
-			"inspectlist", "act", "status", "turnorder", "threats", "adjacent",
+			"inspectlist", "act", "pickup", "status", "turnorder", "threats", "adjacent",
 			"skills", "hotkeys", "sheet", "endround", "wait"],
 		["combat.sheet"] = ["move", "details", "equip", "switch", "close"],
 		["combat.inspect"] = ["move", "details", "close"],
+		["combat.ground"] = ["move", "take", "close"],
 		["combat.result"] = ["move", "activate", "details", "lootall", "repeat"],
 		["world"] = ["move", "march", "brake", "enter", "places", "parties",
 			"tracks", "status", "explorer", "camp", "campdetails", "sheet", "obituary",
@@ -11849,6 +12055,7 @@
 		|| ::UnseenBanner.DialogNav.isActive()) return "dialog";
 	if (::UnseenBanner.MenuNav.isActive()) return "menu";
 	if (_state.isInCharacterScreen()) return "combat.sheet";
+	if (::UnseenBanner.GroundPickup.isActive()) return "combat.ground";
 	if (::UnseenBanner.TileCursor.isInspectMenuActive()) return "combat.inspect";
 	return "combat";
 }
@@ -13513,6 +13720,7 @@
 		::UnseenBanner.disarmVanillaWaitTurnEnd();
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.TileCursor.reset();
+		::UnseenBanner.GroundPickup.reset();
 		::UnseenBanner.SheetNav.reset();
 		::UnseenBanner.CombatResult.reset();
 		::UnseenBanner.DialogNav.reset();
@@ -13531,6 +13739,7 @@
 	{
 		::UnseenBanner.MenuNav.reset();
 		::UnseenBanner.TileCursor.reset();
+		::UnseenBanner.GroundPickup.reset();
 		::UnseenBanner.CombatResult.reset();
 		::UnseenBanner.DialogNav.reset();
 		::UnseenBanner.TacticalDialogNav.reset();
@@ -13712,6 +13921,40 @@
 			return true;
 		}
 
+		// P's ground-item list is modal over the battlefield. Its captured rows remain
+		// valid only for the active brother standing on that tile, and every unrelated
+		// key is consumed while it is open so camera/skill bindings cannot act behind
+		// the list. F1 retains priority above and reports this list's own controls.
+		if (::UnseenBanner.GroundPickup.isActive())
+		{
+			if (::UnseenBanner.GroundPickup.handles(code))
+			{
+				local active = this.Tactical.TurnSequenceBar.getActiveEntity();
+				if (_key.getState() == 1)
+				{
+					if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
+						::UnseenBanner.GroundPickup.onKey(code, active, this,
+							this.m.CharacterScreen);
+				}
+				else if (_key.getState() == 0)
+				{
+					::UnseenBanner.KeyGate.release(code);
+					::UnseenBanner.GroundPickup.consumeRelease(code);
+				}
+			}
+			return true;
+		}
+
+		// Closing on P/Escape, or taking the final item with Enter, changes the
+		// surface on the press. Swallow that key's release so Escape cannot open the
+		// pause menu and Enter cannot end the brother's turn immediately afterwards.
+		if (_key.getState() == 0
+			&& ::UnseenBanner.GroundPickup.consumeRelease(code))
+		{
+			::UnseenBanner.KeyGate.release(code);
+			return true;
+		}
+
 		// Shift+V's unit list is a real modal cursor once opened. Its rows and
 		// status descriptors are already captured, so navigation must not depend on
 		// TurnSequenceBar still reporting an active player or on transient
@@ -13754,7 +13997,9 @@
 		local isInspectKey = ::UnseenBanner.TileCursor.handlesInspect(code);
 		local isActKey = ::UnseenBanner.Combat.handles(code);
 		local isReadoutKey = ::UnseenBanner.Readout.handles(code);
-		if ((isCursorKey || isInspectMenuKey || isInspectKey || isActKey || isReadoutKey)
+		local isGroundKey = ::UnseenBanner.GroundPickup.handles(code);
+		if ((isCursorKey || isInspectMenuKey || isInspectKey || isActKey || isReadoutKey
+				|| isGroundKey)
 			&& !this.isInLoadingScreen()
 			&& !this.isBattleEnded()
 			&& !this.isInCharacterScreen()
@@ -13784,6 +14029,9 @@
 							::UnseenBanner.TileCursor.inspect(active);
 						else if (isActKey)
 							::UnseenBanner.Combat.onKey(code, active, this, ::UnseenBanner.TileCursor.getTile(active));
+						else if (isGroundKey)
+							::UnseenBanner.GroundPickup.onKey(code, active, this,
+								this.m.CharacterScreen);
 						else
 							::UnseenBanner.Readout.onKey(code, active,
 								this.Tactical.Entities, shift);
@@ -13880,6 +14128,7 @@
 		// navigation but vanilla's "wait turn" — the turn is gone before he can
 		// hear that anything changed. Announced only when one was really open.
 		::UnseenBanner.TileCursor.closeInspectMenu(true);
+		::UnseenBanner.GroundPickup.close(true);
 
 		if (_entity != null && _entity.isPlayerControlled() && _entity.isAlive())
 		{
