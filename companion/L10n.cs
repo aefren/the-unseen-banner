@@ -788,6 +788,10 @@ namespace TheUnseenBanner.Companion
             ["world.survey.item.settlement"] = "Settlement, {0}",
             // The owning faction is the banner the map draws beside the settlement.
             ["world.survey.item.settlement.owned"] = "Settlement, {0}, {1}",
+            // The B list header already names the category, so its settlement rows
+            // start directly with the useful identity. The longer templates above
+            // remain in use when the map cursor describes a place outside that list.
+            ["world.survey.item.settlement.owned.in_category"] = "{0}, {1}",
             ["world.survey.item.location"] = "Location, {0}",
             ["world.survey.item.landmark"] = "Landmark, {0}",
             ["world.survey.here"] = "At your position",

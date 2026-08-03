@@ -1992,16 +1992,20 @@ namespace TheUnseenBanner.Companion
             // draws as the banner beside them. Empty for everything else.
             string faction = p.Length > 2 ? p[2] : "";
 
+            // The places screen already announces its category, so repeating
+            // "Settlement", "Location" or "Landmark" on every row only delays the
+            // useful part: the name. Party rows still need their kind because Shift+B
+            // mixes enemies, allies and neutral parties in a single list.
             string head = kind switch
             {
                 "enemy" => L10n.F("world.survey.item.enemy", name),
                 "ally" => L10n.F("world.survey.item.ally", name),
                 "neutral" => L10n.F("world.survey.item.neutral", name),
                 "settlement" => faction.Length > 0
-                    ? L10n.F("world.survey.item.settlement.owned", name, faction)
-                    : L10n.F("world.survey.item.settlement", name),
-                "landmark" => L10n.F("world.survey.item.landmark", name),
-                _ => L10n.F("world.survey.item.location", name),
+                    ? L10n.F("world.survey.item.settlement.owned.in_category", name, faction)
+                    : name,
+                "landmark" => name,
+                _ => name,
             };
 
             // A location on the player's own tile (a Battle Site where he stands, say)

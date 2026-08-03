@@ -1298,6 +1298,10 @@
 	// feature, the way trailDirs does it for prints.
 	function tileHasPath(_tile, _river)
 	{
+		// HasRoad exposes the generated road network even while a tile is still under
+		// fog. Gate every road lookup here so the cursor cannot reveal either a road on
+		// unexplored ground or its continuation through an unexplored neighbour.
+		if (!_river && !_tile.IsDiscovered) return false;
 		return _river ? _tile.HasRiver : _tile.HasRoad;
 	},
 	// The hex directions in which _tile's road (or river) continues, comma-separated. A
@@ -2155,7 +2159,7 @@
 		local tile = _player.getTile();
 		this.m.LastTileID = tile.ID;
 		this.m.LastTerrain = tile.Type;
-		this.m.LastRoad = tile.HasRoad;
+		this.m.LastRoad = ::UnseenBanner.WorldSurvey.tileHasPath(tile, false);
 		this.m.LastRiver = tile.HasRiver;
 	},
 	// Start one hex step in _dir via the navigator, mirroring the mouse click's own
