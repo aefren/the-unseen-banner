@@ -2,7 +2,7 @@
 
 **An accessibility mod for blind players of *Battle Brothers*.**
 
-**Version 0.9**
+**Version 1.0**
 
 *Battle Brothers* is a turn-based tactical RPG where you lead a medieval
 mercenary company: hire and equip fighters, take contracts across an open world
@@ -94,25 +94,24 @@ before starting a serious campaign:
   skills, injuries, traits and items. The Retinue, the obituary and
   factions/relations are navigable lists.
 - ✅ **End of campaign**: the victory/defeat screen is navigable.
-- ⚠️ **Newly built, not yet confirmed in play**: the daily warning about food
-  and wages. It only speaks when the company is in trouble, so a well-supplied
-  campaign will not hear it at all.
+- ✅ **Daily upkeep warnings**: food and wages are announced correctly when the
+  company is in trouble; a well-supplied company remains quiet.
 - ✅ **Company creation**: origin, company name, banner, both difficulties, the
   late-game crisis, the seed and the remaining boxes. The banner is announced
   only by its number, having no name of its own to read.
 - ✅ **Scenarios**: the nine prepared tactical battles are navigable from the
   menu cursor. Each row reads the battle's name and description; Play remains a
   separate entry after the scenarios, so reviewing one never starts it by accident.
-- ⏭️ **After 1.0 — positional sonar and destination beacon**: the world map
-  speaks, but it does not yet *sound*. Direction and distance are read as words,
-  not as audio cues. This no longer blocks the 1.0 gameplay milestone.
-- ❌ **Configurable verbosity and key remapping**: the keys below are fixed for
-  now.
+- ⏭️ **After 1.0 — quality of life and positional audio**: key remapping,
+  configurable verbosity, positional sonar and the destination beacon. The map
+  already gives direction and distance in words, and the fixed keys below cover
+  the complete playable loop.
 
-In short: a campaign is playable by ear from the main menu to the end screen,
-and the practice battles provide a repeatable place to learn its tactical combat.
-What 1.0 still owes you is verification of the remaining rare paths, key remapping
-and configurable verbosity. Audio positioning is deliberately scheduled after 1.0.
+In short: version 1.0 makes a complete campaign playable by ear from the main
+menu to the end screen, and the practice battles provide a repeatable place to
+learn its tactical combat. Rare, non-blocking verification gaps are documented
+below; remapping, verbosity and audio positioning are deliberately scheduled
+after 1.0.
 
 ---
 
@@ -445,7 +444,8 @@ in the real game.
   - Recruitment, tavern, temple, the taxidermist's crafting, the harbor's
     passage by ship and the training hall's paid lessons.
 - **Phase 3 — Tactical combat.** Spoken combat log; tile cursor with terrain,
-  occupants, corpses, height, zone of control and the cost of walking there;
+  occupants, corpses, recoverable ground items, height, zone of control and the
+  cost of walking there; keyboard pickup from the active brother's tile;
   enemy and ally cycling; skills with valid targets and hit chance; on-demand
   readouts; adjacency by clock direction; turn and round announcements;
   in-battle equipment changes; retreat and confirmation dialogs; result screen
@@ -461,18 +461,15 @@ in the real game.
 
 ### Pending
 
-- Verify by ear the daily food and wages warning, which needs a company short of
-  one or the other to say anything at all.
+- Verify a real taxidermist craft and the river wording if a river can be found;
+  both paths are implemented but could not be reproduced for the final audit.
 - **Name the banner by its emblem** rather than by its number, the one thing
   company creation still leaves unsaid.
-- Verify by ear the already implemented actions that spend resources or change
-  the campaign, led by taxidermist crafting and abandoning an ambition.
 - **A keyboard-navigation review** for any event whose focus the generic event
   screen does not cover.
-- Verify by ear the flow of loading a save *during* a battle.
 - Refresh the settlement contract list immediately after accepting a contract.
-- **Key remapping and configurable verbosity**, followed by the remaining
-  non-sonar tunable constants.
+- After 1.0: **key remapping and configurable verbosity**, followed by the
+  remaining tunable constants.
 
 After 1.0: **positional sonar** (settlements, contracts, enemy parties,
 locations) and a **persistent beacon** for the chosen destination.

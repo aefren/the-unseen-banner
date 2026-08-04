@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.0
 
-### Ground items in the tactical tile readout
+Version 1.0 marks the complete campaign milestone: company creation, management,
+contracts, travel, tactical combat, rewards, saving and loading on the surfaces
+the game provides, and the end of a campaign can all be played by ear without a
+mouse. The nine practice battles provide a safe, repeatable place to learn the
+tactical controls.
+
+### Ground items can be found and recovered during battle
 
 The tactical cursor now names every item physically lying on a discovered hex.
 These are the game's live `tile.Items`: weapons, shields and other objects that a
@@ -10,26 +16,82 @@ brother standing there can equip or put in his bag during battle. Items retained
 only inside `Corpse.Items` remain post-combat loot candidates and are not falsely
 described as recoverable from the ground.
 
-Verified in game with NVDA.
-
-`P` now opens the pickable objects under the active brother as a short list.
-Up/Down selects one and Enter moves it to the backpack through the native
-ground-inventory endpoint, preserving Action Point costs, Quick Hands, capacity
-checks and rollback.
+`P` opens the pickable objects under the active brother as a short list. Up/Down
+selects one and Enter moves it to the backpack through the native ground-inventory
+endpoint, preserving Action Point costs, Quick Hands, capacity checks and rollback.
+F1 includes both the battlefield shortcut and the controls of the open list.
 
 Verified in game with NVDA.
 
-### Visible tracks by direction
+### The world map warns, guides and respects what is still hidden
 
-`Shift+F` now answers where the tracks around the company are without making the
-player inspect the map one hex at a time. It scans only the company's current
-vision circle, using the live radius after night, terrain, camping and Lookout
-modifiers, and groups the surviving footprint segments into north, northeast,
-southeast, south, southwest and northwest. Several directions stay in one
-interruptible utterance. Plain `F` retains the game's show/hide-tracking action;
-`Shift+T` retains the existing camp explanation.
+A hostile party already in sight now announces again when it crosses the closing
+distance bands at six, four and two tiles. The alerts have hysteresis, speak only
+the most urgent party per scan and use the FIFO event channel, so a threat cannot
+disappear into silence or repeatedly shout while pacing one threshold.
 
-Verified in game with NVDA.
+Roads are read with the directions they run from X, the map explorer and its V
+list, and when the company walks onto or off one. The same implementation covers
+rivers. Roads were verified in every readout; no river could be found during the
+final audit, so its equivalent wording remains an explicitly non-blocking
+verification gap. Undiscovered road segments stay hidden.
+
+`Shift+F` counts the tracks inside the company's current vision and groups them by
+north, northeast, southeast, south, southwest and northwest. Plain `F` retains
+the game's show/hide-tracking action. Known landmarks accept Enter as an ordinary
+approach order, while landmarks attached to undiscovered settlements remain out of
+the lists and every other readout. Place rows now start with the useful rendered
+name instead of repeating a category the list header already announced.
+
+All reproducible paths above were verified in game with NVDA.
+
+### The map speaks upkeep, confirmations and the numbers behind a deal
+
+The daily settlement of food and wages now says who went hungry or unpaid, how
+many days of food remain when supplies are low, and whether tomorrow's payroll is
+covered. Both failure paths were forced and verified by ear.
+
+F2 now has Company Status and Wounded Brothers categories. It reports payroll
+coverage, total repair time and tools, total treatment time and medicine, and the
+individual recovery time of every wounded man. Enter on an active contract or
+ambition follows the game's own confirmation and consequence path; abandoning an
+ambition and the expanded F2 readouts were verified in play.
+
+Every otherwise unknown `dialog_screen` now owns the keyboard and is announced,
+instead of sounding like a frozen game. Market rows carry both the town's price
+and the item's base worth; provisions and trade goods in the company stash also
+name their recorded purchase price when one exists.
+
+### Practice battles and shorter tactical checks
+
+The Scenarios screen is now a keyboard list of the nine prepared battles with
+their names and descriptions, followed by separate Play and Cancel entries.
+Selecting a row never starts it by accident. Starting a scenario also clears the
+hidden menu cursor before tactical input begins.
+
+Repeated battlefield checks are shorter: V keeps identity, health, armour,
+equipment, morale, timing and effects; T reports only Action Points and fatigue;
+and the combat log preserves the rendered sentence while compressing its standard
+chance-and-roll suffix. The shorter place lists, scenarios and tactical hand-off
+were verified in game with NVDA.
+
+### Scope deliberately left after 1.0
+
+The taxidermist cursor, ingredient list, guards and craft action are implemented,
+including the Blazing Deserts building variant, but a real craft could not be
+reproduced for final auditory confirmation. It remains documented rather than
+holding back the complete campaign. Saving and loading during battle are not
+offered by Battle Brothers itself.
+
+Key remapping, configurable verbosity, positional sonar and a persistent
+destination beacon are quality-of-life and orientation work scheduled after 1.0.
+Accepting a settlement contract still requires leaving and re-entering the town to
+refresh the accessible contract list.
+
+### Installing over 0.9
+
+Run `install.bat` as before; it replaces what 0.9 installed. Saves are never
+touched, and `uninstall.bat` still leaves the game as it came.
 
 ## 0.9
 

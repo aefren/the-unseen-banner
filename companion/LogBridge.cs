@@ -20,7 +20,7 @@ namespace TheUnseenBanner.Companion
             RegexOptions.CultureInvariant);
 
         // How often we re-check the file for growth. Not yet in a config file
-        // (see L10n's own TODO — roadmap 5.1 introduces one); revisit then.
+        // (see L10n's own TODO — roadmap 6.0 introduces one); revisit then.
         private const int PollMilliseconds = 100;
 
         internal static void Watch(string path, CancellationToken token)

@@ -1,9 +1,9 @@
 ﻿using TheUnseenBanner.Companion;
 
 const string ModName = "The Unseen Banner";
-const string ModVersion = "0.9";
+const string ModVersion = "1.0";
 
-// TODO: read from a config file once one exists (roadmap 5.1); "en" for now.
+// TODO: read from a config file once one exists (roadmap 6.0); "en" for now.
 L10n.Init(L10n.DefaultLanguage);
 
 Console.WriteLine($"{ModName} companion — v{ModVersion}");
