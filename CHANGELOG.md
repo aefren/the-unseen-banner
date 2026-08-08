@@ -36,6 +36,12 @@ rivers. Roads were verified in every readout; no river could be found during the
 final audit, so its equivalent wording remains an explicitly non-blocking
 verification gap. Undiscovered road segments stay hidden.
 
+`Shift+R` now gives roads the same quick overview that tracks already had: it
+scans the company's current vision circle, respects fog of war, says whether the
+company is standing on a road and groups nearby road hexes by direction. Plain
+`R` still opens factions and relations. The shortcut was verified in game with
+NVDA.
+
 `Shift+F` counts the tracks inside the company's current vision and groups them by
 north, northeast, southeast, south, southwest and northwest. Plain `F` retains
 the game's show/hide-tracking action. Known landmarks accept Enter as an ordinary
@@ -44,6 +50,18 @@ the lists and every other readout. Place rows now start with the useful rendered
 name instead of repeating a category the list header already announced.
 
 All reproducible paths above were verified in game with NVDA.
+
+### The pause menu exposes and copies the current map seed
+
+The world-map pause menu now starts on its map seed and announces that Enter
+copies it. Clipboard ownership stays in the companion process, outside
+Coherent's restricted browser, and the successful copy is confirmed aloud.
+
+Some old or malformed saves genuinely store an empty seed; the game itself has
+nothing from which to reconstruct it. Those campaigns now display and announce
+“Map Seed: Unavailable” as the first row instead of silently starting on Resume.
+Both the normal seed-copy flow and the unavailable-save flow were verified in
+game with NVDA.
 
 ### The map speaks upkeep, confirmations and the numbers behind a deal
 

@@ -340,6 +340,7 @@
 	m = {
 		JSHandle = null,
 		ActiveModule = null,
+		MapSeed = "",
 		// Whether a popup dialog is up inside the active module (the Retire
 		// confirmation, the save-name prompt, the delete confirmation). Reported by
 		// menu_nav.js, because these popups fire no module lifecycle event of their
@@ -368,6 +369,19 @@
 		if (this.m.JSHandle != null)
 		{
 			this.m.JSHandle.asyncCall("onKeyForwarded", _name);
+		}
+	},
+	// world_menu_screen receives the seed directly from the campaign assets. Carry
+	// that value over the bridge as menu state instead of assuming vanilla managed
+	// to render its optional .is-map-seed row before the accessibility cursor runs.
+	function setMapSeed(_seed)
+	{
+		this.m.MapSeed = _seed == null ? "" : "" + _seed;
+		::logInfo("UnseenBanner: world menu map seed "
+			+ (this.m.MapSeed == "" ? "is empty." : "received."));
+		if (this.m.JSHandle != null)
+		{
+			this.m.JSHandle.asyncCall("setMapSeed", this.m.MapSeed);
 		}
 	},
 	function isActive()
@@ -479,6 +493,11 @@
 	function onMenuAnnouncement(_data)
 	{
 		::UnseenBanner.sendMessage("interrupt", _data.texto, _data.categoria, _data.valor, _data.detalle);
+	},
+	function onMenuDiagnostic(_data)
+	{
+		local text = _data != null && "texto" in _data ? _data.texto : "unknown error";
+		::logWarning("UnseenBanner: " + text);
 	}
 };
 
@@ -3477,6 +3496,87 @@
 			packed += counts[d];
 		}
 		::UnseenBanner.sendMessage("interrupt", "", "world.tracks.summary", packed);
+	}
+};
+
+// Visible-road summary. Shift+R mirrors Shift+F's strategic overview, but counts
+// discovered road hexes instead of live footprint types. The scan deliberately uses
+// the company's current vision radius and WorldSurvey.tileHasPath: the former keeps
+// "nearby" identical to the footprint readout, and the latter preserves fog of war.
+// Plain R remains vanilla's Factions & Relations shortcut.
+::UnseenBanner.WorldRoads <- {
+	Key = 28, // r; plain R keeps vanilla's relations-screen toggle
+	m = {
+		Held = false
+	},
+	function reset()
+	{
+		this.m.Held = false;
+	},
+	function onPress(_state)
+	{
+		if (this.m.Held) return;
+		this.m.Held = true;
+		this.announce(_state);
+	},
+	function consumeRelease()
+	{
+		if (!this.m.Held) return false;
+		this.m.Held = false;
+		return true;
+	},
+	function announce(_state)
+	{
+		local player = _state != null ? _state.getPlayer() : null;
+		local playerTile = player != null ? player.getTile() : null;
+		if (playerTile == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.roads.unavailable");
+			return;
+		}
+
+		local counts = [0, 0, 0, 0, 0, 0];
+		local here = 0;
+		local radius = player.getVisionRadius();
+		local radiusSq = radius * radius;
+		local origin = player.getPos();
+		local tiles = [playerTile];
+		local visited = { [playerTile.ID] = true };
+
+		for( local i = 0; i < tiles.len(); i += 1 )
+		{
+			local tile = tiles[i];
+			local dx = tile.Pos.X - origin.X;
+			local dy = tile.Pos.Y - origin.Y;
+			if (dx * dx + dy * dy > radiusSq) continue;
+
+			if (::UnseenBanner.WorldSurvey.tileHasPath(tile, false))
+			{
+				if (tile.isSameTileAs(playerTile)) here = 1;
+				else
+				{
+					local dir = playerTile.getDirectionTo(tile);
+					if (dir >= 0 && dir < counts.len()) counts[dir] += 1;
+				}
+			}
+
+			for( local d = 0; d < 6; d += 1 )
+			{
+				if (!tile.hasNextTile(d)) continue;
+				local next = tile.getNextTile(d);
+				if (next.ID in visited) continue;
+				visited[next.ID] <- true;
+				tiles.push(next);
+			}
+		}
+
+		local packed = "" + here + "|";
+		for( local d = 0; d < counts.len(); d += 1 )
+		{
+			if (d > 0) packed += ",";
+			packed += counts[d];
+		}
+		::UnseenBanner.sendMessage("interrupt", "", "world.roads.summary", packed);
 	}
 };
 
@@ -11936,7 +12036,7 @@
 		["combat.ground"] = ["move", "take", "close"],
 		["combat.result"] = ["move", "activate", "details", "lootall", "repeat"],
 		["world"] = ["move", "march", "brake", "enter", "places", "parties",
-			"tracks", "status", "explorer", "camp", "campdetails", "sheet", "obituary",
+			"tracks", "roads", "status", "explorer", "camp", "campdetails", "sheet", "obituary",
 			"relations", "retinue", "menu"],
 		["world.explorer"] = ["move", "recenter", "list", "travel", "leave"],
 		["world.survey"] = ["move", "details", "activate", "pages", "close"],
@@ -12224,6 +12324,17 @@
 	{
 		__original();
 		::UnseenBanner.MenuNav.onModuleHidden(this.m.ID);
+	}
+});
+
+// The world pause-menu screen is the one point where vanilla already has the
+// exact campaign seed. Forward it before show() schedules the Coherent animation,
+// so MainMenuModule.onModuleShown can always expose it as its first keyboard row.
+::UnseenBanner.Mod.hook("scripts/ui/screens/menu/world_menu_screen", function(q) {
+	q.show = @(__original) function( _allowSaving = true, _seed = 0 )
+	{
+		::UnseenBanner.MenuNav.setMapSeed(_seed);
+		__original(_allowSaving, _seed);
 	}
 });
 
@@ -12760,6 +12871,7 @@
 		::UnseenBanner.WorldDiscovery.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldTracks.reset();
+		::UnseenBanner.WorldRoads.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -12784,6 +12896,7 @@
 		::UnseenBanner.WorldDiscovery.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldTracks.reset();
+		::UnseenBanner.WorldRoads.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -12808,6 +12921,7 @@
 		::UnseenBanner.WorldDiscovery.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldTracks.reset();
+		::UnseenBanner.WorldRoads.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -13510,6 +13624,37 @@
 			}
 		}
 
+		// R is vanilla's relations-screen toggle. Shift+R uses the same latching
+		// semantics as Shift+F to read every discovered road hex currently in sight,
+		// without letting either half of the modified keystroke open Relations.
+		if (code == ::UnseenBanner.WorldRoads.Key
+			&& (mapFree || ::UnseenBanner.WorldRoads.m.Held))
+		{
+			local shift = (_key.getModifier() & 1) != 0;
+			if (_key.getState() == 1 && shift && mapFree)
+			{
+				::UnseenBanner.WorldStatus.reset();
+				::UnseenBanner.WorldSurvey.reset();
+				::UnseenBanner.WorldCursor.closeList();
+				::UnseenBanner.WorldRoads.onPress(this);
+				return true;
+			}
+			else if (_key.getState() == 0
+				&& ::UnseenBanner.WorldRoads.consumeRelease())
+			{
+				return true;
+			}
+			else if (_key.getState() == 0 && shift && mapFree)
+			{
+				// Defensive fallback for wrappers that deliver only the native keyup.
+				::UnseenBanner.WorldStatus.reset();
+				::UnseenBanner.WorldSurvey.reset();
+				::UnseenBanner.WorldCursor.closeList();
+				::UnseenBanner.WorldRoads.announce(this);
+				return true;
+			}
+		}
+
 		// Map explorer (phase 4.6). M toggles the mode; while it is on the cursor owns
 		// Q/W/E/A/S/D, X and G, and while its tile list is up it owns Up/Down/Home/End and
 		// Enter. Every one of those keys is acted on at PRESS and consumed in both states:
@@ -13683,6 +13828,17 @@
 	}
 });
 
+// MSU also re-registers vanilla R outside our world_state hook. If Shift is released
+// before R, its outer keybind sees a plain R release and calls the relations funnel
+// without giving our state hook a chance to consume it. Mirror the Shift+F safeguard.
+::UnseenBanner.Mod.hook("scripts/states/world_state", function(q) {
+	q.topbar_options_module_onRelationsButtonClicked = @(__original) function()
+	{
+		if (::UnseenBanner.WorldRoads.consumeRelease()) return;
+		__original();
+	}
+});
+
 // Combat log funnel (phase 3.1). Every combat line the game writes to the
 // tactical event log passes through log() / logEx() on this module, so we tap
 // both and forward the text to the companion. log_newline() is left alone: it
@@ -13728,6 +13884,7 @@
 		::UnseenBanner.KeyHelp.close(false);
 		::UnseenBanner.KeyGate.reset();
 		::UnseenBanner.WorldTracks.reset();
+		::UnseenBanner.WorldRoads.reset();
 		// A battle starting clears the party's world path, so drop any in-flight world
 		// march here — otherwise Pending would be left stale and fire a spurious
 		// "Stopped" (or resume the march) on returning to the map.

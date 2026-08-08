@@ -97,6 +97,10 @@ namespace TheUnseenBanner.Companion
             ["menu.previous_banner"] = "Previous banner.",
             ["menu.next_banner"] = "Next banner.",
             ["menu.banner"] = "Banner {0}.",
+            ["menu.map_seed"] = "Map seed: {0}. Press Enter to copy the seed to the clipboard.",
+            ["menu.map_seed.unavailable"] = "Map seed unavailable. This campaign does not contain a stored map seed.",
+            ["menu.map_seed.copied"] = "Map seed {0} copied to the clipboard.",
+            ["menu.map_seed.copy_failed"] = "The map seed could not be copied to the clipboard.",
             // Scenarios: the main menu's prepared tactical battles. The description is
             // what the row is for — it says what the battle teaches and how hard it is —
             // so it is spoken with the name, the way a company origin is. Selecting a row
@@ -932,6 +936,15 @@ namespace TheUnseenBanner.Companion
             ["world.tracks.direction.3"] = "south",
             ["world.tracks.direction.4"] = "southwest",
             ["world.tracks.direction.5"] = "northwest",
+            // Shift+R: discovered road hexes in the same current-vision sweep used by
+            // Shift+F. Counts say "segments" rather than "roads", because connected
+            // road tiles are parts of one network, not separate roads.
+            ["world.roads.summary"] = "{0}.",
+            ["world.roads.none"] = "No roads are visible.",
+            ["world.roads.unavailable"] = "Roads cannot be checked right now.",
+            ["world.roads.one"] = "1 road segment to the {0}",
+            ["world.roads.many"] = "{0} road segments to the {1}",
+            ["world.roads.here"] = "a road at your position",
             // Roads and rivers (phase 4.8). The map's two travel-speed modifiers — a road
             // moves the company at 1.5x and a river at 0.75x, both applied to its speed by
             // the game itself — and neither of them changes the tile's terrain type, so no
@@ -1299,6 +1312,7 @@ namespace TheUnseenBanner.Companion
             ["help.world.places"] = "B lists the settlements and locations you know of.",
             ["help.world.parties"] = "Shift plus B lists the parties in sight.",
             ["help.world.tracks"] = "Shift plus F counts the visible tracks in each direction.",
+            ["help.world.roads"] = "Shift plus R counts the visible road segments in each direction.",
             ["help.world.status"] = "F2 opens company status and wounded brothers, including repair and healing times.",
             ["help.world.explorer"] = "M turns the map explorer on and off.",
             ["help.world.camp"] = "T makes or breaks camp.",

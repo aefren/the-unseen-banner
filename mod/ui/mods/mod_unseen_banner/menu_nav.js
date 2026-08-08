@@ -11,6 +11,7 @@ var UnseenBannerMenuNav = function ()
 {
 	this.mSQHandle = null;
 	this.mActiveModule = null;
+	this.mMapSeed = '';
 	this.mIndices = {
 		MainMenuModule: -1,
 		NewCampaignModule: -1,
@@ -58,6 +59,20 @@ UnseenBannerMenuNav.prototype.sendAnnouncement = function (_category, _text, _va
 			detalle: _detail || ''
 		});
 	}
+};
+
+UnseenBannerMenuNav.prototype.reportDiagnostic = function (_text)
+{
+	if (this.mSQHandle !== null)
+	{
+		SQ.call(this.mSQHandle, 'onMenuDiagnostic', { texto: _text || '' });
+	}
+};
+
+UnseenBannerMenuNav.prototype.setMapSeed = function (_seed)
+{
+	this.mMapSeed = _seed === null || typeof _seed === 'undefined'
+		? '' : String(_seed).replace(/^\s+|\s+$/g, '');
 };
 
 // Popups have no module lifecycle, so Squirrel cannot see them. It needs to know,
@@ -111,6 +126,64 @@ UnseenBannerMenuNav.prototype.getMainItems = function ()
 {
 	var self = this;
 	var items = [];
+	try
+	{
+		var module = $('.main-menu-module.display-block.is-world-map:first');
+		var seedElement = module.find('.is-map-seed:first');
+		if (seedElement.length === 0 && module.length > 0)
+		{
+			// Some loaded campaigns reach Coherent without vanilla creating its optional
+			// seed row. Recreate the same row at the same visual position using the value
+			// supplied by world_menu_screen, without interpolating it as HTML. Old or
+			// malformed saves can genuinely contain an empty seed; keep a first row for
+			// that state too, so silence is never mistaken for a cursor failure.
+			var seedRow = $('<div class="row unseen-banner-map-seed-row"></div>');
+			seedElement = $('<div class="is-map-seed text-font-medium font-color-subtitle"></div>');
+			if (this.mMapSeed.length > 0)
+				seedElement.text('    Map Seed: ' + this.mMapSeed);
+			else
+				seedElement.addClass('unseen-banner-seed-unavailable').text('    Map Seed: Unavailable');
+			seedRow.append(seedElement);
+			var firstRow = module.find('.container:first > .row:first');
+			if (firstRow.length > 0)
+				firstRow.before(seedRow);
+			else
+				module.find('.container:first').prepend(seedRow);
+		}
+		if (seedElement.length > 0)
+		{
+			// Vanilla already renders the current campaign seed above the pause-menu
+			// buttons, but it is not a ui-control and was therefore invisible to this
+			// keyboard cursor. Keep it first, matching its visual position. Use only
+			// old DOM/string primitives here: a failure must never cost the pause menu.
+			if (seedElement.hasClass('unseen-banner-seed-unavailable'))
+			{
+				items.push({ type: 'map-seed-unavailable', element: seedElement });
+			}
+			else
+			{
+				var seedText = seedElement.text();
+				seedText = typeof seedText === 'string'
+					? seedText.replace(/^\s+|\s+$/g, '') : '';
+				var separator = seedText.indexOf(':');
+				var seed = separator >= 0 ? seedText.substring(separator + 1) : seedText;
+				seed = seed.replace(/^\s+|\s+$/g, '');
+				if (seed.length > 0)
+					items.push({ type: 'map-seed', element: seedElement, seed: seed });
+				else
+					items.push({ type: 'map-seed-unavailable', element: seedElement });
+			}
+		}
+	}
+	catch (error)
+	{
+		// Buttons below remain the guaranteed fallback, and the Squirrel log records
+		// enough detail to diagnose a Coherent-only DOM incompatibility after the run.
+		this.reportDiagnostic('seed row failed: ' + (error && error.message ? error.message : error));
+	}
+
+	// Keep the proven selector independent from the optional seed row. This exact
+	// query drove the pause menu before seed support and must survive any seed failure.
 	$('.main-menu-module.display-block div.ui-control').each(function ()
 	{
 		if (self.isButton(this) && self.isAvailable(this) && $(this).is(':visible'))
@@ -721,7 +794,15 @@ UnseenBannerMenuNav.prototype.announceItem = function (_item)
 	var selected;
 	var detail = '';
 
-	if (_item.type === 'button')
+	if (_item.type === 'map-seed')
+	{
+		this.sendAnnouncement('menu.map_seed', _item.seed, '', '');
+	}
+	else if (_item.type === 'map-seed-unavailable')
+	{
+		this.sendAnnouncement('menu.map_seed.unavailable', '', '', '');
+	}
+	else if (_item.type === 'button')
 	{
 		this.sendAnnouncement(element.is('[disabled]') ? 'menu.button.disabled' : '',
 			this.readButtonLabel(element), '', '');
@@ -857,6 +938,20 @@ UnseenBannerMenuNav.prototype.activateItem = function (_item)
 	var element = _item.element;
 	var panelBefore;
 	var panelAfter;
+
+	if (_item.type === 'map-seed')
+	{
+		// Clipboard ownership lives in the companion process. Sending the seed through
+		// the existing bridge makes copying independent of Coherent's browser clipboard
+		// permissions and lets the result be announced through the normal L10n path.
+		this.sendAnnouncement('menu.map_seed.copy', _item.seed, '', '');
+		return;
+	}
+	if (_item.type === 'map-seed-unavailable')
+	{
+		this.announceItem(_item);
+		return;
+	}
 
 	if (_item.type === 'campaign')
 	{
@@ -1010,7 +1105,11 @@ UnseenBannerMenuNav.prototype.onModuleShown = function (_id)
 		if (items.length > 0)
 		{
 			this.focusItem(items[index]);
-			this.sendAnnouncement('menu.main', this.readButtonLabel(items[index].element), '', '');
+			if (items[index].type === 'map-seed' ||
+				items[index].type === 'map-seed-unavailable')
+				this.announceItem(items[index]);
+			else
+				this.sendAnnouncement('menu.main', this.readButtonLabel(items[index].element), '', '');
 		}
 	}
 	else if (_id === 'NewCampaignModule')

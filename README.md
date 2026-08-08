@@ -60,7 +60,9 @@ before starting a serious campaign:
   a save, retiring the company — are read out with the game's own warning and
   focus Cancel first. In the main menu Escape dismisses just the dialog; in the
   pause menu Escape closes the whole menu, dialog included, because MSU claims
-  that key there.
+  that key there. The world-map pause menu starts on the current map seed;
+  Enter copies it to the Windows clipboard. A campaign whose save contains no
+  seed says so instead of silently skipping the row.
 - ✅ **Text events** (the narrative part): title, body and options. Contracts
   and ambitions are offered through this same screen, so taking, tracking and
   turning them in works end to end.
@@ -74,7 +76,7 @@ before starting a serious campaign:
   actions and formation editing are keyboard-driven.
 - ✅ **World map**: directional movement, arrivals, camping, the map explorer
   cursor with travel-to-tile, road, river and footprint reading, a directional
-  summary of the tracks currently in sight, the nearby survey of
+  summary of the tracks and road segments currently in sight, the nearby survey of
   settlements, locations, landmarks and visible parties, and a company readout
   covering day and time, brothers, crowns, wages, food, the active contract with
   its objectives, and the current ambition. Settlements, locations and landmarks
@@ -228,6 +230,11 @@ would receive your next keystroke, so it is never a menu of keys you cannot use.
 | Enter | Activate the focused item |
 | Escape | Back / cancel |
 
+On the **world-map pause menu**, the first entry is the current map seed. Enter
+copies it to the Windows clipboard and confirms the copy aloud. Old or malformed
+campaigns that were saved without a seed instead announce “Map seed unavailable”;
+the mod cannot reconstruct a seed that the save itself does not contain.
+
 On an **event screen** the arrows move through the options and Enter picks one
 (the native number keys 1-6 still work). A first Enter with nothing focused
 focuses the first option instead of activating it, so you don't close an event by
@@ -246,6 +253,7 @@ accident.
 | B | Known places: settlements, locations and landmarks. Page Down/Page Up switch category, V opens details, Enter travels there or enters, B closes |
 | Shift+B | The parties currently in sight, same navigation |
 | Shift+F | Count the tracks currently inside the company's vision and group them by direction; plain F keeps its native show/hide-tracking action |
+| Shift+R | Count the discovered road segments currently inside the company's vision and group them by direction; plain R still opens factions and relations |
 | M | Map explorer on/off (see below) |
 | T | Make or break camp (native); **Shift+T** explains the current camp state without changing it |
 | C / I | Company management and character screen (see below) |
@@ -287,6 +295,11 @@ only the company's current vision circle — including night, terrain, camp and
 Lookout modifiers — and says, for example, "3 tracks to the northeast and 1 track
 to the southwest." One count is one live trail type on one tile, the finest count
 the game's footprint query exposes.
+
+`Shift+R` applies the same quick-overview pattern to roads: it scans that current
+vision circle, respects fog of war and groups discovered road hexes by direction.
+It also says whether the company is standing on a road. Plain `R` keeps opening
+the factions and relations screen.
 
 ### Settlements
 
@@ -431,7 +444,8 @@ in the real game.
 - **Phase 0 — The bridge.** Voice bridge by tailing `log.html`, frozen message
   protocol, the game decompiled for reference, and reversible install scripts.
 - **Phase 1 — Pure text.** Event screen; main menu, Options and starting a new
-  campaign; load and save from both the main menu and the world-map pause menu.
+  campaign; load and save from both the main menu and the world-map pause menu;
+  current map seed with clipboard copy.
 - **Phase 2 — Tooltips and company management.**
   - Generic on-demand native-tooltip reader: the game renders its localized
     tooltip first, then the mod reads the final DOM and announces it.
@@ -453,8 +467,9 @@ in the real game.
 - **Phase 4 — World map.** Directional movement and arrivals; camping; the
   perception-safe survey of places and parties; the company and objectives
   readout, with abandoning an ambition; the map explorer cursor with
-  travel-to-tile, roads, rivers and footprints; threats announced again as they
-  close in; keyboard entry into settlements and the town screen.
+  travel-to-tile, roads, rivers and footprints; directional summaries of tracks
+  and roads in sight; threats announced again as they close in; keyboard entry
+  into settlements and the town screen.
 - **Phase 5 — Special screens.** Obituary, factions and relations, the Retinue
   with accessible confirmations, and the end-of-campaign screen.
 - **Contextual key help (F1)** on every surface the mod drives.
@@ -481,6 +496,8 @@ has been tested on a clean installation and its new behavior verified by ear.
 
 - Accepting a contract does not rebuild the town's contract list; leaving the
   settlement and entering again refreshes it.
+- A campaign saved without a map seed cannot have one reconstructed. Its pause
+  menu explicitly reports the seed as unavailable and does not copy anything.
 - The mod is verified on the Steam build of the game.
 
 ---

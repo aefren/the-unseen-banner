@@ -268,6 +268,9 @@ namespace TheUnseenBanner.Companion
                     "world.town.port.closed" => L10n.F("world.town.port." + valor, texto),
                     "menu.campaign" => ComposeCampaignEntry(texto, valor, detalle),
                     "menu.campaign.screen" => ComposeCampaignScreen(texto, valor),
+                    "menu.map_seed.copy" => ClipboardService.TrySetText(texto)
+                        ? L10n.F("menu.map_seed.copied", texto)
+                        : L10n.T("menu.map_seed.copy_failed"),
                     "world.survey.places.screen" => ComposeSurveyPlacesScreen(valor, detalle),
                     "world.survey.parties.screen" => ComposeSurveyPartiesScreen(detalle),
                     "world.survey.item" => ComposeSurveyItem(texto, valor, detalle),
@@ -291,6 +294,7 @@ namespace TheUnseenBanner.Companion
                     "world.cursor.list.path" => ComposePaths(valor, moving: false, withEffect: true),
                     "world.cursor.list.tracks" => ComposeCursorTracksRow(valor, detalle),
                     "world.tracks.summary" => ComposeTracksSummary(valor),
+                    "world.roads.summary" => ComposeRoadsSummary(valor),
                     "help.row" => ComposeHelpRow(valor, detalle),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
@@ -2031,6 +2035,33 @@ namespace TheUnseenBanner.Companion
             return parts.Count == 0
                 ? L10n.T("world.tracks.none")
                 : L10n.F("world.tracks.summary", JoinWithAnd(parts));
+        }
+
+        /// <summary>Compose Shift+R's road overview. The packed shape and direction
+        /// order are deliberately identical to Shift+F; each directional count is one
+        /// discovered road hex inside the company's current vision circle.</summary>
+        private static string ComposeRoadsSummary(string packed)
+        {
+            string[] fields = packed.Split('|', 2);
+            int.TryParse(fields.Length > 0 ? fields[0] : "", out int here);
+            string[] counts = fields.Length > 1 ? fields[1].Split(',') : Array.Empty<string>();
+            var parts = new List<string>();
+
+            if (here > 0)
+                parts.Add(L10n.T("world.roads.here"));
+
+            for (int dir = 0; dir < ClockHours.Length && dir < counts.Length; dir++)
+            {
+                if (!int.TryParse(counts[dir], out int count) || count <= 0) continue;
+                string direction = L10n.T("world.tracks.direction." + dir);
+                parts.Add(count == 1
+                    ? L10n.F("world.roads.one", direction)
+                    : L10n.F("world.roads.many", count, direction));
+            }
+
+            return parts.Count == 0
+                ? L10n.T("world.roads.none")
+                : L10n.F("world.roads.summary", JoinWithAnd(parts));
         }
 
         /// <summary>Compose the static-place explorer header. B starts on settlements;
