@@ -364,19 +364,25 @@ the button.
 
 | Key | Action |
 |---|---|
-| Q W E / A S D | Move the tile cursor to the 6 neighbours (Q=NW, W=N, E=NE, A=SW, S=S, D=SE) |
+| Q W E / A S D | Move the tile cursor to the 6 neighbours (Q=NW, W=N, E=NE, A=SW, S=S, D=SE); visible units are announced with health and morale |
 | X | Recenter the cursor on the active brother |
-| Z / Shift+Z | Cycle living, visible enemies by distance (Z farther, Shift+Z nearer) |
+| Z / Shift+Z | Cycle living, visible enemies by distance (Z farther, Shift+Z nearer); an armed enemy is named with its weapon |
 | H / Shift+H | Cycle living allies by distance, excluding the active brother |
-| V | Inspect the unit under the cursor: identity, health, armour, equipment, morale, effects and when it acts |
+| V | Inspect the unit under the cursor: identity, health, morale, armour, equipment, effects and when it acts; an armed enemy is named with its weapon |
 | Shift+V | Open that same inspection as a navigable list, one fact per row (equipment included); V on a row opens its native tooltip (status effects and each worn item included) — on the equipment row with several pieces, V opens a second list to browse them and V again backs out; Shift+V or Escape closes (Escape backs out of that nested list first) |
+| Shift+E | Read the equipment of the unit under the cursor |
+| Shift+F | Read all effects on the unit under the cursor |
+| Shift+S | Active brother's usable skills — the numbered bar read aloud, with costs and whether each can be used right now |
+| Shift+D | Read that unit's damage range, armour damage, head-hit chance and vision |
+| Shift+A | Read bag slots 1 and 2 of that unit, including empty slots |
+| Shift+W | Read that unit's body and head armour, including item names and current/maximum durability |
 | G | Confirm on the cursor tile: move there, or use the armed skill |
 | P | Open the pickable items under the active brother; Up/Down chooses one, Enter moves it to the backpack, P or Escape closes |
 | T | Active brother's live resources: action points and fatigue |
+| Shift+T | Unit under the cursor: whether it is acting now, has finished its turn or acts in N turns, plus current/maximum fatigue |
 | Tab | Turn order for the round |
-| B | Visible enemies sorted by distance, with range |
-| Shift+B | Enemies adjacent to the cursor tile, each with its clock direction (would I be surrounded if I moved there?) |
-| K | Active brother's usable skills — the numbered bar read aloud, with costs and whether each can be used right now |
+| B | Visible enemies sorted by distance, with range and each enemy's equipped weapon |
+| Shift+B | Enemies adjacent to the cursor tile, each with its equipped weapon and clock direction (would I be surrounded if I moved there?) |
 | Number row / numpad | Use skill 1-10 (the game's native shortcut) |
 | C / I | Character sheet (see above) |
 | R | End round (native; its confirmation dialog is navigable) |

@@ -101,7 +101,7 @@
 	return result;
 }
 
-::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null, _acciones = null, _comparacion = null, _cadaver = null, _talento = null, _suelo = null)
+::UnseenBanner.sendMessage <- function(_canal, _texto, _categoria = null, _valor = null, _detalle = null, _hermano = null, _detalles = null, _contexto = null, _acciones = null, _comparacion = null, _cadaver = null, _talento = null, _suelo = null, _arma = null)
 {
 	local json = "{\"canal\":\"" + ::UnseenBanner.jsonEscape(_canal) + "\",\"texto\":\"" + ::UnseenBanner.jsonEscape(_texto) + "\"";
 	if (_categoria != null) json += ",\"categoria\":\"" + ::UnseenBanner.jsonEscape(_categoria) + "\"";
@@ -122,6 +122,9 @@
 	// separate from `cadaver`: tile.Items can be picked up during battle, whereas
 	// Corpse.Items is only evaluated for the post-combat loot screen.
 	if (_suelo != null) json += ",\"suelo\":\"" + ::UnseenBanner.jsonEscape(_suelo) + "\"";
+	// Main-hand weapon of a visible enemy. Kept separate from the enemy's localized
+	// game name so the companion owns the translatable "with" connector.
+	if (_arma != null) json += ",\"arma\":\"" + ::UnseenBanner.jsonEscape(_arma) + "\"";
 	json += "}";
 	::logInfo("UB_MSG:" + json);
 }
@@ -7404,6 +7407,17 @@
 	InspectKeys = {
 		[32] = true // v
 	},
+	// Quick facts for the combatant under the cursor. Five of these letters are
+	// also cursor directions, so the tactical dispatcher gives the shifted form
+	// priority and leaves the unshifted Q/W/E/A/S/D cluster unchanged.
+	QuickInspectKeys = {
+		[15] = "equipment", // Shift+e
+		[16] = "effects",   // Shift+f
+		[29] = "active_skills", // Shift+s; replaces the former k readout
+		[14] = "stats",     // Shift+d
+		[11] = "bags",      // Shift+a
+		[33] = "armor"      // Shift+w
+	},
 	InspectMoveKeys = {
 		[44] = "end",
 		[45] = "home",
@@ -7422,6 +7436,10 @@
 	{
 		return _code in this.InspectKeys;
 	},
+	function handlesQuickInspect(_code, _shift)
+	{
+		return _shift && (_code in this.QuickInspectKeys);
+	},
 	function handlesInspectMenu(_code, _shift)
 	{
 		if (this.m.InspectMenuActive)
@@ -7431,6 +7449,17 @@
 				|| _code == this.InspectCancelKey;
 		}
 		return _shift && (_code in this.InspectKeys);
+	},
+	// Only the main-hand slot identifies the weapon currently presented by the
+	// unit. Shields, nets and accessories must not turn an unarmed enemy into a
+	// falsely armed one. The returned name is game-owned localized text.
+	function weaponName(_actor)
+	{
+		if (_actor == null) return "";
+		local inv = _actor.getItems();
+		if (inv == null) return "";
+		local weapon = inv.getItemAtSlot(::Const.ItemSlot.Mainhand);
+		return weapon != null ? weapon.getName() : "";
 	},
 	function isInspectMenuActive()
 	{
@@ -7737,6 +7766,8 @@
 		local kind = "empty";
 		local hp = "";
 		local hpMax = "";
+		local morale = "m";
+		local weapon = "";
 		local corpseName = this.getCorpseName(tile);
 		local groundItems = this.getGroundItemNames(tile);
 
@@ -7759,13 +7790,17 @@
 					else if (e.isPlayerControlled() || e.isAlliedWithPlayer())
 						kind = "ally";
 					else
+					{
 						kind = "enemy";
+						weapon = this.weaponName(e);
+					}
 
 					// Current health, appended right after the name so surveying the
 					// field (X to recentre, Z/Shift+Z to cycle enemies, H/Shift+H to
 					// cycle allies, or any cursor step onto a unit) says at once how hurt it is.
 					hp = "" + e.getHitpoints();
 					hpMax = "" + e.getHitpointsMax();
+					morale = "m" + e.getMoraleState();
 				}
 				else
 				{
@@ -7793,7 +7828,11 @@
 		// the health clause for an actor. A corpse is independent of the current
 		// occupant: actors can stand over one, and skills such as Gruesome Feast
 		// target that corpse rather than the living actor on the same hex.
-		local detail = kind + "|" + dist + "|" + dir + "|" + hp + "|" + hpMax;
+		// Prefix morale with a marker so the companion can distinguish this new
+		// fixed field from the old optional targetable flag (both are small ints).
+		// Old mod/companion pairs therefore remain readable during a dev restart.
+		local detail = kind + "|" + dist + "|" + dir + "|" + hp + "|" + hpMax
+			+ "|" + morale;
 
 		// With a skill armed, tack on two more fields so the companion can say
 		// whether the tile is a legal target and, for an attackable actor on it,
@@ -7821,7 +7860,8 @@
 		::UnseenBanner.sendMessage("interrupt", name, "tile.readout", "" + tile.Type,
 			detail, null, null, null, null, this.extras(_active, tile),
 			corpseName != "" ? corpseName : null, null,
-			groundItems != "" ? groundItems : null);
+			groundItems != "" ? groundItems : null,
+			weapon != "" ? weapon : null);
 	},
 	// On-demand detail for whatever stands on the cursor tile (the v key). Reads the
 	// same funnel the mouse tooltip is built from (actor.getTooltip), honouring fog
@@ -7893,6 +7933,7 @@
 		local kind = "enemy";
 		if (_active != null && e.getID() == _active.getID()) kind = "self";
 		else if (e.isPlayerControlled() || e.isAlliedWithPlayer()) kind = "ally";
+		local weapon = kind == "enemy" ? this.weaponName(e) : "";
 
 		// When it next acts, mirroring the tooltip's "Acting right now / Turn done /
 		// Acts in N turns" line. getTurnsUntilActive returns the slot index in this
@@ -7936,7 +7977,8 @@
 			+ "|" + effects;
 
 		::UnseenBanner.sendMessage("interrupt", name, "combat.inspect", "ok", detail,
-			null, null, null, null, null, corpseName != "" ? corpseName : null);
+			null, null, null, null, null, corpseName != "" ? corpseName : null,
+			null, null, weapon != "" ? weapon : null);
 	},
 	// _details is an array of native tooltip descriptors (0, 1 or many): 0 means
 	// "no tooltip" (V says so), 1 shows directly, more than 1 nests into a list
@@ -8001,6 +8043,155 @@
 		return this.inspectItem("combat.sheet.equipment", text, "" + n, "",
 			n > 0 ? details : null);
 	},
+	// The six shifted readouts share V's exact target boundary. Nothing behind
+	// fog, on an empty/corpse hex or represented by scenery may leak equipment or
+	// stats merely because a narrower shortcut was used.
+	function quickInspectActor(_active)
+	{
+		this.ensureAnchored(_active);
+		local tile = this.m.CursorTile;
+		local corpseName = this.getCorpseName(tile);
+
+		if (tile == null || tile.IsEmpty)
+		{
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", corpseName, "combat.inspect.corpse");
+			else
+				::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			return null;
+		}
+
+		local actor = tile.getEntity();
+		if (actor == null)
+		{
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", corpseName, "combat.inspect.corpse");
+			else
+				::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			return null;
+		}
+		if (!::isKindOf(actor, "actor"))
+		{
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", actor.getName(),
+					"combat.inspect.object_corpse", corpseName);
+			else
+				::UnseenBanner.sendMessage("interrupt", actor.getName(),
+					"combat.inspect.object");
+			return null;
+		}
+		if (!actor.isAlive() || actor.isDying() || !actor.isPlacedOnMap())
+		{
+			if (corpseName != "")
+				::UnseenBanner.sendMessage("interrupt", corpseName, "combat.inspect.corpse");
+			else
+				::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.empty");
+			return null;
+		}
+		if (!actor.isDiscovered())
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "combat.inspect.hidden");
+			return null;
+		}
+		if (actor.isHiddenToPlayer())
+		{
+			::UnseenBanner.sendMessage("interrupt", actor.getName(), "combat.inspect",
+				"sight", "");
+			return null;
+		}
+		return actor;
+	},
+	function effectsItem(_actor)
+	{
+		local statuses = _actor.getSkills().query(
+			::Const.SkillType.StatusEffect | ::Const.SkillType.TemporaryInjury,
+			false, true);
+		local text = "";
+		local n = 0;
+		foreach( status in statuses )
+		{
+			// Morale is exposed as a synthetic status object by the engine, but it is
+			// not one of the visible effect icons. V/Shift+V treats it separately too.
+			if (status == null || status.getID() == "special.morale.check") continue;
+			if (n > 0) text += "\n";
+			text += status.getName();
+			n += 1;
+		}
+		return this.inspectItem("combat.inspect.effects", text, "" + n);
+	},
+	function announceQuickInspect(_code, _active)
+	{
+		local action = this.QuickInspectKeys[_code];
+		if (action == "active_skills")
+		{
+			::UnseenBanner.Readout.skills(_active);
+			return;
+		}
+
+		local actor = this.quickInspectActor(_active);
+		if (actor == null) return;
+
+		if (action == "equipment")
+		{
+			local item = this.equipmentItem(actor);
+			::UnseenBanner.sendMessage("interrupt", item.texto, item.cat, item.valor);
+			return;
+		}
+		if (action == "effects")
+		{
+			local item = this.effectsItem(actor);
+			::UnseenBanner.sendMessage("interrupt", item.texto, item.cat, item.valor);
+			return;
+		}
+		if (action == "stats")
+		{
+			local p = actor.getCurrentProperties();
+			local dm = actor.isArmedWithMeleeWeapon() ? p.MeleeDamageMult : 1.0;
+			local dmgMin = ::Math.floor(p.getDamageRegularMin() * dm);
+			local dmgMax = ::Math.floor(p.getDamageRegularMax() * dm);
+			local damageText = dmgMax > 0 ? "" + dmgMin : "";
+			local damageMax = dmgMax > 0 ? "" + dmgMax : "";
+			local detail = "" + ::Math.floor(p.getDamageArmorMult() * 100)
+				+ "|" + p.getHitchance(::Const.BodyPart.Head).tointeger()
+				+ "|" + p.getVision();
+			::UnseenBanner.sendMessage("interrupt", damageText,
+				"combat.inspect.stats", damageMax, detail);
+			return;
+		}
+
+		if (action == "armor")
+		{
+			local bodyName = "";
+			local headName = "";
+			local inv = actor.getItems();
+			if (inv != null)
+			{
+				local body = inv.getItemAtSlot(::Const.ItemSlot.Body);
+				local head = inv.getItemAtSlot(::Const.ItemSlot.Head);
+				if (body != null) bodyName = body.getName();
+				if (head != null) headName = head.getName();
+			}
+			local armor = "" + actor.getArmor(::Const.BodyPart.Body)
+				+ "|" + actor.getArmorMax(::Const.BodyPart.Body)
+				+ "|" + actor.getArmor(::Const.BodyPart.Head)
+				+ "|" + actor.getArmorMax(::Const.BodyPart.Head);
+			::UnseenBanner.sendMessage("interrupt", bodyName,
+				"combat.inspect.armor", headName, armor);
+			return;
+		}
+
+		local bag1 = "";
+		local bag2 = "";
+		local inv = actor.getItems();
+		if (inv != null)
+		{
+			local item1 = inv.getItemAtBagSlot(0);
+			local item2 = inv.getItemAtBagSlot(1);
+			if (item1 != null && item1 != -1) bag1 = item1.getName();
+			if (item2 != null && item2 != -1) bag2 = item2.getName();
+		}
+		::UnseenBanner.sendMessage("interrupt", bag1, "combat.inspect.bags", bag2);
+	},
 	function timing(_actor)
 	{
 		local active = ::Tactical.TurnSequenceBar.getActiveEntity();
@@ -8009,6 +8200,23 @@
 
 		local turns = ::Tactical.TurnSequenceBar.getTurnsUntilActive(_actor.getID());
 		return turns != null && turns > 0 ? "" + turns : "none";
+	},
+	// Shift+T: the native tooltip's timing state plus live fatigue for the unit
+	// under the tactical cursor. quickInspectActor supplies the same fog and actor
+	// validation as V; weapon is included only for a visible enemy.
+	function announceTurn(_active)
+	{
+		local actor = this.quickInspectActor(_active);
+		if (actor == null) return;
+
+		local enemy = (_active == null || actor.getID() != _active.getID())
+			&& !actor.isPlayerControlled() && !actor.isAlliedWithPlayer();
+		local weapon = enemy ? this.weaponName(actor) : "";
+		local fatigue = "" + actor.getFatigue() + "|" + actor.getFatigueMax();
+		::UnseenBanner.sendMessage("interrupt", actor.getName(),
+			"combat.inspect.turn", this.timing(actor), fatigue,
+			null, null, null, null, null, null, null, null,
+			weapon != "" ? weapon : null);
 	},
 	// Shift+V turns the unit tooltip readout into a navigable semantic menu. Each
 	// status effect is its own row and carries the exact native status-effect
@@ -8070,11 +8278,12 @@
 		local kind = "enemy";
 		if (_active != null && actor.getID() == _active.getID()) kind = "self";
 		else if (actor.isPlayerControlled() || actor.isAlliedWithPlayer()) kind = "ally";
+		local weapon = kind == "enemy" ? this.weaponName(actor) : "";
 
 		local items = [];
-		items.push(this.inspectItem("combat.inspect.menu.screen", actor.getName()));
+		items.push(this.inspectItem("combat.inspect.menu.screen", actor.getName(), weapon));
 		items.push(this.inspectItem("combat.inspect.header." + kind,
-			actor.getName(), "" + actor.getLevel()));
+			actor.getName(), "" + actor.getLevel(), weapon));
 
 		local when = this.timing(actor);
 		if (when == "now")
@@ -8654,18 +8863,19 @@
 // pack their entries newline-separated in the message text (game names never
 // contain newlines), each line tagged so the companion can localize the framing.
 ::UnseenBanner.Readout = {
-	// t = active man's live action resources, tab = turn order, b = visible enemies, k = active
-	// man's usable skills. Shift+b is a second, closely related readout: the
+	// t = active man's live action resources, tab = turn order and b = visible
+	// enemies. Shift+s calls skills() through TileCursor's shifted-key dispatcher,
+	// because plain s remains the southward cursor direction. Shift+b is a second,
+	// closely related readout: the
 	// enemies hex-adjacent to the cursor tile ("who is around here"), so it lives
 	// on the same key as b (nearby enemies) with the modifier. t and b are bound
 	// in vanilla to purely visual overlay toggles (skill trees / blocked tiles);
 	// our hook consumes them during the player's turn, which a sighted tester
-	// loses but a blind player never needs. tab is unbound in vanilla; k is free.
+	// loses but a blind player never needs. tab is unbound in vanilla.
 	Keys = {
 		[30] = "status",   // t
 		[38] = "turnorder", // tab
-		[12] = "enemies",  // b (Shift+b -> engaged)
-		[21] = "skills"    // k
+		[12] = "enemies"   // b (Shift+b -> engaged)
 	},
 	function handles(_code)
 	{
@@ -8674,14 +8884,17 @@
 	function onKey(_code, _active, _entities, _shift = false)
 	{
 		local what = this.Keys[_code];
-		if (what == "status") this.status(_active);
+		if (what == "status")
+		{
+			if (_shift) ::UnseenBanner.TileCursor.announceTurn(_active);
+			else this.status(_active);
+		}
 		else if (what == "turnorder") this.turnOrder(_active);
 		else if (what == "enemies")
 		{
 			if (_shift) this.engaged(_active, _entities);
 			else this.enemies(_active, _entities);
 		}
-		else if (what == "skills") this.skills(_active);
 	},
 	function status(_active)
 	{
@@ -8723,8 +8936,9 @@
 	},
 	function enemies(_active, _entities)
 	{
-		// Visible, living hostiles sorted nearest-first. Each line is the hex
-		// distance from the active man, a space, then the name.
+		// Visible, living hostiles sorted nearest-first. Each line is
+		// "distance TAB name TAB main-hand weapon"; the companion supplies the
+		// connector and leaves an unarmed enemy's current wording unchanged.
 		local activeTile = _active.getTile();
 		local scored = [];
 		foreach( e in _entities.getAllHostilesAsArray() )
@@ -8752,7 +8966,8 @@
 		for (local i = 0; i < scored.len(); i += 1)
 		{
 			if (i > 0) text += "\n";
-			text += scored[i].d + " " + scored[i].e.getName();
+			text += scored[i].d + "\t" + scored[i].e.getName() + "\t"
+				+ ::UnseenBanner.TileCursor.weaponName(scored[i].e);
 		}
 
 		::UnseenBanner.sendMessage("interrupt", text, "combat.enemies", "" + scored.len());
@@ -8767,9 +8982,9 @@
 		// on the active man (its default / X-recentre position) it answers the same
 		// question for where he stands right now. Reuses the b readout's hostile
 		// set (getAllHostilesAsArray, honouring fog of war) filtered to hex distance
-		// 1 from the cursor tile. Each line carries "name\tdirection", where direction
-		// is the same 0-5 hex bearing used by the tactical cursor; the companion turns
-		// it into the shared 12/2/4/6/8/10 clock vocabulary.
+		// 1 from the cursor tile. Each line carries "name\tweapon\tdirection", where
+		// direction is the same 0-5 hex bearing used by the tactical cursor; the
+		// companion turns it into the shared 12/2/4/6/8/10 clock vocabulary.
 		local tile = ::UnseenBanner.TileCursor.getTile(_active);
 		local enemies = [];
 		foreach( e in _entities.getAllHostilesAsArray() )
@@ -8778,6 +8993,7 @@
 			if (tile.getDistanceTo(e.getTile()) != 1) continue;
 			enemies.push({
 				name = e.getName(),
+				weapon = ::UnseenBanner.TileCursor.weaponName(e),
 				dir = tile.getDirectionTo(e.getTile())
 			});
 		}
@@ -8792,13 +9008,14 @@
 		for (local i = 0; i < enemies.len(); i += 1)
 		{
 			if (i > 0) text += "\n";
-			text += enemies[i].name + "\t" + enemies[i].dir;
+			text += enemies[i].name + "\t" + enemies[i].weapon + "\t"
+				+ enemies[i].dir;
 		}
 
 		::UnseenBanner.sendMessage("interrupt", text, "combat.engaged", "" + enemies.len());
 	},
-	// The active man's usable skills — the numbered action bar read aloud (the k
-	// key). queryActives() is the exact list, in the exact order, that the number
+	// The active man's usable skills — the numbered action bar read aloud
+	// (Shift+s). queryActives() is the exact list, in the exact order, that the number
 	// hotkeys index into (setActionStateBySkillIndex), so slot N here is the key the
 	// player presses. Each line is "slot\tname\tap\tfatigue\tusable", where usable is
 	// 1 only when the skill can actually be used this instant (affordable AP+fatigue
@@ -11044,7 +11261,7 @@
 			[this.uiElementDetail(bro, "character-stats.ArmorBody")]));
 
 		// Active skills, so any brother's abilities can be read here — not just the
-		// active man's via the k key. Same source (queryActives) the numbered action
+		// active man's via Shift+s. Same source (queryActives) the numbered action
 		// bar uses, but without the "usable now" flag: it is not this man's turn.
 		items.push(this.skillsEntry(bro));
 
@@ -12029,8 +12246,10 @@
 	// still answers F1 with something true rather than with silence.
 	Contexts = {
 		["combat"] = ["cursor", "recenter", "enemies", "allies", "inspect",
-			"inspectlist", "act", "pickup", "status", "turnorder", "threats", "adjacent",
-			"skills", "hotkeys", "sheet", "endround", "wait"],
+			"inspectlist", "quickequipment", "quickeffects", "skills", "quickstats",
+			"quickbags", "quickarmor", "act", "pickup", "status", "turnorder",
+			"unitturn", "threats", "adjacent",
+			"hotkeys", "sheet", "endround", "wait"],
 		["combat.sheet"] = ["move", "details", "equip", "switch", "close"],
 		["combat.inspect"] = ["move", "details", "close"],
 		["combat.ground"] = ["move", "take", "close"],
@@ -12038,7 +12257,7 @@
 		["world"] = ["move", "march", "brake", "enter", "places", "parties",
 			"tracks", "roads", "status", "explorer", "camp", "campdetails", "sheet", "obituary",
 			"relations", "retinue", "menu"],
-		["world.explorer"] = ["move", "recenter", "list", "travel", "leave"],
+		["world.explorer"] = ["move", "recenter", "bearing", "list", "travel", "leave"],
 		["world.survey"] = ["move", "details", "activate", "pages", "close"],
 		["world.status"] = ["move", "sections", "ambition", "contract", "close"],
 		["world.sheet"] = ["sections", "move", "details", "actions", "switch", "close"],
@@ -14152,10 +14371,12 @@
 		local isCursorKey = ::UnseenBanner.TileCursor.handles(code);
 		local isInspectMenuKey = ::UnseenBanner.TileCursor.handlesInspectMenu(code, shift);
 		local isInspectKey = ::UnseenBanner.TileCursor.handlesInspect(code);
+		local isQuickInspectKey = ::UnseenBanner.TileCursor.handlesQuickInspect(code, shift);
 		local isActKey = ::UnseenBanner.Combat.handles(code);
 		local isReadoutKey = ::UnseenBanner.Readout.handles(code);
 		local isGroundKey = ::UnseenBanner.GroundPickup.handles(code);
-		if ((isCursorKey || isInspectMenuKey || isInspectKey || isActKey || isReadoutKey
+		if ((isCursorKey || isInspectMenuKey || isInspectKey || isQuickInspectKey
+				|| isActKey || isReadoutKey
 				|| isGroundKey)
 			&& !this.isInLoadingScreen()
 			&& !this.isBattleEnded()
@@ -14177,7 +14398,9 @@
 				{
 					if (::UnseenBanner.KeyGate.shouldFire(code, this.Time.getRealTimeF()))
 					{
-						if (isCursorKey)
+						if (isQuickInspectKey)
+							::UnseenBanner.TileCursor.announceQuickInspect(code, active);
+						else if (isCursorKey)
 							::UnseenBanner.TileCursor.onKey(code, active,
 								this.Tactical.Entities, shift, this);
 						else if (isInspectMenuKey)

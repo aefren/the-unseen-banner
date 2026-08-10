@@ -123,10 +123,11 @@ namespace TheUnseenBanner.Companion
                 string cadaver = GetOptionalString(root, "cadaver");
                 string talento = GetOptionalString(root, "talento");
                 string suelo = GetOptionalString(root, "suelo");
+                string arma = GetOptionalString(root, "arma");
                 string spoken = categoria switch
                 {
                     "tile.readout" => ComposeTileReadout(
-                        valor, texto, detalle, cadaver, comparacion, suelo),
+                        valor, texto, detalle, cadaver, comparacion, suelo, arma),
                     "combat.log" => ComposeCombatLog(texto),
                     "combat.skill.selected" => ComposeSkillSelected(texto, valor, detalle),
                     "combat.move" => ComposeMove(valor),
@@ -136,7 +137,18 @@ namespace TheUnseenBanner.Companion
                     "combat.enemies" => ComposeEnemies(texto, valor),
                     "combat.engaged" => ComposeEngaged(texto, valor),
                     "combat.skills" => ComposeSkills(texto, valor),
-                    "combat.inspect" => ComposeInspect(texto, valor, detalle, cadaver),
+                    "combat.inspect" => ComposeInspect(texto, valor, detalle, cadaver, arma),
+                    "combat.inspect.menu.screen" => L10n.F(categoria,
+                        EnemyWithWeapon(texto, valor)),
+                    "combat.inspect.header.enemy" => L10n.F(categoria,
+                        EnemyWithWeapon(texto, detalle), valor),
+                    "combat.inspect.effects" => ComposeSheetList(
+                        "combat.inspect.effects", texto, valor),
+                    "combat.inspect.stats" => ComposeInspectStats(texto, valor, detalle),
+                    "combat.inspect.bags" => ComposeInspectBags(texto, valor),
+                    "combat.inspect.armor" => ComposeInspectArmor(texto, valor, detalle),
+                    "combat.inspect.turn" => ComposeInspectTurn(
+                        texto, valor, detalle, arma),
                     "combat.inspect.menu.morale"
                         => L10n.F(categoria, L10n.T("combat.morale." + valor)),
                     "combat.sheet.mood" => L10n.F("combat.sheet.mood", L10n.T("combat.mood." + valor)),
@@ -1400,7 +1412,7 @@ namespace TheUnseenBanner.Companion
         /// <summary>Compose a tactical tile readout (phase 3.2). The Squirrel side
         /// sends only semantics — terrain as an enum integer, the occupant's
         /// already-localized game name, a packed
-        /// "kind|distance|direction|hp|hpMax" detail, the corpse name as its
+        /// "kind|distance|direction|hp|hpMax|mMorale" detail, the corpse name as its
         /// own JSON field (names are player-editable and may contain delimiters),
         /// and newline-separated names of the live items in tile.Items —
         /// so every spoken word here (terrain names, "ally"/"enemy", the
@@ -1413,7 +1425,8 @@ namespace TheUnseenBanner.Companion
             string detail,
             string corpseName,
             string extras,
-            string groundItems)
+            string groundItems,
+            string weapon)
         {
             string[] parts = detail.Split('|');
             string kind = parts.Length > 0 ? parts[0] : "";
@@ -1421,12 +1434,16 @@ namespace TheUnseenBanner.Companion
             string dirText = parts.Length > 2 ? parts[2] : "-1";
             string hpText = parts.Length > 3 ? parts[3] : "";
             string hpMaxText = parts.Length > 4 ? parts[4] : "";
+            string moraleText = parts.Length > 5
+                && parts[5].StartsWith("m", StringComparison.Ordinal)
+                    ? parts[5].Substring(1)
+                    : "";
             string terrainText = L10n.T("tile.terrain." + terrain);
             string occupant = kind switch
             {
                 "self" => L10n.F("tile.self", name),
                 "ally" => L10n.F("tile.ally", name),
-                "enemy" => L10n.F("tile.enemy", name),
+                "enemy" => L10n.F("tile.enemy", EnemyWithWeapon(name, weapon)),
                 "object" => L10n.F("tile.object", name),
                 _ => L10n.T("tile.empty"),
             };
@@ -1435,6 +1452,10 @@ namespace TheUnseenBanner.Companion
             // right after the occupant name.
             if ((kind == "self" || kind == "ally" || kind == "enemy") && hpText.Length > 0)
                 occupant += ", " + L10n.F("tile.health", hpText, hpMaxText);
+            if ((kind == "self" || kind == "ally" || kind == "enemy")
+                && moraleText.Length > 0)
+                occupant += ", " + L10n.F("tile.morale",
+                    L10n.T("combat.morale." + moraleText));
 
             string position = ComposePosition(distText, dirText);
             string readout = terrainText + ". " + occupant + ".";
@@ -1463,6 +1484,16 @@ namespace TheUnseenBanner.Companion
             // interrupts through them, he does not wait for them.
             string more = ComposeTileExtras(extras);
             return more.Length > 0 ? readout + " " + more : readout;
+        }
+
+        /// <summary>Add an enemy's main-hand weapon without changing the name of
+        /// an unarmed enemy. Both values are game-owned localized strings; only the
+        /// connector is ours and therefore lives in L10n.</summary>
+        private static string EnemyWithWeapon(string name, string weapon)
+        {
+            return weapon.Length > 0
+                ? L10n.F("combat.enemy.with_weapon", name, weapon)
+                : name;
         }
 
         /// <summary>Name the objects the engine currently renders on this hex and
@@ -1540,17 +1571,20 @@ namespace TheUnseenBanner.Companion
         /// <summary>The target-preview clause of a tile readout while a skill is
         /// armed (phase 3.3): empty when no skill is armed, otherwise "valid" /
         /// "not a valid target" and the hit chance when there is an actor to hit.
-        /// The two target fields sit at indices 5/6, after the always-present
-        /// kind/distance/direction/hp/hpMax.</summary>
+        /// New messages put morale at index 5 (marked with an m), then the target
+        /// fields at 6/7. The fallback index keeps an older mod readable while the
+        /// companion is being restarted during development.</summary>
         private static string ComposeTarget(string[] parts)
         {
-            if (parts.Length <= 5) return "";
+            int targetIndex = parts.Length > 5
+                && parts[5].StartsWith("m", StringComparison.Ordinal) ? 6 : 5;
+            if (parts.Length <= targetIndex) return "";
 
-            string targetable = parts[5];
+            string targetable = parts[targetIndex];
             if (targetable == "0") return L10n.T("tile.target.invalid");
             if (targetable != "1") return "";
 
-            string hitText = parts.Length > 6 ? parts[6] : "-";
+            string hitText = parts.Length > targetIndex + 1 ? parts[targetIndex + 1] : "-";
             return int.TryParse(hitText, out int hit)
                 ? L10n.F("tile.target.hit", hit)
                 : L10n.T("tile.target.valid");
@@ -2363,18 +2397,33 @@ namespace TheUnseenBanner.Companion
         }
 
         /// <summary>Compose the visible-enemies readout (phase 3.4): the B key. The
-        /// text is newline-separated "distance name" entries, nearest first; valor
-        /// is the count.</summary>
+        /// text is newline-separated "distance TAB name TAB weapon" entries,
+        /// nearest first; valor is the count. The old space-separated shape remains
+        /// readable during development while the game and companion restart.</summary>
         private static string ComposeEnemies(string text, string countText)
         {
             var entries = new System.Collections.Generic.List<string>();
             foreach (string line in text.Split('\n'))
             {
                 if (line.Length == 0) continue;
-                int sp = line.IndexOf(' ');
-                if (sp <= 0) continue;
-                string dist = line.Substring(0, sp);
-                string name = line.Substring(sp + 1);
+                string dist;
+                string name;
+                string weapon = "";
+                string[] fields = line.Split('\t');
+                if (fields.Length >= 2)
+                {
+                    dist = fields[0];
+                    name = fields[1];
+                    if (fields.Length > 2) weapon = fields[2];
+                }
+                else
+                {
+                    int sp = line.IndexOf(' ');
+                    if (sp <= 0) continue;
+                    dist = line.Substring(0, sp);
+                    name = line.Substring(sp + 1);
+                }
+                name = EnemyWithWeapon(name, weapon);
                 entries.Add(dist == "1"
                     ? L10n.F("combat.enemies.entry.one", name)
                     : L10n.F("combat.enemies.entry", name, dist));
@@ -2390,8 +2439,8 @@ namespace TheUnseenBanner.Companion
         /// Squirrel side counts the hostiles hex-adjacent to the cursor tile, so the
         /// player can tell before moving there whether the tile is ringed by foes
         /// (adjacency means a free hit when he later steps off). text is newline-
-        /// separated "name\tdirection" rows, where direction is the same 0-5 hex
-        /// bearing used by the tactical cursor; valor is the count.</summary>
+        /// separated "name\tweapon\tdirection" rows, where direction is the same
+        /// 0-5 hex bearing used by the tactical cursor; valor is the count.</summary>
         private static string ComposeEngaged(string text, string countText)
         {
             var entries = new System.Collections.Generic.List<string>();
@@ -2400,8 +2449,11 @@ namespace TheUnseenBanner.Companion
                 if (line.Length == 0) continue;
                 string[] fields = line.Split('\t');
                 string name = fields[0];
-                if (fields.Length > 1
-                    && int.TryParse(fields[1], out int dir)
+                string weapon = fields.Length > 2 ? fields[1] : "";
+                int directionIndex = fields.Length > 2 ? 2 : 1;
+                name = EnemyWithWeapon(name, weapon);
+                if (fields.Length > directionIndex
+                    && int.TryParse(fields[directionIndex], out int dir)
                     && dir >= 0
                     && dir < ClockHours.Length)
                 {
@@ -2421,7 +2473,7 @@ namespace TheUnseenBanner.Companion
                 : L10n.F("combat.engaged", countText, list);
         }
 
-        /// <summary>Compose the active man's skills readout (the k key): the numbered
+        /// <summary>Compose the active man's skills readout (Shift+S): the numbered
         /// action bar. text is newline-separated "slot\tname\tap\tfatigue\tusable"
         /// lines in hotkey order; valor is the count. A skill that cannot be used this
         /// instant (usable == "0") is flagged so the player knows what is greyed out.
@@ -2455,7 +2507,7 @@ namespace TheUnseenBanner.Companion
         /// The corpse name is a separate JSON field because character names are
         /// player-editable and may contain the packed detail delimiter.</summary>
         private static string ComposeInspect(
-            string name, string valor, string detail, string corpseName)
+            string name, string valor, string detail, string corpseName, string weapon)
         {
             if (valor == "sight")
                 return L10n.F("combat.inspect.sight", name);
@@ -2468,17 +2520,17 @@ namespace TheUnseenBanner.Companion
             {
                 "self" => L10n.F("combat.inspect.header.self", name, At(1)),
                 "ally" => L10n.F("combat.inspect.header.ally", name, At(1)),
-                _ => L10n.F("combat.inspect.header.enemy", name, At(1)),
+                _ => L10n.F("combat.inspect.header.enemy",
+                    EnemyWithWeapon(name, weapon), At(1)),
             };
 
             string morale = L10n.T("combat.morale." + At(10));
             string body = L10n.F("combat.inspect.body",
-                At(3), At(4), At(5), At(6), At(7), At(8));
+                At(3), At(4), At(5), At(6), At(7), At(8), morale);
             string equipment = JoinNames(At(9));
             string equipmentText = equipment.Length > 0
                 ? L10n.F("combat.sheet.equipment", equipment)
                 : L10n.T("combat.sheet.equipment.none");
-            string moraleText = L10n.F("combat.inspect.morale", morale);
 
             string timing = At(2) switch
             {
@@ -2490,7 +2542,7 @@ namespace TheUnseenBanner.Companion
                 string t => L10n.F("combat.inspect.timing.turns", t),
             };
 
-            string result = header + " " + body + " " + equipmentText + " " + moraleText;
+            string result = header + " " + body + " " + equipmentText;
             if (timing.Length > 0) result += " " + timing;
 
             string effects = JoinNames(At(11));
@@ -2501,9 +2553,87 @@ namespace TheUnseenBanner.Companion
             return result;
         }
 
+        /// <summary>Shift+D uses the same four values and arithmetic as the visible
+        /// character sheet. The mod packs armor damage, head-hit chance and vision
+        /// in detail; an empty damage minimum means the unit is unarmed.</summary>
+        private static string ComposeInspectStats(string damageMin, string damageMax,
+            string detail)
+        {
+            string[] p = detail.Split('|');
+            string armorDamage = p.Length > 0 ? p[0] : "0";
+            string headHit = p.Length > 1 ? p[1] : "0";
+            string vision = p.Length > 2 ? p[2] : "0";
+
+            string damage = damageMin.Length > 0 && damageMax.Length > 0
+                ? L10n.F("combat.sheet.damage", "", damageMin, damageMax)
+                : L10n.T("combat.sheet.damage.none");
+            return damage + " "
+                + L10n.F("combat.sheet.armordamage", "", armorDamage) + " "
+                + L10n.F("combat.sheet.headhit", "", headHit) + " "
+                + L10n.F("combat.sheet.vision", "", vision);
+        }
+
+        /// <summary>Shift+A always names the first two physical bag slots, including
+        /// empty ones, so the listener can distinguish which position holds an item.</summary>
+        private static string ComposeInspectBags(string bag1, string bag2)
+        {
+            string empty = L10n.T("world.character.item.empty");
+            return L10n.F("combat.inspect.bags",
+                bag1.Length > 0 ? bag1 : empty,
+                bag2.Length > 0 ? bag2 : empty);
+        }
+
+        /// <summary>Shift+W reads body then head armor. Item names come from the
+        /// worn slots, while current/max values come from the actor so damage and
+        /// non-item natural armor remain accurate.</summary>
+        private static string ComposeInspectArmor(string bodyName, string headName,
+            string detail)
+        {
+            string[] p = detail.Split('|');
+            string bodyCurrent = p.Length > 0 ? p[0] : "0";
+            string bodyMax = p.Length > 1 ? p[1] : "0";
+            string headCurrent = p.Length > 2 ? p[2] : "0";
+            string headMax = p.Length > 3 ? p[3] : "0";
+
+            string ArmorName(string name, string maximum)
+            {
+                if (name.Length > 0) return name;
+                return maximum != "0"
+                    ? L10n.T("combat.inspect.armor.natural")
+                    : L10n.T("combat.inspect.armor.none");
+            }
+
+            return L10n.F("combat.inspect.armor.body",
+                    ArmorName(bodyName, bodyMax), bodyCurrent, bodyMax)
+                + " " + L10n.F("combat.inspect.armor.head",
+                    ArmorName(headName, headMax), headCurrent, headMax);
+        }
+
+        /// <summary>Shift+T reads the native turn-timing state and current fatigue
+        /// for the combatant under the cursor. Timing uses the same phrases as V.</summary>
+        private static string ComposeInspectTurn(string name, string timing,
+            string detail, string weapon)
+        {
+            string timingText = timing switch
+            {
+                "now" => L10n.T("combat.inspect.timing.now"),
+                "done" => L10n.T("combat.inspect.timing.done"),
+                "1" => L10n.T("combat.inspect.timing.turns.one"),
+                "none" or "" => L10n.T("combat.inspect.timing.unavailable"),
+                _ => L10n.F("combat.inspect.timing.turns", timing),
+            };
+
+            string[] p = detail.Split('|');
+            string current = p.Length > 0 ? p[0] : "0";
+            string maximum = p.Length > 1 ? p[1] : "0";
+            string fatigue = L10n.F("combat.inspect.turn.fatigue", current, maximum);
+            return L10n.F("combat.inspect.turn",
+                EnemyWithWeapon(name, weapon), timingText, fatigue);
+        }
+
         /// <summary>Compose the character sheet's active-skills entry. text is
         /// newline-separated "name\tap\tfatigue" lines; count is in valor. Unlike the
-        /// k-key readout there is no slot number or usability flag — this is any
+        /// Shift+S readout there is no slot number or usability flag — this is any
         /// brother's ability list, not the active man's live action bar.</summary>
         private static string ComposeSheetSkills(string text, string countText)
         {
