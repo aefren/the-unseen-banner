@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.0.1
+## 1.1
 
-Version 1.0.1 makes battlefield decisions faster and adds two practical
+Version 1.1 makes battlefield decisions faster and adds two practical
 world-map tools. Saves remain compatible with 1.0.0.
 
 ### Faster, focused combat inspection
