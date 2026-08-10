@@ -2,7 +2,7 @@
 
 **An accessibility mod for blind players of *Battle Brothers*.**
 
-**Version 1.0**
+**Version 1.0.1**
 
 *Battle Brothers* is a turn-based tactical RPG where you lead a medieval
 mercenary company: hire and equip fighters, take contracts across an open world

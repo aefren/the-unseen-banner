@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.0.1
+
+Version 1.0.1 makes battlefield decisions faster and adds two practical
+world-map tools. Saves remain compatible with 1.0.0.
+
+### Faster, focused combat inspection
+
+The tactical cursor now includes morale when announcing visible units. Armed
+enemies are named with their main-hand weapon when moving the cursor, cycling
+enemies, listing nearby threats, or inspecting a unit. Unarmed enemies remain
+identified without a misleading weapon label.
+
+New shortcuts read individual parts of the unit under the cursor without opening
+the full inspection list:
+
+- `Shift+E`: equipment.
+- `Shift+F`: active effects.
+- `Shift+D`: damage range, armour damage, head-hit chance and vision.
+- `Shift+A`: bag slots 1 and 2, including empty slots.
+- `Shift+W`: body and head armour, with item names and current/maximum durability.
+- `Shift+T`: turn timing and current/maximum fatigue.
+
+`Shift+S` now reads the active brother's usable skills, their costs and whether
+each can currently be used, replacing the former `K` shortcut. The unmodified
+Q/W/E/A/S/D movement cluster is unchanged.
+
+### Roads can be surveyed at a glance
+
+`Shift+R` counts discovered road segments inside the company's current vision,
+groups them by direction and says whether the company is standing on a road. The
+scan respects fog of war, while plain `R` continues to open factions and
+relations.
+
+### The current map seed can be copied
+
+The world-map pause menu now starts on the campaign's map seed. Pressing Enter
+copies it to the Windows clipboard and confirms the copy aloud.
+
+Campaigns whose saves contain no seed explicitly announce “Map Seed:
+Unavailable” instead of silently omitting the information.
+
+### Installing over 1.0.0
+
+Run `install.bat` from this release; it replaces the files installed by 1.0.0.
+Saved games are never touched, and `uninstall.bat` still leaves the game as it
+came.
+
 ## 1.0
 
 Version 1.0 marks the complete campaign milestone: company creation, management,
@@ -36,12 +83,6 @@ rivers. Roads were verified in every readout; no river could be found during the
 final audit, so its equivalent wording remains an explicitly non-blocking
 verification gap. Undiscovered road segments stay hidden.
 
-`Shift+R` now gives roads the same quick overview that tracks already had: it
-scans the company's current vision circle, respects fog of war, says whether the
-company is standing on a road and groups nearby road hexes by direction. Plain
-`R` still opens factions and relations. The shortcut was verified in game with
-NVDA.
-
 `Shift+F` counts the tracks inside the company's current vision and groups them by
 north, northeast, southeast, south, southwest and northwest. Plain `F` retains
 the game's show/hide-tracking action. Known landmarks accept Enter as an ordinary
@@ -50,18 +91,6 @@ the lists and every other readout. Place rows now start with the useful rendered
 name instead of repeating a category the list header already announced.
 
 All reproducible paths above were verified in game with NVDA.
-
-### The pause menu exposes and copies the current map seed
-
-The world-map pause menu now starts on its map seed and announces that Enter
-copies it. Clipboard ownership stays in the companion process, outside
-Coherent's restricted browser, and the successful copy is confirmed aloud.
-
-Some old or malformed saves genuinely store an empty seed; the game itself has
-nothing from which to reconstruct it. Those campaigns now display and announce
-“Map Seed: Unavailable” as the first row instead of silently starting on Resume.
-Both the normal seed-copy flow and the unavailable-save flow were verified in
-game with NVDA.
 
 ### The map speaks upkeep, confirmations and the numbers behind a deal
 
