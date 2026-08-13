@@ -13,6 +13,8 @@ docs/
 # Artefactos de build
 build/
 dist/
+# Release descomprimida en la raíz para probar el instalador a mano
+TheUnseenBanner-*/
 
 # Lanzador que genera install.bat con la ruta resuelta de esta máquina
 play-unseen-banner.bat
