@@ -7996,22 +7996,38 @@
 			if (dist > 0) dir = activeTile.getDirectionTo(tile);
 		}
 
-		// A focused combatant also emits a pure-audio cue through the companion.
-		// The relation chooses the friendly/threatening two-note texture and the live
-		// turn-sequence position chooses its rhythm. Spatial encoding is deliberately
-		// finer than the old fixed-strength bearing: sonarPosition combines the live
-		// hex distance with its horizontal and vertical sector, so pan and pitch both
-		// accumulate once per tile. Empty tiles, scenery,
-		// hidden units and the active brother remain silent. Emitting this first lets
-		// the short cue start alongside the existing spoken tile description.
+		// The tile also emits a pure-audio cue through the companion. Two independent
+		// facts ride in it, and either one alone is worth the message:
+		//
+		//  - A focused combatant. The relation chooses the friendly/threatening
+		//    two-note texture and the live turn-sequence position chooses its rhythm.
+		//    Scenery, hidden units and the active brother stay silent here.
+		//  - The ground itself, rising or falling relative to the active brother.
+		//
+		// Spatial encoding is deliberately finer than the old fixed-strength bearing:
+		// sonarPosition combines the live hex distance with its horizontal and vertical
+		// sector, so pan and pitch both accumulate once per tile. Both facts travel in
+		// one message because the companion mixes them into a single waveform: they
+		// describe the same hex and must be heard at the same instant, not queued.
+		// Emitting this first lets the cue start alongside the spoken tile description.
+		local sonarRelation = "none";
+		local sonarTiming = "none";
 		if (actor != null && (kind == "ally" || kind == "enemy"))
 		{
-			local sonarTiming = this.sonarTiming(actor);
-			if (sonarTiming != null)
+			local timing = this.sonarTiming(actor);
+			if (timing != null)
 			{
-				::UnseenBanner.sendMessage("sonar", kind, "combat.sonar",
-					sonarTiming, this.sonarPosition(dist, dir));
+				sonarRelation = kind;
+				sonarTiming = timing;
 			}
+		}
+		local sonarHeight = this.sonarHeight(_active, tile);
+		local sonarBlocked = this.sonarBlocked(tile, kind) ? "1" : "0";
+		if (sonarRelation != "none" || sonarHeight != "level" || sonarBlocked == "1")
+		{
+			::UnseenBanner.sendMessage("sonar", sonarRelation, "combat.sonar",
+				sonarTiming, this.sonarPosition(dist, dir) + "|" + sonarHeight
+					+ "|" + sonarBlocked);
 		}
 
 		// hp/hpMax are empty for empty tiles and scenery; the companion only voices
@@ -8402,6 +8418,37 @@
 		if (value == "1" || value == "2" || value == "3") return value;
 		if (value == "now" || value == "none") return null;
 		return "many";
+	},
+	// Elevation of the cursor tile as a direction, or "level". The comparison is the
+	// one the spoken readout already makes (extras): height relative to the active
+	// brother, not the map's absolute level, because that is what decides hit chance
+	// and ranged reach. Equal ground is the common case and stays silent.
+	function sonarHeight(_active, _tile)
+	{
+		if (_active == null || _tile == null) return "level";
+		local activeTile = _active.getTile();
+		if (activeTile == null) return "level";
+		if (_tile.Level > activeTile.Level) return "up";
+		if (_tile.Level < activeTile.Level) return "down";
+		return "level";
+	},
+	// Ground no man can end a move on. The engine's own test for this is
+	// "!tile.IsEmpty || tile.Type == Impassable" (ai_alp_teleport, ai_darkflight),
+	// with two deliberate narrowings here:
+	//
+	// - The occupancy half is taken from _kind rather than from IsEmpty, so it means
+	//   VISIBLE scenery. A tile holding an actor is what the unit cue already
+	//   describes, and a hidden one must never be given away by a sound the way
+	//   IsEmpty would give it away.
+	// - Deep water joins Impassable: Const.DefaultMovementAPCost stops at index 8
+	//   (shallow water), so terrain type 9 has no movement cost at all and is a hex
+	//   no path can ever end on, even though its type is not the impassable one.
+	function sonarBlocked(_tile, _kind)
+	{
+		if (_tile == null) return false;
+		if (_kind == "object") return true;
+		return _tile.Type == ::Const.Tactical.TerrainType.Impassable
+			|| _tile.Type == ::Const.Tactical.TerrainType.DeepWater;
 	},
 	// Return "horizontalTiles|verticalTiles". A diagonal sector carries both
 	// components: a unit one hex to the northeast is one tile right and one tile up,

@@ -19,8 +19,24 @@ per tile (three at one, six at two and twelve at four) without changing its dura
 Allies use G+D; enemies use B-flat+C-sharp. One, two and three turns use the same
 number of pulses, more than three uses a long pulse, and a unit which already
 acted gets its own four-note melody. Cursor audio is last-focus-wins and never
-reveals hidden units. Volume, pan per tile, pitch per tile, rhythm and MIDI notes
-can be adjusted in `companion/sonar.json` without rebuilding.
+reveals hidden units.
+
+The ground itself is reported by a 200 ms violin glide sounding in two octaves at
+once: rising C to G where the hex stands above the active brother, falling G to C
+where it lies below. Level ground stays silent.
+
+Hexes nobody can stand on — trees, boulders, walls, deep water — get a 250 ms
+rasp of their own, buzzing and chopped, its pitch wobbling up from A to C and
+back rather than settling on a note. It is meant to be known by its texture
+before any pitch is identified.
+
+Both ground cues sound on any hex, with or without a unit on it, and everything a
+hex reports is mixed into a single waveform, so a unit on high ground next to an
+obstacle is heard as one sound starting at one instant rather than as a queue.
+
+Volume, pan per tile, pitch per tile, rhythm, MIDI notes and every parameter of
+the height glide and the impassable rasp can be adjusted in
+`companion/sonar.json` without rebuilding.
 
 New shortcuts read individual parts of the unit under the cursor without opening
 the full inspection list:

@@ -18,5 +18,27 @@
   "friendlyChordMidi": [55, 62],
   "threateningChordMidi": [58, 61],
   "friendlyDoneMidi": [62, 67, 62, 67],
-  "threateningDoneMidi": [61, 58, 61, 58]
+  "threateningDoneMidi": [61, 58, 61, 58],
+
+  "heightGlideMilliseconds": 200,
+  "heightRisingFromMidi": 60,
+  "heightRisingToMidi": 67,
+  "heightFallingFromMidi": 67,
+  "heightFallingToMidi": 60,
+  "heightOctaveOffsetSemitones": 12,
+  "heightAttackMilliseconds": 30,
+  "heightReleaseMilliseconds": 45,
+  "heightGain": 0.8,
+  "heightVibratoHertz": 5.5,
+  "heightVibratoSemitones": 0.2,
+
+  "blockedMilliseconds": 250,
+  "blockedLowMidi": 57,
+  "blockedHighMidi": 60,
+  "blockedVibratoHertz": 8.0,
+  "blockedGrainHertz": 55.0,
+  "blockedGrainDepth": 0.55,
+  "blockedAttackMilliseconds": 6,
+  "blockedReleaseMilliseconds": 18,
+  "blockedGain": 0.7
 }

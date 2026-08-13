@@ -108,8 +108,9 @@ before starting a serious campaign:
   cue. Stereo pan grows by 10% per horizontal tile and pitch moves by three semitones
   per vertical tile relative to the active brother. Timbre identifies friend or
   foe, and rhythm identifies whether the unit acts in one, two, three, more than
-  three turns, or has already acted. Implemented and build-verified; awaiting the
-  required in-game listening pass.
+  three turns, or has already acted. A rising or falling violin glide reports
+  whether the hex stands above or below the active brother, and sounds together
+  with the unit cue when both apply.
 - ⏭️ **After 1.0 — quality of life and positional audio**: key remapping,
   configurable verbosity, world-map sonar and the destination beacon. The map
   already gives direction and distance in words, and the fixed keys below cover
@@ -425,10 +426,30 @@ patterns with two musical identities:
   northeast/southeast pan right. Each tile of distance adds 10% pan in a lateral
   direction and transposes the complete cue three semitones in a vertical direction;
   diagonal sectors apply both. Transposition does not change the rhythm's duration.
+- **Height:** a 200 ms violin glide, sounding in two octaves at once, reports the
+  ground itself. It rises C to G where the hex stands above the active brother and
+  falls G to C where it lies below; level ground is silent. Unlike the cues above
+  this one plays on any hex, occupied or not, and it is never transposed by the
+  vertical position — that shift means distance up the screen, and only this glide
+  means height.
+- **Impassable ground:** a 250 ms rasp, buzzing and chopped into grains, whose
+  pitch wobbles up from A to C and back instead of settling. It marks a hex nobody
+  can stand on — a tree, a boulder, a wall, deep water. Its texture is what
+  identifies it, so it is recognisable before any note is, and it too plays on any
+  hex.
 
-The previous cue is stopped when the cursor moves, so a long sound can never keep
-describing a unit which no longer has focus. Empty, hidden and non-unit tiles are
-silent.
+Where a hex reports several of these at once — a unit acting in three turns, on
+high ground, beside an obstacle — they are mixed into a single waveform and
+therefore start at the same instant rather than queueing. The previous cue is
+stopped when the cursor moves, so a long sound can never keep describing a hex
+which no longer has focus. Hidden units are silent, and so is empty level ground
+that can be walked on.
+
+Every cue is synthesized on the fly at 48 kHz, 16-bit stereo, so a transposed or
+panned cue is rendered at its final pitch rather than resampled. `sonar.json`
+holds the volume, rhythms, MIDI notes, pan and pitch per tile, the notes,
+duration, timbre envelope and vibrato of the height glide, and the notes, wobble
+rate, grain rate and depth of the impassable rasp.
 
 Every tile the cursor lands on also reports three things a sighted player reads
 off the screen. **Height opens the readout**, in the same breath as the terrain;
@@ -572,7 +593,7 @@ The bulk of the code lives in:
 - `mod/` — the mod itself (Squirrel hooks + injected JS).
 - `companion/` — the .NET 8 companion app (speech, localization and positional
   tactical audio). `sonar.json` holds its runtime-tunable volume, pan per tile,
-  pitch per tile, rhythm and MIDI voicing.
+  pitch per tile, rhythm, MIDI voicing, height glide and impassable rasp.
 - `installer/` — the PowerShell the install and uninstall scripts run.
 - `packaging/` — `build-release.bat` builds the downloadable release into
   `dist/`: it repacks the mod zip, publishes the companion self-contained and
