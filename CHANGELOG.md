@@ -51,6 +51,27 @@ copies it to the Windows clipboard and confirms the copy aloud.
 Campaigns whose saves contain no seed explicitly announce “Map Seed:
 Unavailable” instead of silently omitting the information.
 
+### Named regions can be located without sight
+
+`Z` now reads the region on the company's current tile and its position relative
+to the region's printed name, using eight compass directions — for example,
+“East of Glaucious Domain.” In the `M` map explorer it reads the cursor tile
+instead, so a region remains useful for orientation even when it contains no
+settlements. Both press and release are consumed, preserving the readout without
+also triggering vanilla's northward camera pan.
+
+Travel now announces that same reading automatically when the company crosses
+into another named region or moves into another compass sector of its current
+region. It is joined to the existing terrain, road and place cue so no interrupt
+announcement cuts another one off. Every row in `B` also names its region and
+sector after the place — for a settlement, after its owning faction as well — so
+settlements, locations and landmarks are all placed on the map by name.
+
+Regions are only named on explored ground. Map tiles keep their region under fog
+of war, so `Z` on an unexplored hex in the `M` map explorer now answers
+“Unexplored ground, no region known.” rather than reading out an area the map has
+not yet revealed.
+
 ### Installing over 1.0.0
 
 Run `install.bat` from this release; it replaces the files installed by 1.0.0.

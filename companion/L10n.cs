@@ -956,6 +956,21 @@ namespace TheUnseenBanner.Companion
             ["world.roads.one"] = "1 road segment to the {0}",
             ["world.roads.many"] = "{0} road segments to the {1}",
             ["world.roads.here"] = "a road at your position",
+            // Z: position of the company, or of the active map cursor, relative to
+            // the centre tile where the game anchors the region's printed name.
+            ["world.region.unavailable"] = "No named region here.",
+            // The map explorer's cursor sitting on ground the company has never
+            // approached: the area has a name, but the fog is why it is not read out.
+            ["world.region.unexplored"] = "Unexplored ground, no region known.",
+            ["world.region.center"] = "In the center of {0}.",
+            ["world.region.north"] = "North of {0}.",
+            ["world.region.northeast"] = "Northeast of {0}.",
+            ["world.region.east"] = "East of {0}.",
+            ["world.region.southeast"] = "Southeast of {0}.",
+            ["world.region.south"] = "South of {0}.",
+            ["world.region.southwest"] = "Southwest of {0}.",
+            ["world.region.west"] = "West of {0}.",
+            ["world.region.northwest"] = "Northwest of {0}.",
             // Roads and rivers (phase 4.8). The map's two travel-speed modifiers — a road
             // moves the company at 1.5x and a river at 0.75x, both applied to its speed by
             // the game itself — and neither of them changes the tile's terrain type, so no
@@ -1326,6 +1341,7 @@ namespace TheUnseenBanner.Companion
             ["help.world.march"] = "Shift plus a direction marches that way until something stops you.",
             ["help.world.brake"] = "Space stops the company and pauses the game.",
             ["help.world.enter"] = "Enter enters the place you are standing on, or engages a party at contact range.",
+            ["help.world.region"] = "Z reads your company's position within the current named region.",
             ["help.world.places"] = "B lists the settlements and locations you know of.",
             ["help.world.parties"] = "Shift plus B lists the parties in sight.",
             ["help.world.tracks"] = "Shift plus F counts the visible tracks in each direction.",
@@ -1342,6 +1358,7 @@ namespace TheUnseenBanner.Companion
             ["help.world.explorer.move"] = "Q, W, E, A, S and D move the cursor over the map, one hex at a time.",
             ["help.world.explorer.recenter"] = "X recentres the cursor on the company and reads its hex.",
             ["help.world.explorer.bearing"] = "Shift plus X reads the cursor's distance and direction from the company.",
+            ["help.world.explorer.region"] = "Z reads the cursor's position within its named region.",
             ["help.world.explorer.list"] = "V reads the cursor's hex as a list, one row at a time.",
             ["help.world.explorer.travel"] = "G sends the company to the cursor hex.",
             ["help.world.explorer.leave"] = "M leaves the explorer.",

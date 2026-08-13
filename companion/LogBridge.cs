@@ -1710,9 +1710,9 @@ namespace TheUnseenBanner.Companion
         /// <summary>Compose the world-map step cue. <paramref name="terrain"/> is the
         /// tile type, sent only when it actually changed, and <paramref name="place"/>
         /// the settlement, camp or ruin standing on the tile, sent whenever there is
-        /// one. They arrive together and are spoken as one utterance on purpose: as two
-        /// messages the second would either cut the first off or be discarded by the
-        /// next interrupt.</summary>
+        /// one. detail also carries paths and a region transition. They arrive together
+        /// and are spoken as one utterance on purpose: separate interrupt messages would
+        /// cut one another off.</summary>
         private static string ComposeMoveStep(string place, string terrain, string detail)
         {
             string[] p = detail.Split('|');
@@ -1728,16 +1728,37 @@ namespace TheUnseenBanner.Companion
             if (paths.Length > 0)
                 spoken = spoken.Length > 0 ? spoken + " " + paths : paths;
 
+            string region = ComposeRegion(
+                p.Length > 2 ? p[2] : "",
+                p.Length > 3 ? p[3] : "");
+            if (region.Length > 0)
+                spoken = spoken.Length > 0 ? spoken + " " + region : region;
+
             return AppendPlace(spoken, place, p.Length > 0 ? p[0] : "");
         }
 
         /// <summary>As <see cref="ComposeMoveStep"/> for the cue that ends a movement
         /// order. The terrain is always present here; it deliberately repeats what the
         /// step cue just said, since this one interrupts it.</summary>
-        private static string ComposeMoveStopped(string place, string terrain, string kind)
+        private static string ComposeMoveStopped(string place, string terrain, string detail)
         {
+            string[] p = detail.Split('|');
             string spoken = L10n.F("world.move.stopped", L10n.T("world.terrain." + terrain));
-            return AppendPlace(spoken, place, kind);
+            string region = ComposeRegion(
+                p.Length > 1 ? p[1] : "",
+                p.Length > 2 ? p[2] : "");
+            if (region.Length > 0) spoken += " " + region;
+            return AppendPlace(spoken, place, p.Length > 0 ? p[0] : "");
+        }
+
+        /// <summary>Word a generated world region using the same localization keys as
+        /// the direct Z readout. An unavailable transition carries only its sentinel;
+        /// normal readings carry the already-localized game name and an eight-way sector.</summary>
+        private static string ComposeRegion(string name, string direction)
+        {
+            if (direction == "unavailable") return L10n.T("world.region.unavailable");
+            if (name.Length == 0 || direction.Length == 0) return string.Empty;
+            return L10n.F("world.region." + direction, name);
         }
 
         /// <summary>Append the name of the place occupying the tile, if any. Landmarks
@@ -2132,18 +2153,23 @@ namespace TheUnseenBanner.Companion
 
         /// <summary>Compose one survey entry (phase 4.3). texto is the entity's already-
         /// localized game name; valor is the kind (ally/enemy/neutral party, settlement,
-        /// location, landmark); detalle is the "dist|dir" pair shared with the tactical
-        /// tile readout, so <see cref="ComposePosition"/> is reused for "3 tiles, 2
-        /// o'clock". Landmarks get their own approach-only action hint because travelling
-        /// to one does not attempt to enter it.</summary>
+        /// location, landmark); detalle starts with the "dist|dir" pair shared with the
+        /// tactical tile readout, then the region name and sector every place row carries.
+        /// Only settlement rows fill the faction between them. Landmarks get their own
+        /// approach-only action hint because travelling to one does not attempt to enter
+        /// it.</summary>
         private static string ComposeSurveyItem(string name, string kind, string detail)
         {
             string[] p = detail.Split('|');
             string dist = p.Length > 0 ? p[0] : "0";
             string dir = p.Length > 1 ? p[1] : "-1";
-            // Only settlements carry a fourth token: the owning faction, which the map
-            // draws as the banner beside them. Empty for everything else.
+            // The owning faction drawn by its banner, which only settlements have, and
+            // the position around the name of the generated region, which every place
+            // reports unless its tile is still under fog.
             string faction = p.Length > 2 ? p[2] : "";
+            string region = ComposeRegion(
+                p.Length > 3 ? p[3] : "",
+                p.Length > 4 ? p[4] : "");
 
             // The places screen already announces its category, so repeating
             // "Settlement", "Location" or "Landmark" on every row only delays the
@@ -2175,8 +2201,11 @@ namespace TheUnseenBanner.Companion
                 "landmark" => L10n.T("world.survey.action.landmark"),
                 _ => string.Empty,
             };
-            string spoken = position.Length > 0 ? head + ". " + position + "." : head + ".";
-            return action.Length > 0 ? spoken + " " + action : spoken;
+            var parts = new List<string> { head + "." };
+            if (region.Length > 0) parts.Add(region);
+            if (position.Length > 0) parts.Add(position + ".");
+            if (action.Length > 0) parts.Add(action);
+            return string.Join(" ", parts);
         }
 
         /// <summary>Compose what the day's settlement cost the company: how many men

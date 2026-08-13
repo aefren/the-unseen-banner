@@ -1516,8 +1516,22 @@
 				local owner = r.e.getOwner();
 				if (owner != null) faction = owner.getName();
 			}
+			// The region is read for every category, not just for settlements: a ruin,
+			// a battle site or a farm sits inside the same printed area a town does,
+			// and that name is the coarse bearing a sighted player takes from the map
+			// long before he reads distances off it. info() answers nothing for a tile
+			// still under fog, which is why the clause can simply be left empty.
+			local regionName = "";
+			local regionDirection = "";
+			local region = ::UnseenBanner.WorldRegion.info(::World.State, r.e.getTile());
+			if (region != null)
+			{
+				regionName = region.name;
+				regionDirection = region.direction;
+			}
 			items.push(this.item("world.survey.item", r.e.getName(), kind,
-				this.posDetail(playerTile, r.e.getTile()) + "|" + faction, r.e));
+				this.posDetail(playerTile, r.e.getTile()) + "|" + faction
+					+ "|" + regionName + "|" + regionDirection, r.e));
 		}
 
 		this.m.Items = items;
@@ -2131,6 +2145,12 @@
 		// would otherwise pass in the same silence the terrain cue was built to break.
 		LastRoad = false,
 		LastRiver = false,
+		// The automatic region cue is a transition, not a per-tile recital. A
+		// signature combines the generated region with the same eight-way sector Z
+		// reads. The tile id remembers a transition on the final step so "Stopped"
+		// can repeat it rather than cutting it off a few frames later.
+		LastRegionSignature = "",
+		LastRegionChangeTileID = -1,
 		DestinationID = null, // entity the party is travelling to, sampled each frame
 		SelfUnpause = false // set while WE unpause to move, so the pause hook stays quiet
 	},
@@ -2177,6 +2197,8 @@
 		this.m.LastTerrain = -1;
 		this.m.LastRoad = false;
 		this.m.LastRiver = false;
+		this.m.LastRegionSignature = "";
+		this.m.LastRegionChangeTileID = -1;
 		this.m.DestinationID = null;
 		this.m.SelfUnpause = false;
 	},
@@ -2195,6 +2217,9 @@
 		this.m.LastTerrain = tile.Type;
 		this.m.LastRoad = ::UnseenBanner.WorldSurvey.tileHasPath(tile, false);
 		this.m.LastRiver = tile.HasRiver;
+		local region = ::UnseenBanner.WorldRegion.info(::World.State, tile);
+		this.m.LastRegionSignature = region != null ? region.signature : "none";
+		this.m.LastRegionChangeTileID = -1;
 	},
 	// Start one hex step in _dir via the navigator, mirroring the mouse click's own
 	// settings. Returns true if a step is now in flight; false (with an announcement)
@@ -2401,8 +2426,9 @@
 			{
 				this.m.LastTileID = tile.ID;
 				// Terrain is still only spoken when it actually changes; a place is
-				// spoken on every tile it occupies. Either alone is worth a message,
-				// and when both land on the same step they go out together.
+				// spoken on every tile it occupies. The region is spoken only when its
+				// generated name or the company's sector around that name changes. Any
+				// combination goes out together so interrupt speech cannot eat a clause.
 				local terrain = "";
 				if (tile.Type != this.m.LastTerrain)
 				{
@@ -2414,11 +2440,30 @@
 				// the moment they are worth having and the alternative is stopping to press
 				// X; stepping OFF is one word, since where the road went no longer matters.
 				local paths = this.pathChange(tile);
+				local regionName = "";
+				local regionDirection = "";
+				local region = ::UnseenBanner.WorldRegion.info(::World.State, tile);
+				local regionSignature = region != null ? region.signature : "none";
+				if (regionSignature != this.m.LastRegionSignature)
+				{
+					this.m.LastRegionSignature = regionSignature;
+					this.m.LastRegionChangeTileID = tile.ID;
+					if (region != null)
+					{
+						regionName = region.name;
+						regionDirection = region.direction;
+					}
+					else
+					{
+						regionDirection = "unavailable";
+					}
+				}
 				local place = this.findPlace(player, tile);
-				if (terrain != "" || paths != "" || place != null)
+				if (terrain != "" || paths != "" || regionDirection != "" || place != null)
 				{
 					::UnseenBanner.sendMessage("interrupt", this.placeName(place),
-						"world.move.step", terrain, this.placeKind(place) + "|" + paths);
+						"world.move.step", terrain, this.placeKind(place) + "|" + paths
+							+ "|" + regionName + "|" + regionDirection);
 				}
 			}
 		}
@@ -2471,8 +2516,24 @@
 	{
 		local tile = _player.getTile();
 		local place = this.findPlace(_player, tile);
+		local regionName = "";
+		local regionDirection = "";
+		if (this.m.LastRegionChangeTileID == tile.ID)
+		{
+			local region = ::UnseenBanner.WorldRegion.info(::World.State, tile);
+			if (region != null)
+			{
+				regionName = region.name;
+				regionDirection = region.direction;
+			}
+			else
+			{
+				regionDirection = "unavailable";
+			}
+		}
 		::UnseenBanner.sendMessage("interrupt", this.placeName(place),
-			"world.move.stopped", "" + tile.Type, this.placeKind(place));
+			"world.move.stopped", "" + tile.Type, this.placeKind(place)
+				+ "|" + regionName + "|" + regionDirection);
 	}
 };
 
@@ -2820,6 +2881,10 @@
 	function isActive()
 	{
 		return this.m.Active;
+	},
+	function getTile()
+	{
+		return this.m.Tile;
 	},
 	function isListActive()
 	{
@@ -3580,6 +3645,111 @@
 			packed += counts[d];
 		}
 		::UnseenBanner.sendMessage("interrupt", "", "world.roads.summary", packed);
+	}
+};
+
+// Named-region readout. The world generator creates regions independently of
+// settlements: every member tile carries a Region id, and world_state resolves it to
+// the generated Name and to Center, the tile used to anchor the large printed label.
+// Z reads the company tile on the plain map and the cursor tile while the map explorer
+// is active, so regions with no settlements remain just as discoverable as populated
+// ones. Eight sectors are used here instead of the world's six movement directions:
+// this describes a position inside a broad map area, where "east of" and "west of"
+// the printed name are useful distinctions rather than movement commands.
+::UnseenBanner.WorldRegion <- {
+	Key = 36, // z; vanilla pans the camera north with it, so both states are consumed
+	m = {
+		Held = false
+	},
+	function reset()
+	{
+		this.m.Held = false;
+	},
+	function onPress(_state)
+	{
+		if (this.m.Held) return;
+		this.m.Held = true;
+		this.announce(_state);
+	},
+	function consumeRelease()
+	{
+		if (!this.m.Held) return false;
+		this.m.Held = false;
+		return true;
+	},
+	function targetTile(_state)
+	{
+		if (::UnseenBanner.WorldCursor.isActive())
+		{
+			local cursorTile = ::UnseenBanner.WorldCursor.getTile();
+			if (cursorTile != null) return cursorTile;
+		}
+
+		local player = _state != null ? _state.getPlayer() : null;
+		return player != null ? player.getTile() : null;
+	},
+	// The 2:1 dominance threshold is the same coarse eight-way compass used by the
+	// previous accessibility projects: a mostly horizontal offset is east/west, a
+	// mostly vertical one north/south, and the space between them is diagonal.
+	function direction(_tile, _center)
+	{
+		if (_tile.isSameTileAs(_center)) return "center";
+
+		local dx = _tile.Pos.X - _center.Pos.X;
+		local dy = _tile.Pos.Y - _center.Pos.Y;
+		local horizontal = ::Math.abs(dx);
+		local vertical = ::Math.abs(dy);
+
+		if (horizontal > vertical * 2.0) return dx > 0.0 ? "east" : "west";
+		if (vertical > horizontal * 2.0) return dy > 0.0 ? "north" : "south";
+		if (dx > 0.0) return dy > 0.0 ? "northeast" : "southeast";
+		return dy > 0.0 ? "northwest" : "southwest";
+	},
+	// One source of truth for Z, automatic travel cues and the place rows in B.
+	// Region is the tile's generated area; direction is the tile's sector around
+	// the Center where the game anchors the large printed region name.
+	//
+	// Fog gate (user request, aug 2026): getTileRegion answers for every tile of the
+	// map, explored or not, so without this an unexplored tile under the map cursor
+	// would name an area the player has no way of seeing yet. Same boundary
+	// WorldSurvey.tileHasPath uses for roads. Place rows are unaffected: settlement
+	// and location tiles carry IsDiscovered from the start of the campaign, and the
+	// lists themselves are already filtered by the per-entity discovery flag.
+	function info(_state, _tile)
+	{
+		if (_tile == null || !_tile.IsDiscovered) return null;
+
+		local region = _state != null ? _state.getTileRegion(_tile) : null;
+		if (region == null || region.Name == "" || region.Center == null) return null;
+
+		local direction = this.direction(_tile, region.Center);
+		return {
+			name = region.Name,
+			direction = direction,
+			signature = "" + _tile.Region + ":" + direction
+		};
+	},
+	function announce(_state)
+	{
+		local tile = this.targetTile(_state);
+		// Ground the company has never come near is a different answer from ground
+		// that belongs to no named area, and the map explorer reaches both: say which
+		// one it is instead of letting the fog gate in info() report "no region here".
+		if (tile != null && !tile.IsDiscovered)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.region.unexplored");
+			return;
+		}
+
+		local region = this.info(_state, tile);
+		if (region == null)
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "world.region.unavailable");
+			return;
+		}
+
+		::UnseenBanner.sendMessage("interrupt", region.name,
+			"world.region." + region.direction);
 	}
 };
 
@@ -12302,10 +12472,10 @@
 		["combat.inspect"] = ["move", "details", "close"],
 		["combat.ground"] = ["move", "take", "close"],
 		["combat.result"] = ["move", "activate", "details", "lootall", "repeat"],
-		["world"] = ["move", "march", "brake", "enter", "places", "parties",
+		["world"] = ["move", "march", "brake", "enter", "region", "places", "parties",
 			"tracks", "roads", "status", "explorer", "camp", "campdetails", "sheet", "obituary",
 			"relations", "retinue", "menu"],
-		["world.explorer"] = ["move", "recenter", "bearing", "list", "travel", "leave"],
+		["world.explorer"] = ["move", "recenter", "bearing", "region", "list", "travel", "leave"],
 		["world.survey"] = ["move", "details", "activate", "pages", "close"],
 		["world.status"] = ["move", "sections", "ambition", "contract", "close"],
 		["world.sheet"] = ["sections", "move", "details", "actions", "switch", "close"],
@@ -13139,6 +13309,7 @@
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldRoads.reset();
+		::UnseenBanner.WorldRegion.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -13164,6 +13335,7 @@
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldRoads.reset();
+		::UnseenBanner.WorldRegion.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -13189,6 +13361,7 @@
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldRoads.reset();
+		::UnseenBanner.WorldRegion.reset();
 		::UnseenBanner.WorldMove.reset();
 		::UnseenBanner.WorldCursor.reset();
 		::UnseenBanner.WorldTown.reset();
@@ -13825,6 +13998,20 @@
 			&& !this.m.WorldTownScreen.isVisible()
 			&& (this.m.CampfireScreen == null || !this.m.CampfireScreen.isVisible());
 
+		// Z asks where the company is inside its named region; with the map explorer
+		// active it asks the same question of the cursor tile. Act on the first press
+		// and latch until release, so holding the native camera-pan key cannot repeat
+		// the announcement or move the camera underneath it.
+		if (code == ::UnseenBanner.WorldRegion.Key
+			&& (mapFree || ::UnseenBanner.WorldRegion.m.Held))
+		{
+			if (_key.getState() == 1 && mapFree)
+				::UnseenBanner.WorldRegion.onPress(this);
+			else if (_key.getState() == 0)
+				::UnseenBanner.WorldRegion.consumeRelease();
+			return true;
+		}
+
 		// T keeps its native make/break-camp behavior. Shift+T is a read-only
 		// explanation; consume both states so vanilla never sees its release.
 		// Vanilla filters a disallowed T before onCamp(), so report that rejected
@@ -14152,6 +14339,7 @@
 		::UnseenBanner.KeyGate.reset();
 		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldRoads.reset();
+		::UnseenBanner.WorldRegion.reset();
 		// A battle starting clears the party's world path, so drop any in-flight world
 		// march here — otherwise Pending would be left stale and fire a spurious
 		// "Stopped" (or resume the march) on returning to the map.

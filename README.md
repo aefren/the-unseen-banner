@@ -250,13 +250,14 @@ accident.
 
 | Key | Action |
 |---|---|
-| Q W E / A S D | Move the company one neighbouring hex; hold Shift to keep marching; Space stops and pauses |
+| Q W E / A S D | Move the company one neighbouring hex; hold Shift to keep marching; Space stops and pauses. Crossing into another region, or another sector of the current region, is announced automatically |
 | Enter | Enter the settlement or location the company is standing on, or engage a hostile party at contact range |
 | X | The hex the company stands on, in one breath: terrain, any road or river and the way it runs, then each trail of footprints crossing it and the directions it runs. The quick version of V, meant to be tapped between marching steps |
 | V | The same hex as a navigable list: terrain, roads and rivers, place, parties and trails, one row at a time, with Enter on a place or party |
+| Z | Read the named region and the company's position within it — for example, “East of Glaucious Domain” |
 | F2 | Two categories, switched with Page Down/Page Up. **Company status** has day and time, brothers, crowns with daily wages and days covered, food, supplies with total repair time, medicine with total healing time and cost, active contract with objectives, and ambition; Enter cancels the focused contract or ambition after its native confirmation. **Wounded brothers** lists each affected man with missing health, light-wound recovery and every temporary injury's remaining day or day range |
 | F1 | The keys that work right here (see above) |
-| B | Known places: settlements, locations and landmarks. Page Down/Page Up switch category, V opens details, Enter travels there or enters, B closes |
+| B | Known places: settlements, locations and landmarks. Every row includes the place's position within its named region, and a settlement row also names its owning faction. Page Down/Page Up switch category, V opens details, Enter travels there or enters, B closes |
 | Shift+B | The parties currently in sight, same navigation |
 | Shift+F | Count the tracks currently inside the company's vision and group them by direction; plain F keeps its native show/hide-tracking action |
 | Shift+R | Count the discovered road segments currently inside the company's vision and group them by direction; plain R still opens factions and relations |
@@ -281,6 +282,7 @@ so you can survey what is around before committing to a march:
 |---|---|
 | Q W E / A S D | Move the cursor one hex (same directions as the company and the battlefield cursor) and read it: terrain, any road or river with the way it runs, place, parties, and each trail of footprints with the directions it runs |
 | X | Bring the cursor back to the company and read that hex the same way; **Shift+X** reports the company's bearing and distance from it |
+| Z | Read the named region under the cursor and the cursor's position within it; a hex the company has never explored answers that instead |
 | V | Read the cursor's tile as a list instead, one row at a time. Enter acts on the focused place or party |
 | G | Send the company to the cursor tile |
 | M | Leave the mode |
@@ -306,6 +308,21 @@ the game's footprint query exposes.
 vision circle, respects fog of war and groups discovered road hexes by direction.
 It also says whether the company is standing on a road. Plain `R` keeps opening
 the factions and relations screen.
+
+Regions are generated separately from settlements: one can contain no towns, one
+town or several. `Z` therefore reads the region stored on the current map tile,
+not a region inferred from the nearest settlement. Its position is relative to
+the centre where the game prints the region name, in eight compass directions.
+While the company travels, the same reading is announced only when either the
+region or that compass sector changes, rather than on every hex. In `B`, every
+settlement, location and landmark appends this regional position after its name
+(and, for a settlement, after its owning faction), so a place can be placed on
+the map before travelling to it.
+
+A region is only ever named on ground the company has already explored. The map
+tiles keep their region under fog of war, so without this the `M` cursor could
+name an area the map has not yet shown; an unexplored hex now answers
+“Unexplored ground, no region known.” instead.
 
 ### Settlements
 
