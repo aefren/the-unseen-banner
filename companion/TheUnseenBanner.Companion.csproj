@@ -23,6 +23,10 @@
     <None Include="..\plugin\nvdaControllerClient64.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- Runtime-tunable tactical sonar: rhythm, voicing, pan, pitch and volume. -->
+    <None Include="sonar.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <!-- Translation overrides (lang/<code>.lang, see L10n.cs). None exist yet. -->
     <None Include="lang\**\*.lang" Condition="Exists('lang')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -124,6 +124,18 @@ namespace TheUnseenBanner.Companion
                 string talento = GetOptionalString(root, "talento");
                 string suelo = GetOptionalString(root, "suelo");
                 string arma = GetOptionalString(root, "arma");
+
+                // Pure positional sound has no spoken representation. Keeping it
+                // on its own protocol channel means it bypasses localization,
+                // TextCleaner, Tolk de-duplication and the FIFO/interrupt speech
+                // semantics while retaining the already verified log-tail bridge.
+                if (canal == "sonar")
+                {
+                    if (categoria == "combat.sonar")
+                        CombatSonar.Play(texto, valor, detalle);
+                    return;
+                }
+
                 string spoken = categoria switch
                 {
                     "tile.readout" => ComposeTileReadout(

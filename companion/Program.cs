@@ -9,6 +9,7 @@ L10n.Init(L10n.DefaultLanguage);
 Console.WriteLine($"{ModName} companion — v{ModVersion}");
 Console.WriteLine("Loading Tolk...");
 
+CombatSonar.Init(Path.Combine(AppContext.BaseDirectory, "sonar.json"));
 Speech.Init();
 Speech.Speak(L10n.F("companion.loaded", ModVersion));
 
@@ -23,4 +24,5 @@ Console.WriteLine("Press Enter to exit.");
 Console.ReadLine();
 
 bridgeCts.Cancel();
+CombatSonar.Shutdown();
 Speech.Shutdown();

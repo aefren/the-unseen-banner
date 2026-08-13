@@ -7764,6 +7764,7 @@
 		local tile = this.m.CursorTile;
 		local name = "";
 		local kind = "empty";
+		local actor = null;
 		local hp = "";
 		local hpMax = "";
 		local morale = "m";
@@ -7785,6 +7786,7 @@
 				name = e.getName();
 				if (::isKindOf(e, "actor"))
 				{
+					actor = e;
 					if (_active != null && e.getID() == _active.getID())
 						kind = "self";
 					else if (e.isPlayerControlled() || e.isAlliedWithPlayer())
@@ -7822,6 +7824,24 @@
 		{
 			dist = activeTile.getDistanceTo(tile);
 			if (dist > 0) dir = activeTile.getDirectionTo(tile);
+		}
+
+		// A focused combatant also emits a pure-audio cue through the companion.
+		// The relation chooses the friendly/threatening two-note texture and the live
+		// turn-sequence position chooses its rhythm. Spatial encoding is deliberately
+		// finer than the old fixed-strength bearing: sonarPosition combines the live
+		// hex distance with its horizontal and vertical sector, so pan and pitch both
+		// accumulate once per tile. Empty tiles, scenery,
+		// hidden units and the active brother remain silent. Emitting this first lets
+		// the short cue start alongside the existing spoken tile description.
+		if (actor != null && (kind == "ally" || kind == "enemy"))
+		{
+			local sonarTiming = this.sonarTiming(actor);
+			if (sonarTiming != null)
+			{
+				::UnseenBanner.sendMessage("sonar", kind, "combat.sonar",
+					sonarTiming, this.sonarPosition(dist, dir));
+			}
 		}
 
 		// hp/hpMax are empty for empty tiles and scenery; the companion only voices
@@ -8200,6 +8220,34 @@
 
 		local turns = ::Tactical.TurnSequenceBar.getTurnsUntilActive(_actor.getID());
 		return turns != null && turns > 0 ? "" + turns : "none";
+	},
+	// Reduce the native live queue position to the five rhythms understood by the
+	// companion. A unit which already acted has its own four-note melody; positions
+	// beyond three share the long pulse requested by the player. "now" and "none"
+	// carry no honest remaining-turn value and therefore stay silent.
+	function sonarTiming(_actor)
+	{
+		local value = this.timing(_actor);
+		if (value == "done") return "done";
+		if (value == "1" || value == "2" || value == "3") return value;
+		if (value == "now" || value == "none") return null;
+		return "many";
+	},
+	// Return "horizontalTiles|verticalTiles". A diagonal sector carries both
+	// components: a unit one hex to the northeast is one tile right and one tile up,
+	// so it receives one 10% pan step and one three-semitone pitch step. Distance comes
+	// from the engine's own hex metric and therefore remains stable at map edges.
+	function sonarPosition(_distance, _direction)
+	{
+		local horizontal = 0;
+		if (_direction == 1 || _direction == 2) horizontal = _distance;
+		else if (_direction == 4 || _direction == 5) horizontal = -_distance;
+
+		local vertical = 0;
+		if (_direction == 0 || _direction == 1 || _direction == 5) vertical = _distance;
+		else if (_direction == 2 || _direction == 3 || _direction == 4) vertical = -_distance;
+
+		return "" + horizontal + "|" + vertical;
 	},
 	// Shift+T: the native tooltip's timing state plus live fatigue for the unit
 	// under the tactical cursor. quickInspectActor supplies the same fog and actor

@@ -104,16 +104,22 @@ before starting a serious campaign:
 - ✅ **Scenarios**: the nine prepared tactical battles are navigable from the
   menu cursor. Each row reads the battle's name and description; Play remains a
   separate entry after the scenarios, so reviewing one never starts it by accident.
+- 🧪 **Tactical focus sonar**: focusing a visible ally or enemy plays a positional
+  cue. Stereo pan grows by 10% per horizontal tile and pitch moves by three semitones
+  per vertical tile relative to the active brother. Timbre identifies friend or
+  foe, and rhythm identifies whether the unit acts in one, two, three, more than
+  three turns, or has already acted. Implemented and build-verified; awaiting the
+  required in-game listening pass.
 - ⏭️ **After 1.0 — quality of life and positional audio**: key remapping,
-  configurable verbosity, positional sonar and the destination beacon. The map
+  configurable verbosity, world-map sonar and the destination beacon. The map
   already gives direction and distance in words, and the fixed keys below cover
   the complete playable loop.
 
 In short: version 1.0 makes a complete campaign playable by ear from the main
 menu to the end screen, and the practice battles provide a repeatable place to
 learn its tactical combat. Rare, non-blocking verification gaps are documented
-below; remapping, verbosity and audio positioning are deliberately scheduled
-after 1.0.
+below; remapping, verbosity and world-map audio positioning are deliberately
+scheduled after 1.0.
 
 ---
 
@@ -389,6 +395,24 @@ the button.
 | Space | Wait turn (native) |
 | F1 | The keys that work right here (see above) |
 
+Whenever these controls focus a visible ally or enemy, the tactical sonar starts
+alongside the spoken tile readout. Its ten logical cues combine five timing
+patterns with two musical identities:
+
+- **Ally:** the chord G3+D4. One 250 ms pulse means one turn; two pulses occupy
+  400 ms; three occupy 600 ms; one continuous 400 ms pulse means more than three.
+  A unit which already acted plays D4-G4-D4-G4 as four separate notes.
+- **Enemy:** the same rhythms use the chord B-flat3+C-sharp4. A unit which already
+  acted plays C-sharp4-B-flat3-C-sharp4-B-flat3.
+- **Position:** northwest/southwest pan left, north/south stay centred and
+  northeast/southeast pan right. Each tile of distance adds 10% pan in a lateral
+  direction and transposes the complete cue three semitones in a vertical direction;
+  diagonal sectors apply both. Transposition does not change the rhythm's duration.
+
+The previous cue is stopped when the cursor moves, so a long sound can never keep
+describing a unit which no longer has focus. Empty, hidden and non-unit tiles are
+silent.
+
 Every tile the cursor lands on also reports three things a sighted player reads
 off the screen. **Height opens the readout**, in the same breath as the terrain;
 the other two close it, after everything the readout already said, so a fast
@@ -490,10 +514,11 @@ in the real game.
   screen does not cover.
 - Refresh the settlement contract list immediately after accepting a contract.
 - After 1.0: **key remapping and configurable verbosity**, followed by the
-  remaining tunable constants.
+  remaining tunable constants. Tactical-sonar settings already live in
+  `companion/sonar.json` next to the executable.
 
-After 1.0: **positional sonar** (settlements, contracts, enemy parties,
-locations) and a **persistent beacon** for the chosen destination.
+After 1.0: **world-map positional sonar** (settlements, contracts, enemy
+parties, locations) and a **persistent beacon** for the chosen destination.
 
 Releases are published through **GitHub Releases** after the downloadable zip
 has been tested on a clean installation and its new behavior verified by ear.
@@ -520,14 +545,17 @@ Squirrel hooks (read the game state)  →  bridge (tail of log.html)  →  C# co
 ```
 
 The bridge writes one JSON line per message (`UB_MSG:{...}`) from a single point
-in the mod; the companion tails the log, parses it and speaks it. There are two
-speech channels: an *interrupt* one (last wins) for focus and cursor, and a *FIFO
-queue* (nothing dropped) for combat events.
+in the mod; the companion tails the log and parses it. There are two speech
+channels: an *interrupt* one (last wins) for focus and cursor, and a *FIFO queue*
+(nothing dropped) for combat events. A third, pure-audio `sonar` channel bypasses
+Tolk and drives the companion's positional tactical synthesizer.
 
 The bulk of the code lives in:
 
 - `mod/` — the mod itself (Squirrel hooks + injected JS).
-- `companion/` — the .NET 8 companion app (speech and localization).
+- `companion/` — the .NET 8 companion app (speech, localization and positional
+  tactical audio). `sonar.json` holds its runtime-tunable volume, pan per tile,
+  pitch per tile, rhythm and MIDI voicing.
 - `installer/` — the PowerShell the install and uninstall scripts run.
 - `packaging/` — `build-release.bat` builds the downloadable release into
   `dist/`: it repacks the mod zip, publishes the companion self-contained and

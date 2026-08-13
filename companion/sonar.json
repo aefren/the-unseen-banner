@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "volume": 0.55,
+  "panPerHorizontalTile": 0.10,
+  "pitchSemitonesPerVerticalTile": 3.0,
+  "attackMilliseconds": 8,
+  "releaseMilliseconds": 12,
+
+  "oneTurnPulseMilliseconds": 250,
+  "twoTurnPulseMilliseconds": 150,
+  "twoTurnGapMilliseconds": 100,
+  "threeTurnPulseMilliseconds": 140,
+  "threeTurnGapMilliseconds": 90,
+  "manyTurnsPulseMilliseconds": 400,
+  "doneNoteMilliseconds": 120,
+  "doneGapMilliseconds": 40,
+
+  "friendlyChordMidi": [55, 62],
+  "threateningChordMidi": [58, 61],
+  "friendlyDoneMidi": [62, 67, 62, 67],
+  "threateningDoneMidi": [61, 58, 61, 58]
+}

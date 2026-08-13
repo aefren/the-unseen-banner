@@ -12,6 +12,16 @@ enemies are named with their main-hand weapon when moving the cursor, cycling
 enemies, listing nearby threats, or inspecting a unit. Unarmed enemies remain
 identified without a misleading weapon label.
 
+Focusing a visible combatant now also plays a positional tactical-sonar cue.
+Horizontal distance adds 10% stereo pan per tile (10% at one tile, 30% at three
+and 60% at six). Vertical distance transposes the whole cue by three semitones
+per tile (three at one, six at two and twelve at four) without changing its duration.
+Allies use G+D; enemies use B-flat+C-sharp. One, two and three turns use the same
+number of pulses, more than three uses a long pulse, and a unit which already
+acted gets its own four-note melody. Cursor audio is last-focus-wins and never
+reveals hidden units. Volume, pan per tile, pitch per tile, rhythm and MIDI notes
+can be adjusted in `companion/sonar.json` without rebuilding.
+
 New shortcuts read individual parts of the unit under the cursor without opening
 the full inspection list:
 
