@@ -7820,6 +7820,12 @@
 		// side), which is the common case on most maps.
 		local elev = activeTile != null ? (_tile.Level - activeTile.Level) : 0;
 
+		// Sonar-only mode: the ground's rise and fall is the violin glide's whole
+		// job, so the spoken height clause goes. Zone of control and move cost stay —
+		// no cue carries them, and silencing them would cost facts rather than repeat
+		// them. Zero is the value the companion already treats as level ground.
+		if (!::UnseenBanner.Options.areSpokenExtrasEnabled()) elev = 0;
+
 		// Enemies exerting zone of control over the tile — the same count the AI
 		// consults before disengaging (ai_disengage reads it off the destination
 		// tile). Standing here means each of them gets a free attack the moment this
@@ -8003,6 +8009,10 @@
 		//    two-note texture and the live turn-sequence position chooses its rhythm.
 		//    Scenery, hidden units and the active brother stay silent here.
 		//  - The ground itself, rising or falling relative to the active brother.
+		//  - That combatant's morale, as a one-second modal phrase the companion
+		//    delays half a second so it lands after the two cues above rather than
+		//    over them. It rides in the same message precisely so the companion can
+		//    place it in time relative to them.
 		//
 		// Spatial encoding is deliberately finer than the old fixed-strength bearing:
 		// sonarPosition combines the live hex distance with its horizontal and vertical
@@ -8010,24 +8020,30 @@
 		// one message because the companion mixes them into a single waveform: they
 		// describe the same hex and must be heard at the same instant, not queued.
 		// Emitting this first lets the cue start alongside the spoken tile description.
+		// The relation now names the unit whenever one is visible, even when its live
+		// queue position has no honest value: the rhythm is silent in that case
+		// (timing "none"), but the unit is still there to have a morale.
 		local sonarRelation = "none";
 		local sonarTiming = "none";
 		if (actor != null && (kind == "ally" || kind == "enemy"))
 		{
+			sonarRelation = kind;
 			local timing = this.sonarTiming(actor);
-			if (timing != null)
-			{
-				sonarRelation = kind;
-				sonarTiming = timing;
-			}
+			if (timing != null) sonarTiming = timing;
 		}
 		local sonarHeight = this.sonarHeight(_active, tile);
 		local sonarBlocked = this.sonarBlocked(tile, kind) ? "1" : "0";
-		if (sonarRelation != "none" || sonarHeight != "level" || sonarBlocked == "1")
+		local sonarMorale = this.sonarMorale(actor, kind);
+		// Morale alone is worth the message: a unit whose turn position carries no
+		// honest value (acting now, or off the live queue) is silent in the cue above
+		// but still has a morale the player wants to hear.
+		if (::UnseenBanner.Options.isSonarEnabled()
+			&& (sonarTiming != "none" || sonarHeight != "level" || sonarBlocked == "1"
+				|| sonarMorale != "-"))
 		{
 			::UnseenBanner.sendMessage("sonar", sonarRelation, "combat.sonar",
 				sonarTiming, this.sonarPosition(dist, dir) + "|" + sonarHeight
-					+ "|" + sonarBlocked);
+					+ "|" + sonarBlocked + "|" + sonarMorale);
 		}
 
 		// hp/hpMax are empty for empty tiles and scenery; the companion only voices
@@ -8037,6 +8053,11 @@
 		// Prefix morale with a marker so the companion can distinguish this new
 		// fixed field from the old optional targetable flag (both are small ints).
 		// Old mod/companion pairs therefore remain readable during a dev restart.
+		// In sonar-only mode the morale phrase carries this, so the spoken clause is
+		// dropped rather than doubled. Everything else in the readout — name, health,
+		// distance, bearing — has no cue and is always spoken.
+		if (!::UnseenBanner.Options.areSpokenExtrasEnabled()) morale = "";
+
 		local detail = kind + "|" + dist + "|" + dir + "|" + hp + "|" + hpMax
 			+ "|" + morale;
 
@@ -8418,6 +8439,21 @@
 		if (value == "1" || value == "2" || value == "3") return value;
 		if (value == "now" || value == "none") return null;
 		return "many";
+	},
+	// Morale of the unit under the cursor as the engine's own Const.MoraleState index,
+	// or "-" for no cue. Only a visible ally or enemy has one: the active brother is
+	// left out for the same reason he has no unit chord — the cursor lands on him
+	// constantly (X recentres on him) and a second and a half of music every time
+	// would be noise, while his own morale is already spoken in the tile readout.
+	// Ignore (5) means a unit that cannot break at all, such as the undead, and is
+	// silence rather than a fifth melody.
+	function sonarMorale(_actor, _kind)
+	{
+		if (_actor == null || (_kind != "ally" && _kind != "enemy")) return "-";
+		local state = _actor.getMoraleState();
+		if (state < ::Const.MoraleState.Fleeing || state > ::Const.MoraleState.Confident)
+			return "-";
+		return "" + state;
 	},
 	// Elevation of the cursor tile as a direction, or "level". The comparison is the
 	// one the spoken readout already makes (extras): height relative to the active
@@ -12628,6 +12664,332 @@
 	}
 };
 
+// Mod options, reachable with Ctrl+F1 from combat and from the world map, plus
+// the sound tutorial that hangs off it. One module rather than two because the two
+// screens share a single key dispatcher and a single "which key closes what" rule:
+// Escape in the tutorial goes back to the options, Escape in the options returns to
+// the game.
+//
+// It is deliberately MODAL. While it is open every non-modifier key is consumed,
+// including the ones this window does nothing with. A stray key that quietly did
+// something to the battle behind an open window is precisely the failure a blind
+// player cannot see and cannot undo.
+::UnseenBanner.Options <- {
+	m = {
+		Active = false,
+		// "options" or "tutorial" — which of the two lists Up/Down are walking.
+		Screen = "options",
+		RowIndex = 0,
+		CueIndex = 0,
+		// Engine code of the key that closed a screen on its press, so its own
+		// release is swallowed instead of leaking into vanilla (Escape's release
+		// opens the pause menu — the trap the inspect list and the key help both hit).
+		PendingRelease = -1,
+		// "both" | "sonar" | "speech". See isSonarEnabled / areSpokenExtrasEnabled
+		// for what each one actually silences.
+		Mode = "both"
+	},
+	// Ctrl+F1, on the same key as the key help it sits beside: F1 alone answers
+	// "what do the keys do here", Ctrl+F1 opens what the mod itself can be told to
+	// do. Two earlier choices are worth recording so they are not tried again —
+	// Ctrl+comma, which the engine never delivers (punctuation is absent from the
+	// Squirrel key enum altogether; the `Comma: 188` in the game's ui/keys.js is the
+	// DOM table, and the engine does not feed Coherent's DOM), and bare F2, which
+	// this very mod already binds to company status on the world map.
+	//
+	// Vanilla handles no key 71 in either state, and Ctrl is free but for its own
+	// Ctrl+D. The modifier is what keeps this off the key help: see handles below,
+	// which claims the key only while Ctrl is down, so plain F1 still falls through
+	// to KeyHelp untouched.
+	ToggleKey = 71,
+	CancelKey = 41,   // escape
+	ActivateKey = 39, // enter
+	PlayKey = 40,     // space
+	MoveKeys = {
+		[49] = "up",
+		[51] = "down",
+		[45] = "home",
+		[44] = "end"
+	},
+	// Left/Right adjust the focused option, the same pair vanilla's own Options
+	// screen uses (see OptionsKeyCodes), so the gesture is the one already learned.
+	AdjustKeys = {
+		[48] = -1,
+		[50] = 1
+	},
+	Rows = ["mode", "tutorial"],
+	Modes = ["both", "sonar", "speech"],
+	// Every sound the sonar can currently produce, each one playable on its own.
+	// The parameters are the very ones the tile cursor sends, so what the tutorial
+	// teaches is what the battlefield plays — a separate "demo" table would drift
+	// from the real cue the first time either side was retuned.
+	//
+	// Morale rides on a unit, so its rows name one (the companion drops a morale
+	// that belongs to no one) with timing "none", which silences the rhythm and
+	// leaves the morale phrase alone.
+	Cues = [
+		{ id = "ally.turn1", relation = "ally", timing = "1", position = "0|0|level|0|-" },
+		{ id = "ally.turn2", relation = "ally", timing = "2", position = "0|0|level|0|-" },
+		{ id = "ally.turn3", relation = "ally", timing = "3", position = "0|0|level|0|-" },
+		{ id = "ally.many", relation = "ally", timing = "many", position = "0|0|level|0|-" },
+		{ id = "ally.done", relation = "ally", timing = "done", position = "0|0|level|0|-" },
+		{ id = "enemy.turn1", relation = "enemy", timing = "1", position = "0|0|level|0|-" },
+		{ id = "enemy.turn2", relation = "enemy", timing = "2", position = "0|0|level|0|-" },
+		{ id = "enemy.turn3", relation = "enemy", timing = "3", position = "0|0|level|0|-" },
+		{ id = "enemy.many", relation = "enemy", timing = "many", position = "0|0|level|0|-" },
+		{ id = "enemy.done", relation = "enemy", timing = "done", position = "0|0|level|0|-" },
+		{ id = "ground.up", relation = "none", timing = "none", position = "0|0|up|0|-" },
+		{ id = "ground.down", relation = "none", timing = "none", position = "0|0|down|0|-" },
+		{ id = "ground.blocked", relation = "none", timing = "none", position = "0|0|level|1|-" },
+		{ id = "morale.confident", relation = "ally", timing = "none", position = "0|0|level|0|4" },
+		{ id = "morale.steady", relation = "ally", timing = "none", position = "0|0|level|0|3" },
+		{ id = "morale.wavering", relation = "ally", timing = "none", position = "0|0|level|0|2" },
+		{ id = "morale.breaking", relation = "ally", timing = "none", position = "0|0|level|0|1" },
+		{ id = "morale.fleeing", relation = "ally", timing = "none", position = "0|0|level|0|0" }
+	],
+	function isActive()
+	{
+		return this.m.Active;
+	},
+	// The two questions the rest of the mod asks about the chosen mode. Kept as
+	// named predicates rather than string comparisons scattered through the cursor,
+	// so adding a fourth mode later is one edit here.
+	function isSonarEnabled()
+	{
+		return this.m.Mode != "speech";
+	},
+	// Morale and ground height are the two facts the sonar already carries. In
+	// sonar-only mode they leave the spoken readout entirely — which is the whole
+	// point of that mode — while everything the sonar cannot say (name, health,
+	// distance, bearing, zone of control, move cost) is still spoken.
+	function areSpokenExtrasEnabled()
+	{
+		return this.m.Mode != "sonar";
+	},
+	// _ctrl is what separates this window from the key help on the shared F1: the
+	// toggle is claimed only while Ctrl is down, so a bare F1 falls through to
+	// KeyHelp exactly as before. Once open, the window is modal and the modifier
+	// stops mattering — every non-modifier key is its own.
+	function handles(_code, _ctrl)
+	{
+		if (_ctrl && _code == this.ToggleKey) return true;
+		if (this.m.PendingRelease == _code) return true;
+		if (!this.m.Active) return false;
+		// Modal: everything except a bare modifier belongs to this window while it
+		// is open. A modifier is half of a combination still being pressed.
+		return !(_code in ::UnseenBanner.ModifierKeys);
+	},
+	function consumeReleaseSwallow(_code)
+	{
+		if (this.m.PendingRelease != _code) return false;
+		this.m.PendingRelease = -1;
+		return true;
+	},
+	function reset()
+	{
+		this.m.Active = false;
+		this.m.Screen = "options";
+		this.m.RowIndex = 0;
+		this.m.CueIndex = 0;
+	},
+	function open()
+	{
+		// The key help is a list too, and it reads the same Up/Down. Leaving it
+		// active behind a modal window would hand it the keyboard back the moment
+		// this one closed, over a surface the player is no longer reading.
+		::UnseenBanner.KeyHelp.close(false);
+		this.m.Active = true;
+		this.m.Screen = "options";
+		this.m.RowIndex = 0;
+		this.announce(true);
+	},
+	// _armRelease carries the key whose release must not reach vanilla, for the
+	// paths that close on a key PRESS (Ctrl+comma again, Escape).
+	function close(_announce = false, _armRelease = -1)
+	{
+		local was = this.m.Active;
+		this.reset();
+		if (_armRelease >= 0) this.m.PendingRelease = _armRelease;
+		if (was && _announce) ::UnseenBanner.sendMessage("interrupt", "", "options.closed");
+	},
+	function rowCount()
+	{
+		return this.m.Screen == "tutorial" ? this.Cues.len() : this.Rows.len();
+	},
+	function index()
+	{
+		return this.m.Screen == "tutorial" ? this.m.CueIndex : this.m.RowIndex;
+	},
+	function setIndex(_value)
+	{
+		local last = this.rowCount() - 1;
+		if (_value < 0) _value = 0;
+		if (_value > last) _value = last;
+		if (this.m.Screen == "tutorial") this.m.CueIndex = _value;
+		else this.m.RowIndex = _value;
+	},
+	function move(_code)
+	{
+		local dir = this.MoveKeys[_code];
+		if (dir == "up") this.setIndex(this.index() - 1);
+		else if (dir == "down") this.setIndex(this.index() + 1);
+		else if (dir == "home") this.setIndex(0);
+		else this.setIndex(this.rowCount() - 1);
+		this.announce();
+	},
+	// Left/Right on the mode row, and Enter on it, are the same operation: step
+	// through the modes and say the new one. Enter wraps, the arrows stop at the
+	// ends, which is what makes "am I at the last one?" answerable without sight.
+	function adjust(_step, _wrap = false)
+	{
+		if (this.m.Screen != "options") return;
+		if (this.Rows[this.m.RowIndex] != "mode") return;
+
+		local current = this.Modes.find(this.m.Mode);
+		if (current == null) current = 0;
+		local next = current + _step;
+		if (_wrap) next = (next + this.Modes.len()) % this.Modes.len();
+		else if (next < 0) next = 0;
+		else if (next >= this.Modes.len()) next = this.Modes.len() - 1;
+
+		this.m.Mode = this.Modes[next];
+		// Only the value, never the label again. Cycling a setting is a stream of
+		// answers to a question already asked; repeating "Battlefield feedback:"
+		// before each one is the padding that makes a list slow to hear through.
+		this.announceValue();
+	},
+	function activate()
+	{
+		if (this.m.Screen == "tutorial")
+		{
+			this.play();
+			return;
+		}
+		if (this.Rows[this.m.RowIndex] == "tutorial")
+		{
+			this.m.Screen = "tutorial";
+			this.m.CueIndex = 0;
+			this.announce(true);
+			return;
+		}
+		this.adjust(1, true);
+	},
+	// Audition one cue. It plays whatever the chosen mode is: a player who has
+	// turned the sonar off is exactly the one who may want to hear what it was
+	// saying before deciding, and a silent tutorial would teach nothing.
+	function play()
+	{
+		if (this.m.Screen != "tutorial") return;
+		local cue = this.Cues[this.m.CueIndex];
+		::UnseenBanner.sendMessage("sonar", cue.relation, "combat.sonar",
+			cue.timing, cue.position);
+	},
+	// Escape goes back one screen, and says whether that was the last one: true
+	// means there was nothing left to back out of and the caller should close the
+	// window. The tutorial therefore takes two presses to leave — one to the
+	// options, one to the game — which is the nesting the player was told about.
+	function back()
+	{
+		if (this.m.Screen == "tutorial")
+		{
+			this.m.Screen = "options";
+			this.announce(true);
+			return false;
+		}
+		return true;
+	},
+	function onKey(_code)
+	{
+		if (!this.m.Active) return;
+
+		if (_code == this.CancelKey)
+		{
+			if (this.back()) this.close(true, _code);
+			else this.m.PendingRelease = _code;
+			return;
+		}
+		if (_code in this.MoveKeys)
+		{
+			this.move(_code);
+			return;
+		}
+		if (this.m.Screen == "tutorial")
+		{
+			if (_code == this.PlayKey || _code == this.ActivateKey) this.play();
+			return;
+		}
+		if (_code in this.AdjustKeys)
+		{
+			this.adjust(this.AdjustKeys[_code]);
+			return;
+		}
+		if (_code == this.ActivateKey) this.activate();
+	},
+	function announceValue()
+	{
+		::UnseenBanner.sendMessage("interrupt", "", "options.value", this.m.Mode);
+	},
+	function announce(_opened = false)
+	{
+		local total = this.rowCount();
+		local position = this.index() + 1;
+		if (this.m.Screen == "tutorial")
+		{
+			::UnseenBanner.sendMessage("interrupt", "", "options.cue",
+				this.Cues[this.m.CueIndex].id,
+				"" + position + "|" + total + "|" + (_opened ? "1" : "0"));
+			return;
+		}
+		::UnseenBanner.sendMessage("interrupt", "", "options.row",
+			this.Rows[this.m.RowIndex],
+			"" + position + "|" + total + "|" + (_opened ? "1" : "0")
+				+ "|" + this.m.Mode);
+	}
+};
+
+// One dispatcher for both states, so combat and the world map cannot drift into
+// answering the options window differently.
+//
+// Everything acts on the PRESS and consumes the release. Escape, Enter and Space
+// all carry native bindings in combat (pause menu, end turn, wait turn), and this
+// window must never let half a keystroke through to them — see the release-swallow
+// note on KeyGate. The key that closes a screen is the one exception: its release
+// lands when this window is already gone, so it is armed for a swallow instead.
+::UnseenBanner.dispatchOptionsKey <- function(_code, _ctrl, _state, _now)
+{
+	if (_state == 0)
+	{
+		::UnseenBanner.KeyGate.release(_code);
+		::UnseenBanner.Options.consumeReleaseSwallow(_code);
+		return;
+	}
+
+	if (!::UnseenBanner.KeyGate.shouldFire(_code, _now)) return;
+
+	if (_ctrl && _code == ::UnseenBanner.Options.ToggleKey)
+	{
+		if (::UnseenBanner.Options.isActive())
+			::UnseenBanner.Options.close(true, _code);
+		else ::UnseenBanner.Options.open();
+		return;
+	}
+
+	::UnseenBanner.Options.onKey(_code);
+}
+
+// The options window opens from every in-game surface, so every in-game key list
+// has to say so. Appended here rather than typed into two dozen literals, which is
+// how the explorer, the survey and every settlement screen came to be silent about
+// it while the two plain lists were not: a surface added later cannot forget the
+// row. The main menu's lists are left out on purpose — "menu" and "dialog" are
+// shared with main_menu_state, where this window is not wired and the row would be
+// a promise the key does not keep.
+foreach (context, rows in ::UnseenBanner.KeyHelp.Contexts)
+{
+	if (context == "menu" || context == "dialog") continue;
+	rows.push("options");
+}
+
 // Which key list F1 answers with, on each of the two states that route keyboard.
 // Read in the same priority order the key dispatchers themselves use, so the help
 // always describes the surface that would actually receive the next keystroke.
@@ -13531,8 +13893,30 @@
 	// current value, so menus/events do not trip it). Two changes are kept silent: our
 	// own unpause when starting to move (SelfUnpause), which would otherwise speak on
 	// every step, and pause changes during a loading screen (save load, etc.).
+	// Escape closes this window, and MSU binds Escape to its own "toggleMenuScreen"
+	// from the same outer wrapper that owns Space — so the pause menu could open
+	// behind a window the player is still reading. It asks nothing about the input
+	// lock, so the refusal goes here, at the method MSU itself calls.
+	q.toggleMenuScreen = @(__original) function()
+	{
+		if (::UnseenBanner.Options.isActive()) return false;
+		return __original();
+	}
+
 	q.setPause = @(__original) function( _f )
 	{
+		// Space plays a cue in the sound tutorial, and MSU binds Space to
+		// "world_pause" from its outer key wrapper, where our own consumption of the
+		// key cannot reach it. Unlike the tactical keybinds, this one asks nothing
+		// about the input lock — it only checks the menu stack — so the refusal has
+		// to happen here, at the funnel every pause change flows through.
+		//
+		// It costs an auto-pause that would have fired while the window is open (the
+		// party keeps walking for those few seconds). That is the cheaper of the two:
+		// the alternative is a pause state silently flipped by a key the player
+		// pressed to hear a sound, with nothing on screen to reveal it.
+		if (::UnseenBanner.Options.isActive()) return;
+
 		local was = this.m.IsGamePaused;
 		__original(_f);
 
@@ -13561,6 +13945,20 @@
 
 	q.onKeyInput = @(__original) function( _key )
 	{
+		// Mod options (Ctrl+F1), the same window and the same dispatcher as in
+		// combat: this surface is where most of the settings to come will belong.
+		// Ahead of the swallow below, and ahead of the key help on the same key —
+		// while this window is up it owns every non-modifier key, so nothing it
+		// consumes can have been armed elsewhere.
+		local optionsCode = _key.getKey();
+		local optionsCtrl = (_key.getModifier() & 2) != 0;
+		if (::UnseenBanner.Options.handles(optionsCode, optionsCtrl))
+		{
+			::UnseenBanner.dispatchOptionsKey(optionsCode, optionsCtrl,
+				_key.getState(), this.Time.getRealTimeF());
+			return true;
+		}
+
 		// A key already acted on during its press: eat its release before any cursor
 		// or vanilla handler below can read it as a fresh keystroke. This runs first
 		// because the press that armed it usually changed the surface, so the release
@@ -14383,6 +14781,7 @@
 		::UnseenBanner.DialogNav.reset();
 		::UnseenBanner.TacticalDialogNav.reset();
 		::UnseenBanner.KeyHelp.close(false);
+		::UnseenBanner.Options.close(false);
 		::UnseenBanner.KeyGate.reset();
 		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldRoads.reset();
@@ -14403,7 +14802,32 @@
 		::UnseenBanner.DialogNav.reset();
 		::UnseenBanner.TacticalDialogNav.reset();
 		::UnseenBanner.KeyHelp.close(false);
+		::UnseenBanner.Options.close(false);
 		__original();
+	}
+
+	// The options window is modal, and MSU is the reason saying so takes more than
+	// consuming keys. MSU's onKeyInput wrapper is OUTER: it re-dispatches the vanilla
+	// hotkeys itself, so returning true from the hook below never reaches it, and
+	// Space — which the sound tutorial plays cues with — still ran MSU's
+	// "tactical_waitTurn" and spent the active brother's turn. Every MSU tactical
+	// keybind first asks the state whether input is locked, so that is where a modal
+	// window has to answer. Nothing else changes: the cursor and the readouts below
+	// are already unreachable while the window owns the keyboard.
+	// Escape closes this window, and MSU binds Escape to its own "toggleMenuScreen"
+	// from the same outer wrapper that owns Space — so the pause menu could open
+	// behind a window the player is still reading. It asks nothing about the input
+	// lock, so the refusal goes here, at the method MSU itself calls.
+	q.toggleMenuScreen = @(__original) function()
+	{
+		if (::UnseenBanner.Options.isActive()) return false;
+		return __original();
+	}
+
+	q.isInputLocked = @(__original) function()
+	{
+		if (::UnseenBanner.Options.isActive()) return true;
+		return __original();
 	}
 
 	q.onKeyInput = @(__original) function( _key )
@@ -14432,6 +14856,17 @@
 		// the physical press of V, so the auto-repeat latch is cleared here for
 		// every path through this hook, including the ones that return early.
 		if (_key.getState() == 0) ::UnseenBanner.TileCursor.clearInspectKeyHeld(code);
+
+		// Mod options (Ctrl+F1). Ahead of everything, including the key help that
+		// shares this key without the modifier, so the window is reachable from any
+		// battle surface and owns the keyboard for as long as it is up.
+		local ctrl = (_key.getModifier() & 2) != 0;
+		if (::UnseenBanner.Options.handles(code, ctrl))
+		{
+			::UnseenBanner.dispatchOptionsKey(code, ctrl, _key.getState(),
+				this.Time.getRealTimeF());
+			return true;
+		}
 
 		// Contextual key help (F1). First of all, so it can be reached from every
 		// battle surface — including the ones that consume every key, like the

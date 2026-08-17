@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace TheUnseenBanner.Companion
@@ -320,6 +320,11 @@ namespace TheUnseenBanner.Companion
                     "world.tracks.summary" => ComposeTracksSummary(valor),
                     "world.roads.summary" => ComposeRoadsSummary(valor),
                     "help.row" => ComposeHelpRow(valor, detalle),
+                    "options.row" => ComposeOptionsRow(valor, detalle),
+                    "options.cue" => ComposeOptionsCue(valor, detalle),
+                    // Adjusting a setting speaks the value alone: the label was
+                    // already said when the row took focus.
+                    "options.value" => L10n.T("options.mode." + valor),
                     _ => categoria.Length > 0
                         ? L10n.F(categoria, texto, valor, detalle)
                         : texto,
@@ -1216,11 +1221,51 @@ namespace TheUnseenBanner.Companion
             string total = p.Length > 2 ? p[2] : "1";
             bool opened = p.Length > 3 && p[3] == "1";
 
-            string body = L10n.T("help." + context + "." + row);
+            // A row the mod appends to every surface — the options key is the first —
+            // says the same thing everywhere, so it is written once under
+            // "help.shared." instead of two dozen times under each context. The
+            // context-specific string still wins where one exists.
+            string body = L10n.Find("help." + context + "." + row)
+                ?? L10n.T("help.shared." + row);
             string result = body + " " + L10n.F("help.position", index, total);
             return opened
                 ? L10n.F("help.screen", L10n.T("help.context." + context), total, result)
                 : result;
+        }
+
+        /// <summary>One row of the mod options window. Squirrel sends the row key and
+        /// "index|total|opened|mode"; the wording of every option, and of every value
+        /// it can take, lives here. The mode row reads its current value as part of
+        /// the row itself rather than after it: a blind player arriving on that row
+        /// must hear what it is set to without having to press anything.</summary>
+        private static string ComposeOptionsRow(string row, string detail)
+        {
+            string[] p = detail.Split('|');
+            string index = p.Length > 0 ? p[0] : "1";
+            string total = p.Length > 1 ? p[1] : "1";
+            bool opened = p.Length > 2 && p[2] == "1";
+            string mode = p.Length > 3 ? p[3] : "both";
+
+            string body = row == "mode"
+                ? L10n.F("options.row.mode", L10n.T("options.mode." + mode))
+                : L10n.T("options.row." + row);
+            string result = body + " " + L10n.F("options.position", index, total);
+            return opened ? L10n.F("options.screen", total, result) : result;
+        }
+
+        /// <summary>One row of the sound tutorial: the name of a cue the sonar can
+        /// play. Only the cue's id crosses the bridge, so renaming a sound — or
+        /// translating it — never touches the mod.</summary>
+        private static string ComposeOptionsCue(string cue, string detail)
+        {
+            string[] p = detail.Split('|');
+            string index = p.Length > 0 ? p[0] : "1";
+            string total = p.Length > 1 ? p[1] : "1";
+            bool opened = p.Length > 2 && p[2] == "1";
+
+            string result = L10n.T("options.cue." + cue) + " "
+                + L10n.F("options.position.cue", index, total);
+            return opened ? L10n.F("options.cue.screen", total, result) : result;
         }
 
         /// <summary>One blueprint row of the taxidermist's crafting list. detail is

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
@@ -71,6 +71,19 @@ namespace TheUnseenBanner.Companion
             if (_overrides != null && _overrides.TryGetValue(key, out string? value))
                 return value;
             return English.TryGetValue(key, out value) ? value : key;
+        }
+
+        /// <summary>The string for a key, or null when neither the translation nor the
+        /// English default defines one. For callers that have a second key to try
+        /// before giving up; <see cref="T"/> is the right choice everywhere else,
+        /// because falling back to the key itself keeps a line audible.</summary>
+        internal static string? Find(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return null;
+
+            if (_overrides != null && _overrides.TryGetValue(key, out string? value))
+                return value;
+            return English.TryGetValue(key, out value) ? value : null;
         }
 
         /// <summary>As <see cref="T"/> plus <see cref="string.Format(string,object[])"/>.
@@ -1273,6 +1286,43 @@ namespace TheUnseenBanner.Companion
             ["help.screen"] = "{0} key help, {1} keys. {2} Use Up and Down to review, Escape or F1 to close.",
             ["help.position"] = "Key {0} of {1}.",
             ["help.closed"] = "Key help closed.",
+            // Appended to every in-game key list by the mod, so it lives under
+            // "help.shared." and is written once. See ComposeHelpRow.
+            ["help.shared.options"] = "Ctrl plus F1 opens the mod options, including the sound tutorial.",
+
+            // Mod options (Ctrl plus F1), and the sound tutorial inside it. The
+            // mode wording names what it silences rather than what it enables: a
+            // player opens this window because something is saying too much, and
+            // "spoken only" answers that question where "mode 2" would not.
+            ["options.screen"] = "Mod options, {0} settings. {1} Up and Down to review, Left and Right to change, Enter to activate, Escape to close.",
+            ["options.position"] = "Setting {0} of {1}.",
+            ["options.closed"] = "Options closed.",
+            ["options.row.mode"] = "Battlefield feedback: {0}.",
+            ["options.row.tutorial"] = "Sound tutorial. Press Enter to open.",
+            ["options.mode.both"] = "sounds and speech",
+            ["options.mode.sonar"] = "sounds only",
+            ["options.mode.speech"] = "speech only",
+
+            ["options.cue.screen"] = "Sound tutorial, {0} sounds. {1} Up and Down to review, Space to play, Escape to go back.",
+            ["options.position.cue"] = "Sound {0} of {1}.",
+            ["options.cue.ally.turn1"] = "Ally, acts in one turn",
+            ["options.cue.ally.turn2"] = "Ally, acts in two turns",
+            ["options.cue.ally.turn3"] = "Ally, acts in three turns",
+            ["options.cue.ally.many"] = "Ally, acts in more than three turns",
+            ["options.cue.ally.done"] = "Ally, has already acted",
+            ["options.cue.enemy.turn1"] = "Enemy, acts in one turn",
+            ["options.cue.enemy.turn2"] = "Enemy, acts in two turns",
+            ["options.cue.enemy.turn3"] = "Enemy, acts in three turns",
+            ["options.cue.enemy.many"] = "Enemy, acts in more than three turns",
+            ["options.cue.enemy.done"] = "Enemy, has already acted",
+            ["options.cue.ground.up"] = "Higher ground",
+            ["options.cue.ground.down"] = "Lower ground",
+            ["options.cue.ground.blocked"] = "Impassable ground",
+            ["options.cue.morale.confident"] = "Confident morale",
+            ["options.cue.morale.steady"] = "Steady morale",
+            ["options.cue.morale.wavering"] = "Wavering morale",
+            ["options.cue.morale.breaking"] = "Breaking morale",
+            ["options.cue.morale.fleeing"] = "Fleeing morale",
             ["help.context.combat"] = "Battle",
             ["help.context.combat.sheet"] = "Character sheet",
             ["help.context.combat.inspect"] = "Unit inspection",
