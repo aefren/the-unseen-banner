@@ -102,6 +102,23 @@ foreach ($dll in @('Tolk.dll', 'nvdaControllerClient64.dll')) {
         Write-Warn "$dll was missing from the publish output; copied from plugin\."
     }
 }
+# The recorded sonar cues are named by sonar.json and read at startup. A missing
+# folder does not fail: every state falls back to its synthesized phrase, so the
+# loss would ship silently and only be noticed by ear. Verify, and repair.
+$soundsSource = Join-Path $Root 'companion\sounds'
+if (Test-Path -LiteralPath $soundsSource) {
+    $soundsOut = Join-Path $companionOut 'sounds'
+    $expected = @(Get-ChildItem -LiteralPath $soundsSource -Filter *.wav).Count
+    $shipped = if (Test-Path -LiteralPath $soundsOut) {
+        @(Get-ChildItem -LiteralPath $soundsOut -Filter *.wav).Count
+    } else { 0 }
+    if ($shipped -lt $expected) {
+        Copy-Item -LiteralPath $soundsSource -Destination $companionOut -Recurse -Force
+        Write-Warn "sounds\ was incomplete in the publish output ($shipped of $expected); copied from companion\."
+    }
+    Write-Ok "sounds\ ($expected cue recordings)"
+}
+
 $exe = Join-Path $companionOut 'TheUnseenBanner.Companion.exe'
 if (-not (Test-Path -LiteralPath $exe)) { throw "The published companion has no exe: $exe" }
 Write-Ok "Published to companion\"

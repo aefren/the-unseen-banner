@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Text.Json;
 
 namespace TheUnseenBanner.Companion
@@ -14,10 +14,18 @@ namespace TheUnseenBanner.Companion
     /// changes the requested 250/400/600 ms rhythm. Like cursor speech, playback is
     /// last-focus-wins: a new tile stops the old cue before starting.
     ///
-    /// A tile can report two facts at once — a unit standing on it and the height of
-    /// the ground under it. PlaySound plays exactly one buffer at a time, so the two
-    /// are not two sounds racing each other: they are mixed into a single waveform
-    /// and therefore always start together.
+    /// Morale is the exception, and can be: it is the one layer the vertical-tile
+    /// transposition never touches, so a recording can stand in for the synthesized
+    /// phrase without any resampling and without inheriting the rhythm problem above.
+    /// The five files in <c>sounds\</c> are read once at startup and mixed in like any
+    /// other layer; a file that is missing or unreadable falls back to the synthesized
+    /// voice for that state, so a bad edit costs the recording, never the cue.
+    ///
+    /// A tile can report several facts at once — a unit standing on it, the height of
+    /// the ground under it, and that unit's morale. PlaySound plays exactly one buffer
+    /// at a time, so they are not sounds racing each other: they are mixed into a
+    /// single waveform, which is also the only way to place the morale cue half a
+    /// second after the rest instead of on top of it.
     /// </summary>
     internal static class CombatSonar
     {
@@ -48,10 +56,32 @@ namespace TheUnseenBanner.Companion
         private const int RaspHarmonics = 12;
         private static readonly double RaspPeak = MeasureRaspPeak();
 
+        // Morale gets a voice of its own so it is recognisable before a single note is
+        // identified: rounder than the triangle chords, warmer and far less edgy than
+        // the bowed glide, with the even harmonics kept in — a horn rather than a
+        // string. It is the only cue that has to carry a melody, and a melody needs a
+        // timbre the ear will follow for a whole second without tiring.
+        private static readonly double[] HornHarmonicGains =
+            { 1.0, 0.45, 0.30, 0.15, 0.08 };
+
+        private static readonly double HornPeak = MeasureHornPeak();
+
         private static readonly object Sync = new();
         private static readonly Dictionary<SoundKey, byte[]> Cache = new();
 
+        // The morale phrase makes a cue up to 1.5 s long, six times the old maximum, so
+        // the cache is bounded by the memory it actually holds rather than by a count of
+        // entries that now vary hugely in size.
+        private const int CacheByteBudget = 16 * 1024 * 1024;
+        private static int _cacheBytes;
+
         private static SonarSettings _settings = new();
+
+        /// <summary>The morale recordings, by the engine's own morale index, already
+        /// downmixed to mono at <see cref="SampleRate"/>. A state missing from here is
+        /// a state that sings its synthesized phrase instead.</summary>
+        private static Dictionary<string, double[]> _moraleSamples = new();
+
         private static bool _ready;
         private static bool _failureReported;
         private static GCHandle _currentWave;
@@ -67,8 +97,13 @@ namespace TheUnseenBanner.Companion
             {
                 StopCore();
                 Cache.Clear();
+                _cacheBytes = 0;
                 _failureReported = false;
                 _settings = SonarSettings.Load(configPath);
+                // The recordings sit beside the config that names them, so moving both
+                // to another folder keeps them together with no second path to edit.
+                _moraleSamples = LoadMoraleSamples(
+                    Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory);
                 _ready = OperatingSystem.IsWindows() && _settings.Enabled;
 
                 if (!_settings.Enabled)
@@ -97,45 +132,82 @@ namespace TheUnseenBanner.Companion
             {
                 StopCore();
                 Cache.Clear();
+                _cacheBytes = 0;
+                _moraleSamples = new Dictionary<string, double[]>();
                 _ready = false;
             }
+        }
+
+        /// <summary>Read whatever recordings the config names, once, so a battle never
+        /// pays for disk. Every failure is reported and then forgiven: the state simply
+        /// keeps its synthesized voice.</summary>
+        private static Dictionary<string, double[]> LoadMoraleSamples(string baseDirectory)
+        {
+            var samples = new Dictionary<string, double[]>();
+            if (!_settings.MoraleEnabled) return samples;
+
+            string folder = Path.IsPathRooted(_settings.SoundsFolder)
+                ? _settings.SoundsFolder
+                : Path.Combine(baseDirectory, _settings.SoundsFolder);
+
+            foreach (string morale in MoraleIndices)
+            {
+                MoraleVoice? voice = _settings.MoraleVoiceFor(morale);
+                string? file = voice?.Sample;
+                if (string.IsNullOrWhiteSpace(file)) continue;
+
+                string path = Path.IsPathRooted(file) ? file : Path.Combine(folder, file);
+                if (!File.Exists(path))
+                {
+                    Console.WriteLine(
+                        $"[CombatSonar] Morale sound '{path}' not found; " +
+                        "that state keeps its synthesized phrase.");
+                    continue;
+                }
+
+                try
+                {
+                    double[] mono = WaveFile.ReadMono(path, SampleRate);
+                    if (mono.Length == 0) throw new InvalidDataException("no audio in the file.");
+                    samples[morale] = mono;
+
+                    double milliseconds = mono.Length * 1000.0 / SampleRate;
+                    string note = milliseconds > _settings.MoraleSampleMaxMilliseconds
+                        ? $" — cut to {_settings.MoraleSampleMaxMilliseconds} ms; raise " +
+                          "moraleSampleMaxMilliseconds to hear all of it"
+                        : string.Empty;
+                    Console.WriteLine(
+                        $"[CombatSonar] Morale sound '{Path.GetFileName(path)}' loaded, " +
+                        $"{milliseconds:0} ms.{note}");
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(
+                        $"[CombatSonar] Could not read morale sound '{path}'; " +
+                        $"that state keeps its synthesized phrase. {e.Message}");
+                }
+            }
+
+            return samples;
         }
 
         /// <param name="relation"><c>ally</c>, <c>enemy</c> or <c>none</c>.</param>
         /// <param name="timing"><c>1</c>, <c>2</c>, <c>3</c>, <c>many</c>, <c>done</c>
         /// or <c>none</c>.</param>
         /// <param name="positionText">
-        /// Signed horizontal and vertical tile counts, the ground's height and whether
-        /// the hex can be stood on, as <c>x|y|height|blocked</c>. Positive counts mean
-        /// right/up; negative mean left/down. Height is <c>up</c>, <c>down</c> or
-        /// <c>level</c>, relative to the active brother's own hex; blocked is
-        /// <c>1</c> for ground no one can stand on.
+        /// Signed horizontal and vertical tile counts, the ground's height, whether
+        /// the hex can be stood on and the occupant's morale, as
+        /// <c>x|y|height|blocked|morale</c>. Positive counts mean right/up; negative
+        /// mean left/down. Height is <c>up</c>, <c>down</c> or <c>level</c>, relative
+        /// to the active brother's own hex; blocked is <c>1</c> for ground no one can
+        /// stand on; morale is the engine's own state index <c>0</c>-<c>4</c>
+        /// (fleeing to confident) or <c>-</c> for none.
         /// </param>
         internal static void Play(string relation, string timing, string positionText)
         {
-            string[] position = positionText.Split('|');
-            string height = position.Length > 2 ? position[2] : "level";
-            string blockedText = position.Length > 3 ? position[3] : "0";
-            bool hasUnit = relation is "ally" or "enemy";
-            bool blocked = blockedText == "1";
-
-            if ((!hasUnit && relation != "none")
-                || !IsKnownTiming(timing)
-                || (hasUnit && timing == "none")
-                || height is not ("up" or "down" or "level")
-                || blockedText is not ("0" or "1")
-                || position.Length < 2
-                || !int.TryParse(position[0], out int horizontalTiles)
-                || !int.TryParse(position[1], out int verticalTiles)
-                || horizontalTiles is < -128 or > 128
-                || verticalTiles is < -128 or > 128)
-            {
-                return;
-            }
-
-            // Nothing to say about this hex. Squirrel already filters these out; the
-            // guard keeps a future caller from queueing a buffer of pure silence.
-            if (!hasUnit && height == "level" && !blocked) return;
+            SoundKey? parsed = ParseRequest(relation, timing, positionText);
+            if (parsed == null) return;
+            SoundKey key = parsed.Value;
 
             lock (Sync)
             {
@@ -143,16 +215,18 @@ namespace TheUnseenBanner.Companion
 
                 try
                 {
-                    var key = new SoundKey(
-                        hasUnit ? relation : "none", hasUnit ? timing : "none",
-                        horizontalTiles, verticalTiles, height, blocked);
                     if (!Cache.TryGetValue(key, out byte[]? wave))
                     {
                         // Positions are data-dependent, so keep the otherwise useful
                         // waveform cache bounded during long battles.
-                        if (Cache.Count >= 256) Cache.Clear();
+                        if (_cacheBytes >= CacheByteBudget)
+                        {
+                            Cache.Clear();
+                            _cacheBytes = 0;
+                        }
                         wave = RenderWave(key);
                         Cache[key] = wave;
+                        _cacheBytes += wave.Length;
                     }
 
                     // Cursor audio is an interrupt channel: never leave a long cue
@@ -177,9 +251,69 @@ namespace TheUnseenBanner.Companion
             }
         }
 
+        /// <summary>Render the very waveform <see cref="Play"/> would play, without
+        /// playing it, so a cue can be written out and auditioned as a file. Returns
+        /// null for a request that says nothing about the hex.</summary>
+        internal static byte[]? Render(string relation, string timing, string positionText)
+        {
+            SoundKey? parsed = ParseRequest(relation, timing, positionText);
+            return parsed == null ? null : RenderWave(parsed.Value);
+        }
+
+        /// <summary>Validate a request and reduce it to the key which identifies its
+        /// waveform. Null means "nothing audible here": either the fields are
+        /// malformed, or the hex carries no unit, no slope, no obstacle and no
+        /// morale. Squirrel already filters the silent case out; the guard keeps a
+        /// future caller from queueing a buffer of pure silence.</summary>
+        private static SoundKey? ParseRequest(
+            string relation, string timing, string positionText)
+        {
+            string[] position = positionText.Split('|');
+            string height = position.Length > 2 ? position[2] : "level";
+            string blockedText = position.Length > 3 ? position[3] : "0";
+            string morale = position.Length > 4 ? position[4] : "-";
+            bool hasUnit = relation is "ally" or "enemy";
+            bool blocked = blockedText == "1";
+
+            if ((!hasUnit && relation != "none")
+                || !IsKnownTiming(timing)
+                || height is not ("up" or "down" or "level")
+                || blockedText is not ("0" or "1")
+                || !IsKnownMorale(morale)
+                || position.Length < 2
+                || !int.TryParse(position[0], out int horizontalTiles)
+                || !int.TryParse(position[1], out int verticalTiles)
+                || horizontalTiles is < -128 or > 128
+                || verticalTiles is < -128 or > 128)
+            {
+                return null;
+            }
+
+            // Morale belongs to a unit, so an empty hex claiming one is ignored rather
+            // than given a voice of its own. A unit whose live queue position carries
+            // no honest value arrives with timing "none": that silences its rhythm
+            // without silencing the morale phrase that travels with it.
+            if (!hasUnit) morale = "-";
+            bool hasRhythm = hasUnit && timing != "none";
+            if (!hasRhythm && height == "level" && !blocked && morale == "-") return null;
+
+            return new SoundKey(
+                hasUnit ? relation : "none", hasUnit ? timing : "none",
+                horizontalTiles, verticalTiles, height, blocked, morale);
+        }
+
         private static bool IsKnownTiming(string timing)
         {
             return timing is "1" or "2" or "3" or "many" or "done" or "none";
+        }
+
+        /// <summary>The engine's own Const.MoraleState indices, minus Ignore (5): a
+        /// unit which cannot break has no morale to report.</summary>
+        private static readonly string[] MoraleIndices = { "0", "1", "2", "3", "4" };
+
+        private static bool IsKnownMorale(string morale)
+        {
+            return morale == "-" || Array.IndexOf(MoraleIndices, morale) >= 0;
         }
 
         private static void StopCore()
@@ -227,6 +361,7 @@ namespace TheUnseenBanner.Companion
 
             if (key.Height != "level") AddHeightEvent(events, key.Height == "up");
             if (key.Blocked) AddBlockedEvent(events);
+            if (key.Morale != "-") AddMoraleEvents(events, key.Morale);
 
             int totalSamples = events.Count == 0 ? 1 : events.Max(e => e.EndSample);
             var mono = new double[totalSamples];
@@ -346,6 +481,97 @@ namespace TheUnseenBanner.Companion
                 _settings.BlockedGrainHertz, _settings.BlockedGrainDepth));
         }
 
+        /// <summary>The focused unit's morale. A recording from <c>sounds\</c> when the
+        /// state has one, and the synthesized phrase below when it does not.
+        ///
+        /// Unlike every other cue it does not start at zero: it is delayed half a second
+        /// so the unit's rhythm and the ground's glide — the two answers a player
+        /// navigates by — are already over when it begins. Morale is context, not
+        /// navigation, and must never be the thing that delays them. Recordings were
+        /// tried without the delay and it is the delay that makes them legible: mixed
+        /// underneath, they arrive as texture on the cue rather than as their own answer.
+        ///
+        /// The synthesized fallback: a one-second chord with a short modal phrase sung
+        /// over it. Each state is a different mode over the same D, so what changes
+        /// between them is the colour of the interval rather than a pitch to be measured:
+        ///
+        ///  - Confident: D dorian, five notes arpeggiating up to the natural sixth and
+        ///    the octave. The major sixth over a minor triad is what makes dorian sound
+        ///    resolute rather than merely sad.
+        ///  - Steady: an open fifth with no third at all and two unhurried notes. The
+        ///    most common state says the least, and says it without an opinion.
+        ///  - Wavering: A minor, four notes circling the second degree and ending on it,
+        ///    with vibrato. Nothing resolves; the phrase trembles in place.
+        ///  - Breaking: D minor with a phrygian flat second and the harmonic minor's
+        ///    raised seventh — Eb falling to C# is a diminished third, the lament figure,
+        ///    and it collapses an octave onto the tonic.
+        ///  - Fleeing: D locrian over a diminished triad, five fast notes reaching the
+        ///    flat fifth. The tritone in both chord and phrase is the point: the ground
+        ///    under the tonic is missing.
+        /// </summary>
+        private static void AddMoraleEvents(List<ToneEvent> events, string morale)
+        {
+            MoraleVoice? voice = _settings.MoraleVoiceFor(morale);
+            if (voice == null || !_settings.MoraleEnabled) return;
+
+            int delay = MillisecondsToSamples(_settings.MoraleDelayMilliseconds);
+            int total = Math.Max(1, MillisecondsToSamples(_settings.MoraleMilliseconds));
+
+            if (_moraleSamples.TryGetValue(morale, out double[]? sample))
+            {
+                AddMoraleSampleEvent(events, sample, delay,
+                    Math.Max(1, MillisecondsToSamples(_settings.MoraleSampleMaxMilliseconds)));
+                return;
+            }
+
+            double[] chord = voice.ChordMidi.Select(MidiToFrequency).ToArray();
+            events.Add(new ToneEvent(delay, total, chord, chord, Timbre.Horn,
+                _settings.MoraleAttackMilliseconds, _settings.MoraleReleaseMilliseconds,
+                _settings.MoraleChordGain));
+
+            int startMs = voice.StartMilliseconds;
+            foreach (int midi in voice.MelodyMidi)
+            {
+                // The phrase never outlives the chord under it: a note that would run
+                // past the one-second cue is dropped rather than stretching the buffer,
+                // so retuning a melody can change what is heard but never how long the
+                // player waits for the next hex.
+                if (startMs + voice.NoteMilliseconds > _settings.MoraleMilliseconds) break;
+
+                var note = new[] { MidiToFrequency(midi) };
+                events.Add(new ToneEvent(
+                    delay + MillisecondsToSamples(startMs),
+                    Math.Max(1, MillisecondsToSamples(voice.NoteMilliseconds)),
+                    note, note, Timbre.Horn,
+                    _settings.MoraleNoteAttackMilliseconds,
+                    _settings.MoraleNoteReleaseMilliseconds,
+                    _settings.MoraleMelodyGain,
+                    voice.VibratoHertz, voice.VibratoSemitones));
+                startMs += voice.NoteMilliseconds + voice.GapMilliseconds;
+            }
+        }
+
+        /// <summary>Place a morale recording in the mix. Its shape is left alone — it
+        /// was authored, not generated — but its level is not: what a file was exported
+        /// at has nothing to do with how loud it should sit under a chord it never met,
+        /// so one gain in the config balances it against the rest, and two more rules
+        /// apply. A recording longer than the configured maximum is cut short, because
+        /// that cap is what guarantees a hex stops speaking; and both ends get a fade of
+        /// a few milliseconds, inaudible on a file that already starts and ends in
+        /// silence and the difference between a clean cut and a click on one that does
+        /// not.</summary>
+        private static void AddMoraleSampleEvent(
+            List<ToneEvent> events, double[] sample, int delay, int maximumLength)
+        {
+            int length = Math.Min(sample.Length, maximumLength);
+            if (length <= 0) return;
+
+            events.Add(new ToneEvent(delay, length, sample,
+                _settings.MoraleSampleFadeMilliseconds,
+                _settings.MoraleSampleFadeMilliseconds,
+                _settings.MoraleSampleGain));
+        }
+
         private static void AddRepeatedEvents(
             List<ToneEvent> events, int count, int pulseMs, int gapMs, double[] frequencies)
         {
@@ -378,6 +604,12 @@ namespace TheUnseenBanner.Companion
                 MillisecondsToSamples(toneEvent.AttackMilliseconds), toneEvent.Length / 2);
             int release = Math.Min(
                 MillisecondsToSamples(toneEvent.ReleaseMilliseconds), toneEvent.Length / 2);
+
+            if (toneEvent.Sample != null)
+            {
+                RenderSampleEvent(mono, toneEvent, attack, release);
+                return;
+            }
 
             // Phase is integrated sample by sample rather than computed from an elapsed
             // time, because a glide has no single frequency to multiply by: the only way
@@ -437,6 +669,28 @@ namespace TheUnseenBanner.Companion
             }
         }
 
+        /// <summary>A recorded layer: no oscillator, no glide, no vibrato — every one of
+        /// those decisions was already made by whoever recorded it. All that is left is
+        /// the fade at each end and the gain, and then it joins the same mono bus as the
+        /// synthesized layers, so it is panned by the hex's column exactly like them.
+        /// </summary>
+        private static void RenderSampleEvent(
+            double[] mono, ToneEvent toneEvent, int attack, int release)
+        {
+            double[] sample = toneEvent.Sample!;
+            for (int local = 0; local < toneEvent.Length; local++)
+            {
+                double envelope = 1.0;
+                if (attack > 0 && local < attack)
+                    envelope *= (local + 1.0) / attack;
+                if (release > 0 && local >= toneEvent.Length - release)
+                    envelope *= (toneEvent.Length - local) / (double)release;
+
+                mono[toneEvent.StartSample + local] +=
+                    sample[local] * envelope * toneEvent.Gain;
+            }
+        }
+
         private static double Voice(Timbre timbre, double phase)
         {
             if (timbre == Timbre.Triangle)
@@ -446,6 +700,7 @@ namespace TheUnseenBanner.Companion
             }
 
             if (timbre == Timbre.Rasp) return RaspSample(phase) / RaspPeak;
+            if (timbre == Timbre.Horn) return HornSample(phase) / HornPeak;
             return ViolinSample(phase) / ViolinPeak;
         }
 
@@ -474,9 +729,25 @@ namespace TheUnseenBanner.Companion
             return sum;
         }
 
+        private static double HornSample(double phase)
+        {
+            double sum = 0.0;
+            for (int harmonic = 0; harmonic < HornHarmonicGains.Length; harmonic++)
+            {
+                sum += HornHarmonicGains[harmonic]
+                    * Math.Sin(2.0 * Math.PI * (harmonic + 1) * phase);
+            }
+            return sum;
+        }
+
         private static double MeasureViolinPeak()
         {
             return MeasurePeak(ViolinSample);
+        }
+
+        private static double MeasureHornPeak()
+        {
+            return MeasurePeak(HornSample);
         }
 
         private static double MeasureRaspPeak()
@@ -547,16 +818,188 @@ namespace TheUnseenBanner.Companion
             return 440.0 * Math.Pow(2.0, (midi - 69) / 12.0);
         }
 
+        /// <summary>Just enough WAV reading for hand-made cue material: the chunks are
+        /// walked rather than assumed, because an editor's export carries metadata
+        /// (<c>bext</c>, <c>LIST</c>, cue points) between the header and the audio, and
+        /// the classic "audio starts at byte 44" shortcut reads that metadata as sound.
+        /// </summary>
+        private static class WaveFile
+        {
+            private const int FormatPcm = 1;
+            private const int FormatFloat = 3;
+            private const int FormatExtensible = 0xFFFE;
+
+            /// <summary>Read a file as one mono channel at <paramref name="targetRate"/>,
+            /// in the -1..1 the mixer works in. Mono because the sonar's own equal-power
+            /// pan is what places a cue in the player's head: a stereo recording placing
+            /// itself would fight the one thing the cue exists to say, which is which way
+            /// the hex lies.</summary>
+            internal static double[] ReadMono(string path, int targetRate)
+            {
+                using FileStream stream = File.OpenRead(path);
+                using var reader = new BinaryReader(stream);
+
+                if (ReadFourCc(reader) != "RIFF")
+                    throw new InvalidDataException("not a RIFF file.");
+                reader.ReadUInt32(); // Declared size; the chunk walk is the real bound.
+                if (ReadFourCc(reader) != "WAVE")
+                    throw new InvalidDataException("not a WAVE file.");
+
+                int format = 0;
+                int channels = 0;
+                int sourceRate = 0;
+                int bits = 0;
+                byte[]? data = null;
+
+                while (stream.Position + 8 <= stream.Length)
+                {
+                    string id = ReadFourCc(reader);
+                    long size = reader.ReadUInt32();
+                    // Chunks are word-aligned: an odd size is followed by a pad byte
+                    // which belongs to no one.
+                    long next = stream.Position + size + (size % 2);
+
+                    if (id == "fmt " && size >= 16)
+                    {
+                        format = reader.ReadUInt16();
+                        channels = reader.ReadUInt16();
+                        sourceRate = reader.ReadInt32();
+                        reader.ReadInt32();  // Byte rate, derivable from the rest.
+                        reader.ReadUInt16(); // Block align, likewise.
+                        bits = reader.ReadUInt16();
+
+                        // WAVE_FORMAT_EXTENSIBLE hides the real format in the first two
+                        // bytes of a sub-format GUID. Read past it, or 32-bit float —
+                        // which is what several editors export by default — is taken for
+                        // PCM and comes out as noise.
+                        if (format == FormatExtensible && size >= 40)
+                        {
+                            reader.ReadUInt16(); // Extension size.
+                            reader.ReadUInt16(); // Valid bits per sample.
+                            reader.ReadUInt32(); // Channel mask.
+                            format = reader.ReadUInt16();
+                        }
+                    }
+                    else if (id == "data" && size > 0)
+                    {
+                        data = reader.ReadBytes((int)Math.Min(size, int.MaxValue));
+                    }
+
+                    if (next > stream.Length) break;
+                    stream.Position = next;
+                }
+
+                if (data == null) throw new InvalidDataException("no data chunk.");
+                if (channels is < 1 or > 8)
+                    throw new InvalidDataException($"unsupported channel count {channels}.");
+                if (sourceRate is < 1_000 or > 384_000)
+                    throw new InvalidDataException($"unsupported sample rate {sourceRate}.");
+
+                double[] mono = ToMono(data, format, channels, bits);
+                return sourceRate == targetRate ? mono : Resample(mono, sourceRate, targetRate);
+            }
+
+            private static double[] ToMono(byte[] data, int format, int channels, int bits)
+            {
+                int bytesPerSample = bits / 8;
+                if (bytesPerSample <= 0 || !IsSupported(format, bits))
+                {
+                    throw new InvalidDataException(
+                        $"unsupported format {format} at {bits} bits. " +
+                        "Export as 16-bit PCM.");
+                }
+
+                int frameBytes = bytesPerSample * channels;
+                int frames = data.Length / frameBytes;
+                var mono = new double[frames];
+
+                for (int frame = 0; frame < frames; frame++)
+                {
+                    double sum = 0.0;
+                    int offset = frame * frameBytes;
+                    for (int channel = 0; channel < channels; channel++)
+                    {
+                        sum += ReadSample(data, offset + channel * bytesPerSample, format, bits);
+                    }
+                    mono[frame] = sum / channels;
+                }
+
+                return mono;
+            }
+
+            private static bool IsSupported(int format, int bits)
+            {
+                if (format == FormatPcm) return bits is 8 or 16 or 24 or 32;
+                if (format == FormatFloat) return bits is 32 or 64;
+                return false;
+            }
+
+            private static double ReadSample(byte[] data, int offset, int format, int bits)
+            {
+                if (format == FormatFloat)
+                {
+                    return bits == 32
+                        ? BitConverter.ToSingle(data, offset)
+                        : BitConverter.ToDouble(data, offset);
+                }
+
+                switch (bits)
+                {
+                    // 8-bit PCM is the odd one out in the format: unsigned, centred on
+                    // 128 rather than on zero.
+                    case 8: return (data[offset] - 128) / 128.0;
+                    case 16: return BitConverter.ToInt16(data, offset) / 32_768.0;
+                    case 24:
+                        int value = data[offset] | (data[offset + 1] << 8)
+                                                 | (data[offset + 2] << 16);
+                        // Sign-extend the 24th bit by hand; there is no Int24.
+                        if ((value & 0x800000) != 0) value -= 0x1000000;
+                        return value / 8_388_608.0;
+                    default: return BitConverter.ToInt32(data, offset) / 2_147_483_648.0;
+                }
+            }
+
+            /// <summary>Linear interpolation. These are short, quiet, hand-made cues and
+            /// the common case is a file already at 48 kHz, which skips this entirely;
+            /// a windowed-sinc resampler would be precision nobody can hear.</summary>
+            private static double[] Resample(double[] source, int sourceRate, int targetRate)
+            {
+                if (source.Length == 0) return source;
+
+                double ratio = targetRate / (double)sourceRate;
+                var resampled = new double[Math.Max(1, (int)(source.Length * ratio))];
+                for (int index = 0; index < resampled.Length; index++)
+                {
+                    double position = index / ratio;
+                    int left = (int)position;
+                    int right = Math.Min(left + 1, source.Length - 1);
+                    double fraction = position - left;
+                    if (left >= source.Length) break;
+                    resampled[index] = source[left] * (1.0 - fraction) + source[right] * fraction;
+                }
+
+                return resampled;
+            }
+
+            private static string ReadFourCc(BinaryReader reader)
+            {
+                byte[] bytes = reader.ReadBytes(4);
+                if (bytes.Length < 4) return string.Empty;
+                return new string(bytes.Select(b => (char)b).ToArray());
+            }
+        }
+
         private enum Timbre
         {
             Triangle,
             Violin,
             Rasp,
+            Horn,
         }
 
         private readonly record struct SoundKey(
             string Relation, string Timing, int HorizontalTiles, int VerticalTiles,
-            string Height, bool Blocked);
+            string Height, bool Blocked, string Morale);
 
         private sealed class ToneEvent
         {
@@ -581,6 +1024,28 @@ namespace TheUnseenBanner.Companion
                 GrainHertz = grainHertz;
                 GrainDepth = grainDepth;
             }
+
+            /// <summary>A recorded event. It carries no frequencies because it has no
+            /// notes to be told: the audio is the note.</summary>
+            internal ToneEvent(
+                int startSample, int length, double[] sample, int attackMilliseconds,
+                int releaseMilliseconds, double gain)
+            {
+                StartSample = startSample;
+                Length = length;
+                Sample = sample;
+                Frequencies = Array.Empty<double>();
+                EndFrequencies = Array.Empty<double>();
+                Timbre = Timbre.Triangle;
+                AttackMilliseconds = attackMilliseconds;
+                ReleaseMilliseconds = releaseMilliseconds;
+                Gain = gain;
+            }
+
+            /// <summary>Non-null on a recorded event, and then it is the whole of the
+            /// waveform: <see cref="Timbre"/> and the frequency fields say nothing.
+            /// </summary>
+            internal double[]? Sample { get; }
 
             internal int StartSample { get; }
             internal int Length { get; }
@@ -608,12 +1073,76 @@ namespace TheUnseenBanner.Companion
             internal double GrainDepth { get; }
         }
 
+        /// <summary>One morale state's music: the chord held under it, the notes sung
+        /// over it, and how fast they are sung. All five states share the envelopes and
+        /// the timbre, so this is the whole of what tells them apart.</summary>
+        internal sealed class MoraleVoice
+        {
+            /// <summary>A recording in the sounds folder which replaces the chord and
+            /// phrase below entirely. Empty, or naming a file which cannot be read, and
+            /// the state sings instead — which is why the written music stays here even
+            /// for the states that ship with a recording.</summary>
+            public string Sample { get; set; } = string.Empty;
+
+            public int[] ChordMidi { get; set; } = Array.Empty<int>();
+            public int[] MelodyMidi { get; set; } = Array.Empty<int>();
+
+            /// <summary>Offset of the first note inside the cue, so a phrase can let its
+            /// chord speak first (heroic) or crowd in from the very first sample
+            /// (panic).</summary>
+            public int StartMilliseconds { get; set; }
+            public int NoteMilliseconds { get; set; } = 160;
+            public int GapMilliseconds { get; set; } = 30;
+            public double VibratoHertz { get; set; }
+            public double VibratoSemitones { get; set; }
+
+            /// <summary>A voice edited into nonsense falls back whole rather than in
+            /// pieces: half a hand-tuned phrase and half a default one would be a mode
+            /// nobody chose.</summary>
+            internal static MoraleVoice Normalize(MoraleVoice? voice, MoraleVoice fallback)
+            {
+                if (voice == null
+                    || !AreNotesUsable(voice.ChordMidi, 1, 4)
+                    || !AreNotesUsable(voice.MelodyMidi, 1, 8))
+                {
+                    // The recording is the one thing kept across that fallback: a config
+                    // which names a sound and no notes at all is the likeliest edit
+                    // anyone will make by hand, and it must not lose the sound.
+                    if (voice != null && !string.IsNullOrWhiteSpace(voice.Sample))
+                    {
+                        fallback.Sample = voice.Sample;
+                    }
+                    return fallback;
+                }
+
+                voice.Sample = voice.Sample.Trim();
+                voice.StartMilliseconds = Math.Clamp(voice.StartMilliseconds, 0, 2_000);
+                voice.NoteMilliseconds = Math.Clamp(voice.NoteMilliseconds, 20, 2_000);
+                voice.GapMilliseconds = Math.Clamp(voice.GapMilliseconds, 0, 1_000);
+                voice.VibratoHertz = Math.Clamp(voice.VibratoHertz, 0.0, 12.0);
+                voice.VibratoSemitones = Math.Clamp(voice.VibratoSemitones, 0.0, 2.0);
+                return voice;
+            }
+
+            private static bool AreNotesUsable(int[]? notes, int minimum, int maximum)
+            {
+                return notes != null
+                    && notes.Length >= minimum && notes.Length <= maximum
+                    && notes.All(note => note is >= 0 and <= 127);
+            }
+        }
+
         private sealed class SonarSettings
         {
             internal const string FileName = "sonar.json";
 
             public bool Enabled { get; set; } = true;
             public double Volume { get; set; } = 0.55;
+
+            /// <summary>Where the recorded cues live, relative to this config unless an
+            /// absolute path is given. Its own setting so a player can keep a folder of
+            /// alternatives and switch sets with one line.</summary>
+            public string SoundsFolder { get; set; } = "sounds";
             public double PanPerHorizontalTile { get; set; } = 0.10;
             public double PitchSemitonesPerVerticalTile { get; set; } = 3.0;
             public int AttackMilliseconds { get; set; } = 8;
@@ -662,6 +1191,145 @@ namespace TheUnseenBanner.Companion
             public int BlockedAttackMilliseconds { get; set; } = 6;
             public int BlockedReleaseMilliseconds { get; set; } = 18;
             public double BlockedGain { get; set; } = 0.7;
+
+            // Morale. The delay is what keeps this cue out of the way of the two the
+            // player steers by, and the length is what gives the synthesized melody room
+            // to be a melody.
+            public bool MoraleEnabled { get; set; } = true;
+            public int MoraleDelayMilliseconds { get; set; } = 500;
+            public int MoraleMilliseconds { get; set; } = 1_000;
+            public double MoraleChordGain { get; set; } = 0.50;
+            public double MoraleMelodyGain { get; set; } = 0.80;
+
+            // A recording arrives already mixed and already shaped, so it gets one level
+            // and one fade instead of the four envelope settings the synthesized voice
+            // needs. The fade is short enough to be inaudible on a file that starts and
+            // ends in silence, and long enough to stop a click on one that does not.
+            //
+            // The gain goes well past 1 on purpose. Cue material tends to be exported
+            // with the headroom a music file wants, and the shipped set peaks around
+            // -18 dBFS, which under the unit chord is not quiet but inaudible. Matching
+            // it here rather than asking for a re-export means a player can drop in any
+            // file and balance it by ear with one number.
+            //
+            // Its cap is its own rather than the melody's, so lengthening a recording
+            // never silently rewrites the phrase that stands in when a file is missing.
+            // The cap is what guarantees a hex stops speaking even with the cursor
+            // parked on it; a file longer than this is cut, and says so at startup.
+            public double MoraleSampleGain { get; set; } = 5.0;
+            public int MoraleSampleFadeMilliseconds { get; set; } = 5;
+            public int MoraleSampleMaxMilliseconds { get; set; } = 2_500;
+
+            // The chord swells and dies away; the notes over it speak and stop. Their
+            // envelopes are therefore nothing alike, which is most of what keeps the
+            // phrase legible over its own accompaniment.
+            public int MoraleAttackMilliseconds { get; set; } = 30;
+            public int MoraleReleaseMilliseconds { get; set; } = 160;
+            public int MoraleNoteAttackMilliseconds { get; set; } = 12;
+            public int MoraleNoteReleaseMilliseconds { get; set; } = 45;
+
+            // MIDI 50 is D3. Every mode is written over that same D except wavering,
+            // which is the A minor the player asked for; see AddMoraleEvents for what
+            // each phrase is saying.
+            public MoraleVoice MoraleConfident { get; set; } = DefaultConfident();
+            public MoraleVoice MoraleSteady { get; set; } = DefaultSteady();
+            public MoraleVoice MoraleWavering { get; set; } = DefaultWavering();
+            public MoraleVoice MoraleBreaking { get; set; } = DefaultBreaking();
+            public MoraleVoice MoraleFleeing { get; set; } = DefaultFleeing();
+
+            /// <summary>D dorian: Dm spread wide, then D-F-A-B-D climbing through the
+            /// natural sixth to the octave.</summary>
+            private static MoraleVoice DefaultConfident()
+            {
+                return new MoraleVoice
+                {
+                    Sample = "morale-confident.wav",
+                    ChordMidi = new[] { 50, 57, 65 },
+                    MelodyMidi = new[] { 62, 65, 69, 71, 74 },
+                    StartMilliseconds = 60,
+                    NoteMilliseconds = 160,
+                    GapMilliseconds = 30,
+                };
+            }
+
+            /// <summary>A bare fifth, D and A, unhurried and without a third.</summary>
+            private static MoraleVoice DefaultSteady()
+            {
+                return new MoraleVoice
+                {
+                    Sample = "morale-steady.wav",
+                    ChordMidi = new[] { 50, 57, 62 },
+                    MelodyMidi = new[] { 62, 69 },
+                    StartMilliseconds = 100,
+                    NoteMilliseconds = 380,
+                    GapMilliseconds = 60,
+                };
+            }
+
+            /// <summary>A minor, A-B-C-B circling back onto the second degree and
+            /// staying there, trembling.</summary>
+            private static MoraleVoice DefaultWavering()
+            {
+                return new MoraleVoice
+                {
+                    Sample = "morale-wavering.wav",
+                    ChordMidi = new[] { 45, 52, 60 },
+                    MelodyMidi = new[] { 69, 71, 72, 71 },
+                    StartMilliseconds = 80,
+                    NoteMilliseconds = 190,
+                    GapMilliseconds = 40,
+                    VibratoHertz = 5.5,
+                    VibratoSemitones = 0.35,
+                };
+            }
+
+            /// <summary>Dm voiced close and dark, with Eb-C#-D over it: the flat second
+            /// of phrygian falling a diminished third onto harmonic minor's leading note,
+            /// then an octave down to the tonic.</summary>
+            private static MoraleVoice DefaultBreaking()
+            {
+                return new MoraleVoice
+                {
+                    Sample = "morale-breaking.wav",
+                    ChordMidi = new[] { 50, 53, 57 },
+                    MelodyMidi = new[] { 75, 73, 62 },
+                    StartMilliseconds = 20,
+                    NoteMilliseconds = 300,
+                    GapMilliseconds = 40,
+                };
+            }
+
+            /// <summary>D locrian over the diminished triad D-F-Ab: D-Eb-F-Ab-G, fast,
+            /// reaching the flat fifth and refusing to come back down to the tonic.
+            /// </summary>
+            private static MoraleVoice DefaultFleeing()
+            {
+                return new MoraleVoice
+                {
+                    Sample = "morale-fleeing.wav",
+                    ChordMidi = new[] { 50, 53, 56 },
+                    MelodyMidi = new[] { 74, 75, 77, 80, 79 },
+                    StartMilliseconds = 0,
+                    NoteMilliseconds = 130,
+                    GapMilliseconds = 45,
+                    VibratoHertz = 7.0,
+                    VibratoSemitones = 0.30,
+                };
+            }
+
+            /// <summary>Map the engine's Const.MoraleState index onto its voice.</summary>
+            internal MoraleVoice? MoraleVoiceFor(string morale)
+            {
+                return morale switch
+                {
+                    "0" => MoraleFleeing,
+                    "1" => MoraleBreaking,
+                    "2" => MoraleWavering,
+                    "3" => MoraleSteady,
+                    "4" => MoraleConfident,
+                    _ => null,
+                };
+            }
 
             internal static SonarSettings Load(string path)
             {
@@ -743,6 +1411,30 @@ namespace TheUnseenBanner.Companion
                 BlockedAttackMilliseconds = ClampTime(BlockedAttackMilliseconds, 0, 200);
                 BlockedReleaseMilliseconds = ClampTime(BlockedReleaseMilliseconds, 0, 200);
                 BlockedGain = Math.Clamp(BlockedGain, 0.0, 1.0);
+
+                // The cue is context rather than navigation, so it may be pushed later
+                // or made longer, but never so far that the player is still hearing the
+                // last hex when they reach the next one.
+                MoraleDelayMilliseconds = ClampTime(MoraleDelayMilliseconds, 0, 2_000);
+                MoraleMilliseconds = ClampTime(MoraleMilliseconds, 100, 4_000);
+                MoraleChordGain = Math.Clamp(MoraleChordGain, 0.0, 1.0);
+                MoraleMelodyGain = Math.Clamp(MoraleMelodyGain, 0.0, 1.0);
+                MoraleAttackMilliseconds = ClampTime(MoraleAttackMilliseconds, 0, 500);
+                MoraleReleaseMilliseconds = ClampTime(MoraleReleaseMilliseconds, 0, 1_000);
+                MoraleNoteAttackMilliseconds = ClampTime(MoraleNoteAttackMilliseconds, 0, 200);
+                MoraleNoteReleaseMilliseconds = ClampTime(MoraleNoteReleaseMilliseconds, 0, 500);
+
+                MoraleSampleGain = Math.Clamp(MoraleSampleGain, 0.0, 16.0);
+                MoraleSampleFadeMilliseconds = ClampTime(MoraleSampleFadeMilliseconds, 0, 500);
+                MoraleSampleMaxMilliseconds = ClampTime(MoraleSampleMaxMilliseconds, 100, 6_000);
+                if (string.IsNullOrWhiteSpace(SoundsFolder)) SoundsFolder = "sounds";
+                SoundsFolder = SoundsFolder.Trim();
+
+                MoraleConfident = MoraleVoice.Normalize(MoraleConfident, DefaultConfident());
+                MoraleSteady = MoraleVoice.Normalize(MoraleSteady, DefaultSteady());
+                MoraleWavering = MoraleVoice.Normalize(MoraleWavering, DefaultWavering());
+                MoraleBreaking = MoraleVoice.Normalize(MoraleBreaking, DefaultBreaking());
+                MoraleFleeing = MoraleVoice.Normalize(MoraleFleeing, DefaultFleeing());
             }
 
             private static int ClampTime(int value, int minimum, int maximum)

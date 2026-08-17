@@ -27,6 +27,12 @@
     <None Include="sonar.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <!-- Recorded sonar cues, read by name from sonar.json. They sit beside the exe
+         so a player can replace one with their own without rebuilding anything. -->
+    <None Include="sounds\**\*.wav">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>sounds\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
     <!-- Translation overrides (lang/<code>.lang, see L10n.cs). None exist yet. -->
     <None Include="lang\**\*.lang" Condition="Exists('lang')">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

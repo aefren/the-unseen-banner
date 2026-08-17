@@ -40,5 +40,65 @@
   "blockedGrainDepth": 0.55,
   "blockedAttackMilliseconds": 6,
   "blockedReleaseMilliseconds": 18,
-  "blockedGain": 0.7
+  "blockedGain": 0.7,
+
+  "moraleEnabled": true,
+  "moraleDelayMilliseconds": 500,
+  "moraleMilliseconds": 1000,
+  "moraleChordGain": 0.50,
+  "moraleMelodyGain": 0.80,
+  "moraleAttackMilliseconds": 30,
+  "moraleReleaseMilliseconds": 160,
+  "moraleNoteAttackMilliseconds": 12,
+  "moraleNoteReleaseMilliseconds": 45,
+
+  "soundsFolder": "sounds",
+  "moraleSampleGain": 5.0,
+  "moraleSampleFadeMilliseconds": 5,
+  "moraleSampleMaxMilliseconds": 2500,
+
+  "moraleConfident": {
+    "sample": "morale-confident.wav",
+    "chordMidi": [50, 57, 65],
+    "melodyMidi": [62, 65, 69, 71, 74],
+    "startMilliseconds": 60,
+    "noteMilliseconds": 160,
+    "gapMilliseconds": 30
+  },
+  "moraleSteady": {
+    "sample": "morale-steady.wav",
+    "chordMidi": [50, 57, 62],
+    "melodyMidi": [62, 69],
+    "startMilliseconds": 100,
+    "noteMilliseconds": 380,
+    "gapMilliseconds": 60
+  },
+  "moraleWavering": {
+    "sample": "morale-wavering.wav",
+    "chordMidi": [45, 52, 60],
+    "melodyMidi": [69, 71, 72, 71],
+    "startMilliseconds": 80,
+    "noteMilliseconds": 190,
+    "gapMilliseconds": 40,
+    "vibratoHertz": 5.5,
+    "vibratoSemitones": 0.35
+  },
+  "moraleBreaking": {
+    "sample": "morale-breaking.wav",
+    "chordMidi": [50, 53, 57],
+    "melodyMidi": [75, 73, 62],
+    "startMilliseconds": 20,
+    "noteMilliseconds": 300,
+    "gapMilliseconds": 40
+  },
+  "moraleFleeing": {
+    "sample": "morale-fleeing.wav",
+    "chordMidi": [50, 53, 56],
+    "melodyMidi": [74, 75, 77, 80, 79],
+    "startMilliseconds": 0,
+    "noteMilliseconds": 130,
+    "gapMilliseconds": 45,
+    "vibratoHertz": 7.0,
+    "vibratoSemitones": 0.30
+  }
 }
