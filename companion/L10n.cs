@@ -496,6 +496,13 @@ namespace TheUnseenBanner.Companion
             ["world.market.bought"] = "Bought for {0}.",
             ["world.market.comparison.equipped"] = "Comparing for {0}: equipped {1}.",
             ["world.market.comparison.empty"] = "Comparing for {0}: nothing equipped in this slot.",
+            // Switching the comparison brother with Left/Right: the answer to "and what
+            // does HE have?", so the name leads and the equipped item follows. The
+            // focused row is deliberately not repeated — the player just heard it, and
+            // waiting through it again to reach one name made the roster unusable.
+            ["world.market.comparison.switch"] = "Comparing with {0}: equipped {1}.",
+            ["world.market.comparison.switch.empty"] = "Comparing with {0}: nothing equipped in this slot.",
+            ["world.market.comparison.switch.none"] = "Comparing with {0}.",
             ["world.market.position"] = "Item {0} of {1}.",
             ["world.market.commands"] = "Market inventory commands. Filter: {0}.",
             ["world.market.empty"] = "{0} is empty.",
@@ -1447,7 +1454,7 @@ namespace TheUnseenBanner.Companion
             ["help.world.market.move"] = "Up, Down, Home and End walk the items.",
             ["help.world.market.actions"] = "Enter opens the actions for the focused item: buy, sell, repair, sort, filter.",
             ["help.world.market.details"] = "V reads the item's tooltip and compares it with what a brother wears.",
-            ["help.world.market.compare"] = "A and D, or Left and Right, or Tab, change which brother that comparison uses.",
+            ["help.world.market.compare"] = "A and D, or Left and Right, or Tab, change which brother that comparison uses, and name what he already wears in that slot.",
             ["help.world.market.back"] = "Escape returns to the settlement.",
             ["help.world.recruit.move"] = "Up, Down, Home and End walk the candidates.",
             ["help.world.recruit.details"] = "V opens the candidate's background and known traits.",

@@ -185,6 +185,8 @@ namespace TheUnseenBanner.Companion
                         texto, valor, detalle, hermano, comparacion, isBuying: true),
                     "world.market.sell.item" => ComposeMarketItem(
                         texto, valor, detalle, hermano, comparacion, isBuying: false),
+                    "world.market.comparison.switch" => ComposeMarketComparisonSwitch(
+                        hermano, comparacion, valor),
                     "world.market.commands" => ComposeMarketCommands(valor, detalle),
                     "world.market.empty" => ComposeMarketEmpty(texto, detalle),
                     "world.market.action" => ComposeMarketAction(texto, valor, detalle),
@@ -853,6 +855,21 @@ namespace TheUnseenBanner.Companion
             return announceSection
                 ? L10n.T("world.market.section." + section) + ". " + result
                 : result;
+        }
+
+        /// <summary>Compose the comparison-brother switch (Left/Right, A/D, Tab in a
+        /// shop). Only the brother changed, and the player already heard the focused
+        /// row, so this says the new man first and then what he wears in that row's
+        /// slot — nothing of the item, its price or its position is repeated.
+        /// applies is "0" when the focused row has no slot to compare against.</summary>
+        private static string ComposeMarketComparisonSwitch(
+            string brother, string equipped, string applies)
+        {
+            if (applies != "1")
+                return L10n.F("world.market.comparison.switch.none", brother);
+            return equipped.Length > 0
+                ? L10n.F("world.market.comparison.switch", brother, equipped)
+                : L10n.F("world.market.comparison.switch.empty", brother);
         }
 
         private static string ComposeMarketCommands(string filter, string detail)

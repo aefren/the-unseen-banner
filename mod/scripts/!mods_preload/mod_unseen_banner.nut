@@ -4996,6 +4996,12 @@
 		::UnseenBanner.TooltipNav.hide();
 		this.announceItem();
 	},
+	// Left/Right (and A/D, Tab) change only WHO the comparison is against, so
+	// re-reading the whole row — name, asked price, worth, position — to deliver
+	// that one changed fact made walking the roster too slow to use while haggling.
+	// The row itself has not changed and the player just heard it; announce the
+	// change instead, brother first and then what he already carries in the focused
+	// item's slot. Up/Down still speaks the full row, so nothing is lost.
 	function switchBrother(_next)
 	{
 		if (this.m.Brothers == null || this.m.Brothers.len() == 0)
@@ -5011,7 +5017,32 @@
 		::UnseenBanner.TooltipNav.hide();
 		this.buildSections(saved);
 		this.activateSection(this.m.SectionIndex, false, false);
-		this.announceItem();
+		this.announceBrother();
+	},
+	// The comparison brother alone. The focused row is rebuilt before this runs, so
+	// its comparison already points at the new man: applicable tells the companion
+	// whether the focused item even has a slot to compare (commands rows, the
+	// overview and bag-only goods have none), and comparacion carries the name of
+	// what he wears there, absent when the slot is empty.
+	function announceBrother()
+	{
+		local bro = this.currentBrother();
+		if (bro == null)
+		{
+			this.announceItem();
+			return;
+		}
+
+		local comparison = null;
+		if (this.m.Items != null && this.m.Items.len() > 0
+			&& this.m.ItemIndex >= 0 && this.m.ItemIndex < this.m.Items.len())
+			comparison = this.m.Items[this.m.ItemIndex].comparison;
+
+		local applicable = comparison != null && comparison.applicable;
+		local comparedName = applicable && comparison.item != null
+			? comparison.item.getName() : null;
+		::UnseenBanner.sendMessage("interrupt", "", "world.market.comparison.switch",
+			applicable ? "1" : "0", null, bro.getName(), null, null, null, comparedName);
 	},
 	function repairPrice(_item)
 	{
