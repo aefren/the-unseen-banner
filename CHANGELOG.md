@@ -1,5 +1,88 @@
 # Changelog
 
+## 1.2
+
+Version 1.2 has two headline changes. The battlefield now answers with sound as
+well as with words: the unit under the cursor, the ground it stands on and the
+dead lying on it each have a cue of their own, and a new window inside the game
+teaches them and lets you choose how much of them you want. And the world map
+names the ground itself — the region the company is crossing, and where in that
+region it stands — so a campaign can be navigated by place names rather than by
+counting tiles. Saves remain compatible with 1.1.
+
+### The cursor sounds the unit under it
+
+Focusing a visible combatant now also plays a positional tactical-sonar cue. It
+places the unit, says whether it is an ally or an enemy, and says when it acts.
+Hidden units are never revealed.
+
+The ground has its own cues: higher ground, lower ground, hexes nobody can stand
+on, and bodies lying on the field. They sound whether or not a unit is standing
+there, and everything one hex has to report is heard as a single sound.
+
+Sound arrives while the cursor is still moving, which is what makes it worth
+having next to speech: a line of enemies, a slope or a wall can be swept and
+understood without waiting for a sentence per hex. Every parameter of the cues can
+be adjusted in `companion/sonar.json` without rebuilding, and the new options
+window can turn the spoken half of the doubled facts off.
+
+### The map is named, not just measured
+
+`Z` reads the region the company stands in and where it stands within it, using
+eight compass directions — for example, "East of Glaucious Domain." In the `M` map
+explorer it reads the cursor tile instead, so a region remains useful for
+orientation even where it holds no settlements. Regions are only named on explored
+ground.
+
+Travel announces the same reading when the company crosses into another region or
+into another sector of the one it is in, so the map is heard as a set of named
+areas that the company moves through rather than as a distance from the last
+town. Every row in `B` names the region and sector of the place it lists, which
+places settlements, locations and landmarks on that same map by name.
+
+### Morale is played, not synthesized
+
+The five morale states are now recordings, in `companion/sounds/`. A file that is
+missing or unreadable costs the recording and never the cue.
+
+### Mod options and a sound tutorial, on Ctrl+F1
+
+`Ctrl+F1` opens a mod options window in combat and on the world map: Up and Down
+walk the settings, Left and Right change one, Escape closes.
+
+The first setting chooses what the tile cursor answers with — sounds and speech,
+sounds only, or speech only — for the facts that are carried both ways. Explicit
+inspection with `V` and `Shift+V` is never affected.
+
+The window also opens a sound tutorial that plays each cue on its own, so they can
+be learned away from a battle. Up and Down walk the sounds, Space plays one.
+
+Every in-game list now says that `F1` answers "which keys work here".
+
+### The turn order names what each enemy carries
+
+`Tab` now names each enemy's weapon along with his place in the queue. Unarmed
+enemies keep their bare name.
+
+### A shop's comparison brother answers in one breath
+
+Left and Right (and `A`/`D`, `Tab`) in a shop used to re-read the whole focused
+row to deliver one changed name. They now speak the new brother and what he
+already wears in the focused item's slot, and nothing else. Up and Down still
+speak the full row.
+
+### Battles between other parties are announced
+
+Two parties that meet away from the company and fight it out were shown by nothing
+audible at all. Such a battle is now announced: who fell upon whom, and how far
+off it is. A party allied with the company is named as the ally it is.
+
+### Installing over 1.1
+
+Run `install.bat` from this release; it replaces the files installed by 1.1.
+Saved games are never touched, and `uninstall.bat` still leaves the game as it
+came.
+
 ## 1.1
 
 Version 1.1 makes battlefield decisions faster and adds two practical
@@ -11,32 +94,6 @@ The tactical cursor now includes morale when announcing visible units. Armed
 enemies are named with their main-hand weapon when moving the cursor, cycling
 enemies, listing nearby threats, or inspecting a unit. Unarmed enemies remain
 identified without a misleading weapon label.
-
-Focusing a visible combatant now also plays a positional tactical-sonar cue.
-Horizontal distance adds 10% stereo pan per tile (10% at one tile, 30% at three
-and 60% at six). Vertical distance transposes the whole cue by three semitones
-per tile (three at one, six at two and twelve at four) without changing its duration.
-Allies use G+D; enemies use B-flat+C-sharp. One, two and three turns use the same
-number of pulses, more than three uses a long pulse, and a unit which already
-acted gets its own four-note melody. Cursor audio is last-focus-wins and never
-reveals hidden units.
-
-The ground itself is reported by a 200 ms violin glide sounding in two octaves at
-once: rising C to G where the hex stands above the active brother, falling G to C
-where it lies below. Level ground stays silent.
-
-Hexes nobody can stand on — trees, boulders, walls, deep water — get a 250 ms
-rasp of their own, buzzing and chopped, its pitch wobbling up from A to C and
-back rather than settling on a note. It is meant to be known by its texture
-before any pitch is identified.
-
-Both ground cues sound on any hex, with or without a unit on it, and everything a
-hex reports is mixed into a single waveform, so a unit on high ground next to an
-obstacle is heard as one sound starting at one instant rather than as a queue.
-
-Volume, pan per tile, pitch per tile, rhythm, MIDI notes and every parameter of
-the height glide and the impassable rasp can be adjusted in
-`companion/sonar.json` without rebuilding.
 
 New shortcuts read individual parts of the unit under the cursor without opening
 the full inspection list:
@@ -66,27 +123,6 @@ copies it to the Windows clipboard and confirms the copy aloud.
 
 Campaigns whose saves contain no seed explicitly announce “Map Seed:
 Unavailable” instead of silently omitting the information.
-
-### Named regions can be located without sight
-
-`Z` now reads the region on the company's current tile and its position relative
-to the region's printed name, using eight compass directions — for example,
-“East of Glaucious Domain.” In the `M` map explorer it reads the cursor tile
-instead, so a region remains useful for orientation even when it contains no
-settlements. Both press and release are consumed, preserving the readout without
-also triggering vanilla's northward camera pan.
-
-Travel now announces that same reading automatically when the company crosses
-into another named region or moves into another compass sector of its current
-region. It is joined to the existing terrain, road and place cue so no interrupt
-announcement cuts another one off. Every row in `B` also names its region and
-sector after the place — for a settlement, after its owning faction as well — so
-settlements, locations and landmarks are all placed on the map by name.
-
-Regions are only named on explored ground. Map tiles keep their region under fog
-of war, so `Z` on an unexplored hex in the `M` map explorer now answers
-“Unexplored ground, no region known.” rather than reading out an area the map has
-not yet revealed.
 
 ### Installing over 1.0.0
 
