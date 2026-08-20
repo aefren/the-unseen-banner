@@ -300,6 +300,7 @@ namespace TheUnseenBanner.Companion
                     "world.survey.item" => ComposeSurveyItem(texto, valor, detalle),
                     "world.discovery.single" => ComposeDiscoverySighting(texto, valor, detalle),
                     "world.threat.closing" => ComposeThreatClosing(texto, valor, detalle),
+                    "world.battle.started" => ComposeBattleStarted(texto, valor, detalle),
                     "world.upkeep.result" => ComposeUpkeepResult(valor),
                     "world.upkeep.warning" => ComposeUpkeepWarning(valor, detalle),
                     "world.discovery.summary" => ComposeDiscoverySummary(valor),
@@ -2314,6 +2315,34 @@ namespace TheUnseenBanner.Companion
             string position = ComposePosition(p.Length > 0 ? p[0] : "0",
                 p.Length > 1 ? p[1] : "-1");
             return position.Length > 0 ? head + " " + position + "." : head;
+        }
+
+        /// <summary>Compose a battle between two AI parties out on the map: two parties
+        /// that met away from the company and are now fighting it out, which vanilla
+        /// shows only as a clashing-swords animation over the spot. texto is the
+        /// aggressor and valor the party it fell upon — the Squirrel side always passes
+        /// them in that order. detalle packs "dist|dir|relation"; relation names which
+        /// side, if either, is allied with the company, the case that can cost the player
+        /// an escort or a contract, and is empty when the fight is none of his
+        /// business.</summary>
+        private static string ComposeBattleStarted(string attacker, string defender,
+            string detail)
+        {
+            string[] p = detail.Split('|');
+            string relation = p.Length > 2 ? p[2] : "";
+            string head = relation switch
+            {
+                "attacker" => L10n.F("world.battle.ally.attacking", attacker, defender),
+                "defender" => L10n.F("world.battle.ally.attacked", attacker, defender),
+                _ => L10n.F("world.battle.started", attacker, defender),
+            };
+
+            // Full stop between the battle and where it is, as in the discovery ping: the
+            // position is itself a comma phrase ("3 tiles, 10 o'clock") and running the
+            // two together gives one long line a screen reader reads flat.
+            string position = ComposePosition(p.Length > 0 ? p[0] : "0",
+                p.Length > 1 ? p[1] : "-1");
+            return position.Length > 0 ? head + ". " + position + "." : head + ".";
         }
 
         /// <summary>Compose an ambient discovery ping: a settlement, location, landmark

@@ -862,6 +862,16 @@ namespace TheUnseenBanner.Companion
             // and not the intent: marching at a camped party crosses the same bands.
             ["world.threat.closing"] = "{0} closing in.",
             ["world.threat.contact"] = "{0} nearly on you.",
+            // Two AI parties fighting each other out on the map (user request, ago 2026).
+            // Vanilla's only cue is the clashing-swords animation over the spot, so this is
+            // the whole of it for a blind player: who fell upon whom, and where. The first
+            // name is always the aggressor — the Squirrel side keeps the order the engine's
+            // own callers use. An ally in the fight gets its own wording rather than a flat
+            // list of two names: an escorted caravan or a friendly patrol being cut down is
+            // the one case the player may have to ride into.
+            ["world.battle.started"] = "Combat, {0} attacking {1}",
+            ["world.battle.ally.attacking"] = "Combat, your ally {0} attacking {1}",
+            ["world.battle.ally.attacked"] = "Combat, {0} attacking your ally {1}",
             // Daily upkeep (phase 4.9), spoken once a day when the game settles wages and
             // rations. Two halves: what the settlement just cost the company in mood — the
             // real damage, and invisible until now — and what the next day will cost if

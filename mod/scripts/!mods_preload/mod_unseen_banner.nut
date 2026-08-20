@@ -1960,6 +1960,105 @@
 	}
 };
 
+// A battle between two AI parties out on the map (user request, ago 2026). When two
+// hostile parties meet away from the company they fight an abstract battle, with no
+// tactical map: combat_manager freezes both where they stand, ticks their troops' strength
+// down every three seconds of virtual time and, once it resolves, destroys the loser and
+// spawns a Battle Site on the spot. Vanilla shows all of that with ONE cue — the clashing
+// swords animation party.nut hangs over each combatant (its "combat" sprite, brush
+// battle_animation, switched on and off by setCombatID) — plus both parties going still.
+// For a blind player that was nothing at all: the warband that had been closing in stops,
+// the threat bands above fall silent, and nothing says why.
+//
+// Funnel: combat_manager.startCombat, the single point where a world battle is opened or
+// joined. Both AI callers reach it (ai_world_attack for a party hunting another, and
+// attack_zone_order for the crisis armies) and the player never does — a party meeting the
+// company routes to onEnteringCombatWithPlayer and the encounter dialog instead, so
+// nothing here can collide with entering a real fight. joinCombat is deliberately left
+// alone even though it is the closer funnel: onDeserialize replays it for every battle in
+// progress, which would re-announce old fights on every load.
+//
+// The aftermath needs nothing of its own: the Battle Site that spawns on the site is a
+// location like any other, so WorldDiscovery announces it as it comes into sight.
+::UnseenBanner.WorldBattle <- {
+	// Real-time seconds between two battle announcements. A crisis army attacking a zone
+	// opens several battles within a frame or two of each other, all around the same spot;
+	// speaking every one of them queues a pile of near-identical lines, which is the dump
+	// the "lists, not dumps" convention forbids. Everything that gets here is inside the
+	// survey's scan radius, so the one that is spoken is never the far-away one.
+	MinInterval = 3.0,
+	m = {
+		LastAnnounceTime = -1000.0
+	},
+	function reset()
+	{
+		this.m.LastAnnounceTime = -1000.0;
+	},
+	// startCombat's callers pass entities, but the manager itself also accepts a
+	// WeakTableRef and unwraps it before touching anything; mirror that so the hook can
+	// never be the one link in the chain that throws.
+	function partyOf(_p)
+	{
+		local p = typeof _p == "instance" ? _p.get() : _p;
+		return p != null && p.isAlive() ? p : null;
+	},
+	// Sight parity with the party survey and the discovery pings (4.2/4.3): the same fog
+	// test a mouse click uses, plus the visibility multiplier that hides an Alp by day. The
+	// distance cap is the survey's own scan radius, so a battle is spoken exactly when it is
+	// fought between parties the mod would already have named; beyond it lies a fight the
+	// player was never told was brewing. Compared squared, for the same reason WorldEnter's
+	// routeTo does it: getVecDistance is native and not a member of our tables.
+	function isSighted(_p, _player)
+	{
+		if (_p == null || _p.getTile() == null) return false;
+		if (_p.isHiddenToPlayer() || _p.getVisibilityMult() <= 0.0) return false;
+		local pos = _p.getPos();
+		local playerPos = _player.getPos();
+		local dx = pos.X - playerPos.X;
+		local dy = pos.Y - playerPos.Y;
+		local radius = ::UnseenBanner.WorldSurvey.ScanRadius;
+		return dx * dx + dy * dy <= radius * radius;
+	},
+	// _p1 attacked _p2: both callers pass the aggressor first, which is the only reason the
+	// wording can say who is attacking whom. _now is the caller's Time.getRealTimeF(), since
+	// Time is only reachable through a hooked instance's own delegate.
+	function announce(_p1, _p2, _now)
+	{
+		local attacker = this.partyOf(_p1);
+		local defender = this.partyOf(_p2);
+		if (attacker == null || defender == null) return;
+
+		local player = ::World.State.getPlayer();
+		if (player == null || player.getTile() == null) return;
+
+		// One side in sight is enough: the battle is a single spot on the map, and a party
+		// the fog still hides is worth naming as the thing mauling one the player can see.
+		if (!this.isSighted(attacker, player) && !this.isSighted(defender, player)) return;
+		if (_now - this.m.LastAnnounceTime < this.MinInterval) return;
+		this.m.LastAnnounceTime = _now;
+
+		// An ally in the fight is the case that changes what the player has to do — the
+		// caravan he is escorting, or a friendly patrol, is being cut down. Which side it is
+		// on travels as the relation so the wording can put the ally where it belongs.
+		local relation = "";
+		if (attacker.isAlliedWithPlayer()) relation = "attacker";
+		else if (defender.isAlliedWithPlayer()) relation = "defender";
+
+		// Distance and bearing to the nearer of the two. They are within the engine's
+		// contact range of each other (barely over a tile), so this is the site of the
+		// battle and not a compromise between two places.
+		local playerTile = player.getTile();
+		local tile = attacker.getTile();
+		if (defender.getTile() != null && (tile == null
+			|| playerTile.getDistanceTo(defender.getTile()) < playerTile.getDistanceTo(tile)))
+			tile = defender.getTile();
+
+		::UnseenBanner.sendMessage("queue", attacker.getName(), "world.battle.started",
+			defender.getName(),
+			::UnseenBanner.WorldSurvey.posDetail(playerTile, tile) + "|" + relation);
+	}
+};
+
 // Upkeep: food and wages (phase 4.9). Both were on-demand only, through F2, and the
 // company can starve or go unpaid without a single word — a sighted player watches the
 // topbar turn against him and the mood icons drop.
@@ -13159,6 +13258,25 @@ foreach (context, rows in ::UnseenBanner.KeyHelp.Contexts)
 	}
 });
 
+// Battles between AI parties out on the map (see WorldBattle). Compared around the
+// original: whether either side was already fighting a moment ago is what tells a fresh
+// clash — the one that puts a new swords animation on the map — from a third party joining
+// a battle already under way, and that needs the state as it was before the call. The
+// original is also free to bail out (a party dead or emptied in the same frame), so the
+// announcement waits for both sides to actually come out of it with a combat ID.
+::UnseenBanner.Mod.hook("scripts/entity/world/combat_manager", function(q) {
+	q.startCombat = @(__original) function( _p1, _p2 )
+	{
+		local p1 = typeof _p1 == "instance" ? _p1.get() : _p1;
+		local p2 = typeof _p2 == "instance" ? _p2.get() : _p2;
+		local wasFighting = (p1 != null && p1.isInCombat())
+			|| (p2 != null && p2.isInCombat());
+		__original(_p1, _p2);
+		if (!wasFighting && p1 != null && p2 != null && p1.isInCombat() && p2.isInCombat())
+			::UnseenBanner.WorldBattle.announce(p1, p2, this.Time.getRealTimeF());
+	}
+});
+
 ::UnseenBanner.Mod.hook("scripts/ui/screens/ui_module", function(q) {
 	q.onModuleShown = @(__original) function()
 	{
@@ -13715,6 +13833,7 @@ foreach (context, rows in ::UnseenBanner.KeyHelp.Contexts)
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldDiscovery.reset();
+		::UnseenBanner.WorldBattle.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldRoads.reset();
@@ -13741,6 +13860,7 @@ foreach (context, rows in ::UnseenBanner.KeyHelp.Contexts)
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldDiscovery.reset();
+		::UnseenBanner.WorldBattle.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldRoads.reset();
@@ -13767,6 +13887,7 @@ foreach (context, rows in ::UnseenBanner.KeyHelp.Contexts)
 		::UnseenBanner.ContractObjectives.reset();
 		::UnseenBanner.WorldSurvey.reset();
 		::UnseenBanner.WorldDiscovery.reset();
+		::UnseenBanner.WorldBattle.reset();
 		::UnseenBanner.WorldCamp.reset();
 		::UnseenBanner.WorldTracks.reset();
 		::UnseenBanner.WorldRoads.reset();
