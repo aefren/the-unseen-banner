@@ -8133,16 +8133,19 @@
 		local sonarHeight = this.sonarHeight(_active, tile);
 		local sonarBlocked = this.sonarBlocked(tile, kind) ? "1" : "0";
 		local sonarMorale = this.sonarMorale(actor, kind);
+		local sonarCorpse = this.sonarCorpse(tile) ? "1" : "0";
 		// Morale alone is worth the message: a unit whose turn position carries no
 		// honest value (acting now, or off the live queue) is silent in the cue above
-		// but still has a morale the player wants to hear.
+		// but still has a morale the player wants to hear. So is a corpse alone: bare
+		// level ground with the dead on it is the commonest hex of the second half of
+		// a battle, and it used to send nothing at all.
 		if (::UnseenBanner.Options.isSonarEnabled()
 			&& (sonarTiming != "none" || sonarHeight != "level" || sonarBlocked == "1"
-				|| sonarMorale != "-"))
+				|| sonarMorale != "-" || sonarCorpse == "1"))
 		{
 			::UnseenBanner.sendMessage("sonar", sonarRelation, "combat.sonar",
 				sonarTiming, this.sonarPosition(dist, dir) + "|" + sonarHeight
-					+ "|" + sonarBlocked + "|" + sonarMorale);
+					+ "|" + sonarBlocked + "|" + sonarMorale + "|" + sonarCorpse);
 		}
 
 		// hp/hpMax are empty for empty tiles and scenery; the companion only voices
@@ -8156,6 +8159,12 @@
 		// dropped rather than doubled. Everything else in the readout — name, health,
 		// distance, bearing — has no cue and is always spoken.
 		if (!::UnseenBanner.Options.areSpokenExtrasEnabled()) morale = "";
+		// The corpse clause leaves the same way and for the same reason, now that the hex
+		// rasps a cue of its own for it (user, ago 2026): in sounds-only mode the sound IS
+		// the answer, and "Corpse: ..." spoken over it is exactly the doubling that mode
+		// exists to remove. V still names the body on demand — that is a question the
+		// player asked, not the cursor volunteering.
+		if (!::UnseenBanner.Options.areSpokenExtrasEnabled()) corpseName = "";
 
 		local detail = kind + "|" + dist + "|" + dir + "|" + hp + "|" + hpMax
 			+ "|" + morale;
@@ -8584,6 +8593,22 @@
 		if (_kind == "object") return true;
 		return _tile.Type == ::Const.Tactical.TerrainType.Impassable
 			|| _tile.Type == ::Const.Tactical.TerrainType.DeepWater;
+	},
+	// A body lying on the hex (user request, ago 2026). Vanilla draws it and says
+	// nothing, and it is not scenery either: it does not block the tile, so neither the
+	// blocked rasp nor the height glide covers it, and until now a hex full of the
+	// company's dead sounded exactly like clean ground. It matters for more than
+	// atmosphere — the dead mark where the line broke, ground items lie with them, and
+	// skills such as Gruesome Feast target the corpse rather than whoever stands over it.
+	//
+	// The predicate is getCorpseName rather than tile.IsCorpseSpawned on its own, so the
+	// cue fires exactly when the spoken readout names a corpse: one fact, one test, and
+	// the two can never disagree about a hex. Fog is not consulted here for the same
+	// reason it is not consulted there — the body belongs to the ground, not to the
+	// living unit that may be standing on it.
+	function sonarCorpse(_tile)
+	{
+		return this.getCorpseName(_tile) != "";
 	},
 	// Return "horizontalTiles|verticalTiles". A diagonal sector carries both
 	// components: a unit one hex to the northeast is one tile right and one tile up,
@@ -12840,6 +12865,7 @@
 		{ id = "ground.up", relation = "none", timing = "none", position = "0|0|up|0|-" },
 		{ id = "ground.down", relation = "none", timing = "none", position = "0|0|down|0|-" },
 		{ id = "ground.blocked", relation = "none", timing = "none", position = "0|0|level|1|-" },
+		{ id = "ground.corpse", relation = "none", timing = "none", position = "0|0|level|0|-|1" },
 		{ id = "morale.confident", relation = "ally", timing = "none", position = "0|0|level|0|4" },
 		{ id = "morale.steady", relation = "ally", timing = "none", position = "0|0|level|0|3" },
 		{ id = "morale.wavering", relation = "ally", timing = "none", position = "0|0|level|0|2" },

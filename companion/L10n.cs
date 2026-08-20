@@ -1328,6 +1328,7 @@ namespace TheUnseenBanner.Companion
             ["options.cue.ground.up"] = "Higher ground",
             ["options.cue.ground.down"] = "Lower ground",
             ["options.cue.ground.blocked"] = "Impassable ground",
+            ["options.cue.ground.corpse"] = "A body on the ground",
             ["options.cue.morale.confident"] = "Confident morale",
             ["options.cue.morale.steady"] = "Steady morale",
             ["options.cue.morale.wavering"] = "Wavering morale",

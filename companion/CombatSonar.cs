@@ -82,6 +82,11 @@ namespace TheUnseenBanner.Companion
         /// a state that sings its synthesized phrase instead.</summary>
         private static Dictionary<string, double[]> _moraleSamples = new();
 
+        /// <summary>The corpse recording, read the same way and on the same terms: null
+        /// is the file missing or unreadable, and then the hex rasps its synthesized
+        /// stand-in instead of going quiet.</summary>
+        private static double[]? _corpseSample;
+
         private static bool _ready;
         private static bool _failureReported;
         private static GCHandle _currentWave;
@@ -102,8 +107,13 @@ namespace TheUnseenBanner.Companion
                 _settings = SonarSettings.Load(configPath);
                 // The recordings sit beside the config that names them, so moving both
                 // to another folder keeps them together with no second path to edit.
-                _moraleSamples = LoadMoraleSamples(
+                string soundsFolder = ResolveSoundsFolder(
                     Path.GetDirectoryName(configPath) ?? AppContext.BaseDirectory);
+                _moraleSamples = LoadMoraleSamples(soundsFolder);
+                _corpseSample = _settings.CorpseEnabled
+                    ? LoadSample(soundsFolder, _settings.CorpseSample, "Corpse sound",
+                        _settings.CorpseSampleMaxMilliseconds)
+                    : null;
                 _ready = OperatingSystem.IsWindows() && _settings.Enabled;
 
                 if (!_settings.Enabled)
@@ -134,61 +144,80 @@ namespace TheUnseenBanner.Companion
                 Cache.Clear();
                 _cacheBytes = 0;
                 _moraleSamples = new Dictionary<string, double[]>();
+                _corpseSample = null;
                 _ready = false;
             }
+        }
+
+        /// <summary>Where the recorded cues live: beside the config that names them,
+        /// unless the config gives an absolute path of its own.</summary>
+        private static string ResolveSoundsFolder(string baseDirectory)
+        {
+            return Path.IsPathRooted(_settings.SoundsFolder)
+                ? _settings.SoundsFolder
+                : Path.Combine(baseDirectory, _settings.SoundsFolder);
         }
 
         /// <summary>Read whatever recordings the config names, once, so a battle never
         /// pays for disk. Every failure is reported and then forgiven: the state simply
         /// keeps its synthesized voice.</summary>
-        private static Dictionary<string, double[]> LoadMoraleSamples(string baseDirectory)
+        private static Dictionary<string, double[]> LoadMoraleSamples(string folder)
         {
             var samples = new Dictionary<string, double[]>();
             if (!_settings.MoraleEnabled) return samples;
 
-            string folder = Path.IsPathRooted(_settings.SoundsFolder)
-                ? _settings.SoundsFolder
-                : Path.Combine(baseDirectory, _settings.SoundsFolder);
-
             foreach (string morale in MoraleIndices)
             {
                 MoraleVoice? voice = _settings.MoraleVoiceFor(morale);
-                string? file = voice?.Sample;
-                if (string.IsNullOrWhiteSpace(file)) continue;
-
-                string path = Path.IsPathRooted(file) ? file : Path.Combine(folder, file);
-                if (!File.Exists(path))
-                {
-                    Console.WriteLine(
-                        $"[CombatSonar] Morale sound '{path}' not found; " +
-                        "that state keeps its synthesized phrase.");
-                    continue;
-                }
-
-                try
-                {
-                    double[] mono = WaveFile.ReadMono(path, SampleRate);
-                    if (mono.Length == 0) throw new InvalidDataException("no audio in the file.");
-                    samples[morale] = mono;
-
-                    double milliseconds = mono.Length * 1000.0 / SampleRate;
-                    string note = milliseconds > _settings.MoraleSampleMaxMilliseconds
-                        ? $" — cut to {_settings.MoraleSampleMaxMilliseconds} ms; raise " +
-                          "moraleSampleMaxMilliseconds to hear all of it"
-                        : string.Empty;
-                    Console.WriteLine(
-                        $"[CombatSonar] Morale sound '{Path.GetFileName(path)}' loaded, " +
-                        $"{milliseconds:0} ms.{note}");
-                }
-                catch (Exception e)
-                {
-                    Console.WriteLine(
-                        $"[CombatSonar] Could not read morale sound '{path}'; " +
-                        $"that state keeps its synthesized phrase. {e.Message}");
-                }
+                double[]? mono = LoadSample(folder, voice?.Sample ?? string.Empty,
+                    "Morale sound", _settings.MoraleSampleMaxMilliseconds);
+                if (mono != null) samples[morale] = mono;
             }
 
             return samples;
+        }
+
+        /// <summary>One recorded cue as mono at <see cref="SampleRate"/>, or null when
+        /// the config names none, the file is not there, or it cannot be read. Every one
+        /// of those is a line on the console and then forgiven: a layer that loses its
+        /// recording falls back to being synthesized, so a bad file costs the recording
+        /// and never the cue.</summary>
+        private static double[]? LoadSample(
+            string folder, string file, string what, int maximumMilliseconds)
+        {
+            if (string.IsNullOrWhiteSpace(file)) return null;
+
+            string path = Path.IsPathRooted(file) ? file : Path.Combine(folder, file);
+            if (!File.Exists(path))
+            {
+                Console.WriteLine(
+                    $"[CombatSonar] {what} '{path}' not found; " +
+                    "that cue keeps its synthesized voice.");
+                return null;
+            }
+
+            try
+            {
+                double[] mono = WaveFile.ReadMono(path, SampleRate);
+                if (mono.Length == 0) throw new InvalidDataException("no audio in the file.");
+
+                double milliseconds = mono.Length * 1000.0 / SampleRate;
+                string note = milliseconds > maximumMilliseconds
+                    ? $" — cut to {maximumMilliseconds} ms; raise the cue's " +
+                      "maximum to hear all of it"
+                    : string.Empty;
+                Console.WriteLine(
+                    $"[CombatSonar] {what} '{Path.GetFileName(path)}' loaded, " +
+                    $"{milliseconds:0} ms.{note}");
+                return mono;
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(
+                    $"[CombatSonar] Could not read {what.ToLowerInvariant()} '{path}'; " +
+                    $"that cue keeps its synthesized voice. {e.Message}");
+                return null;
+            }
         }
 
         /// <param name="relation"><c>ally</c>, <c>enemy</c> or <c>none</c>.</param>
@@ -196,12 +225,14 @@ namespace TheUnseenBanner.Companion
         /// or <c>none</c>.</param>
         /// <param name="positionText">
         /// Signed horizontal and vertical tile counts, the ground's height, whether
-        /// the hex can be stood on and the occupant's morale, as
-        /// <c>x|y|height|blocked|morale</c>. Positive counts mean right/up; negative
-        /// mean left/down. Height is <c>up</c>, <c>down</c> or <c>level</c>, relative
-        /// to the active brother's own hex; blocked is <c>1</c> for ground no one can
-        /// stand on; morale is the engine's own state index <c>0</c>-<c>4</c>
-        /// (fleeing to confident) or <c>-</c> for none.
+        /// the hex can be stood on, the occupant's morale and whether a body lies on
+        /// it, as <c>x|y|height|blocked|morale|corpse</c>. Positive counts mean
+        /// right/up; negative mean left/down. Height is <c>up</c>, <c>down</c> or
+        /// <c>level</c>, relative to the active brother's own hex; blocked is <c>1</c>
+        /// for ground no one can stand on; morale is the engine's own state index
+        /// <c>0</c>-<c>4</c> (fleeing to confident) or <c>-</c> for none; corpse is
+        /// <c>1</c> for a hex with the dead on it, and may be absent entirely, which
+        /// reads as none.
         /// </param>
         internal static void Play(string relation, string timing, string positionText)
         {
@@ -272,13 +303,19 @@ namespace TheUnseenBanner.Companion
             string height = position.Length > 2 ? position[2] : "level";
             string blockedText = position.Length > 3 ? position[3] : "0";
             string morale = position.Length > 4 ? position[4] : "-";
+            // The corpse flag was added after the field it follows, and a mod and a
+            // companion of different vintages meet during every dev restart: an absent
+            // field is "no corpse here", never a malformed request.
+            string corpseText = position.Length > 5 ? position[5] : "0";
             bool hasUnit = relation is "ally" or "enemy";
             bool blocked = blockedText == "1";
+            bool corpse = corpseText == "1";
 
             if ((!hasUnit && relation != "none")
                 || !IsKnownTiming(timing)
                 || height is not ("up" or "down" or "level")
                 || blockedText is not ("0" or "1")
+                || corpseText is not ("0" or "1")
                 || !IsKnownMorale(morale)
                 || position.Length < 2
                 || !int.TryParse(position[0], out int horizontalTiles)
@@ -295,11 +332,12 @@ namespace TheUnseenBanner.Companion
             // without silencing the morale phrase that travels with it.
             if (!hasUnit) morale = "-";
             bool hasRhythm = hasUnit && timing != "none";
-            if (!hasRhythm && height == "level" && !blocked && morale == "-") return null;
+            if (!hasRhythm && height == "level" && !blocked && morale == "-" && !corpse)
+                return null;
 
             return new SoundKey(
                 hasUnit ? relation : "none", hasUnit ? timing : "none",
-                horizontalTiles, verticalTiles, height, blocked, morale);
+                horizontalTiles, verticalTiles, height, blocked, morale, corpse);
         }
 
         private static bool IsKnownTiming(string timing)
@@ -361,6 +399,7 @@ namespace TheUnseenBanner.Companion
 
             if (key.Height != "level") AddHeightEvent(events, key.Height == "up");
             if (key.Blocked) AddBlockedEvent(events);
+            if (key.Corpse) AddCorpseEvent(events);
             if (key.Morale != "-") AddMoraleEvents(events, key.Morale);
 
             int totalSamples = events.Count == 0 ? 1 : events.Max(e => e.EndSample);
@@ -479,6 +518,53 @@ namespace TheUnseenBanner.Companion
                 _settings.BlockedGain,
                 _settings.BlockedVibratoHertz, semitones, vibratoUpwardsOnly: true,
                 _settings.BlockedGrainHertz, _settings.BlockedGrainDepth));
+        }
+
+        /// <summary>A body on the hex. Like the height glide and the impassable rasp it
+        /// describes the ground rather than whoever stands on it, so it starts at zero
+        /// with them instead of queueing behind: the dead are commonly under a living
+        /// unit, and a player sweeping hexes must get all three answers in one breath.
+        ///
+        /// It is a recording (<c>corpse.wav</c>, named in the config like the morale
+        /// cues) with a synthesized rasp behind it, so a missing or unreadable file
+        /// costs the recording and never the cue. Both are the same idea: a high, dry
+        /// rasp — the impassable cue's texture taken up two and a half octaves, where it
+        /// reads as a rattle rather than as a wall. High against low is what tells the
+        /// two rasps apart; nothing about the note matters beyond that.</summary>
+        private static void AddCorpseEvent(List<ToneEvent> events)
+        {
+            if (!_settings.CorpseEnabled) return;
+
+            int delay = MillisecondsToSamples(_settings.CorpseDelayMilliseconds);
+            if (_corpseSample != null)
+            {
+                int length = Math.Min(_corpseSample.Length,
+                    Math.Max(1, MillisecondsToSamples(_settings.CorpseSampleMaxMilliseconds)));
+                if (length > 0)
+                {
+                    events.Add(new ToneEvent(delay, length, _corpseSample,
+                        _settings.CorpseSampleFadeMilliseconds,
+                        _settings.CorpseSampleFadeMilliseconds,
+                        _settings.CorpseSampleGain));
+                    return;
+                }
+            }
+
+            // The synthesized stand-in: the same hard grain gate as the impassable cue,
+            // but the pitch sags instead of climbing. Rising is that cue's signature —
+            // the ground pushing back — and a corpse must not borrow it. Its wobble is a
+            // shallow tremble either side of the glide rather than an interval of its
+            // own, so what the ear measures is the fall.
+            var start = new[] { MidiToFrequency(_settings.CorpseHighMidi) };
+            var end = new[] { MidiToFrequency(_settings.CorpseLowMidi) };
+            int total = Math.Max(1, MillisecondsToSamples(_settings.CorpseMilliseconds));
+
+            events.Add(new ToneEvent(delay, total, start, end, Timbre.Rasp,
+                _settings.CorpseAttackMilliseconds, _settings.CorpseReleaseMilliseconds,
+                _settings.CorpseGain,
+                _settings.CorpseVibratoHertz, _settings.CorpseVibratoSemitones,
+                vibratoUpwardsOnly: false,
+                _settings.CorpseGrainHertz, _settings.CorpseGrainDepth));
         }
 
         /// <summary>The focused unit's morale. A recording from <c>sounds\</c> when the
@@ -999,7 +1085,7 @@ namespace TheUnseenBanner.Companion
 
         private readonly record struct SoundKey(
             string Relation, string Timing, int HorizontalTiles, int VerticalTiles,
-            string Height, bool Blocked, string Morale);
+            string Height, bool Blocked, string Morale, bool Corpse);
 
         private sealed class ToneEvent
         {
@@ -1191,6 +1277,34 @@ namespace TheUnseenBanner.Companion
             public int BlockedAttackMilliseconds { get; set; } = 6;
             public int BlockedReleaseMilliseconds { get; set; } = 18;
             public double BlockedGain { get; set; } = 0.7;
+
+            // The dead on the hex: a recording, with a high rasp behind it for when the
+            // file is gone. D6 sagging to A5 — the impassable cue's texture two and a
+            // half octaves up, where the ear takes it for a rattle instead of a wall,
+            // which is the whole of what keeps the two rasps apart. The grain gate runs
+            // faster than the impassable one for the same reason: at this pitch a slow
+            // chop reads as a tremolo rather than as roughness.
+            public bool CorpseEnabled { get; set; } = true;
+            public string CorpseSample { get; set; } = "corpse.wav";
+            public double CorpseSampleGain { get; set; } = 0.8;
+            public int CorpseSampleFadeMilliseconds { get; set; } = 5;
+            public int CorpseSampleMaxMilliseconds { get; set; } = 600;
+
+            /// <summary>Where the cue sits inside the hex's waveform. Zero puts it with
+            /// the ground cues it belongs to; a player who finds it crowds the unit
+            /// chord can push it back without touching anything else.</summary>
+            public int CorpseDelayMilliseconds { get; set; }
+
+            public int CorpseMilliseconds { get; set; } = 250;
+            public int CorpseHighMidi { get; set; } = 86;
+            public int CorpseLowMidi { get; set; } = 81;
+            public double CorpseVibratoHertz { get; set; } = 9.0;
+            public double CorpseVibratoSemitones { get; set; } = 0.35;
+            public double CorpseGrainHertz { get; set; } = 95.0;
+            public double CorpseGrainDepth { get; set; } = 0.6;
+            public int CorpseAttackMilliseconds { get; set; } = 4;
+            public int CorpseReleaseMilliseconds { get; set; } = 40;
+            public double CorpseGain { get; set; } = 0.5;
 
             // Morale. The delay is what keeps this cue out of the way of the two the
             // player steers by, and the length is what gives the synthesized melody room
@@ -1411,6 +1525,29 @@ namespace TheUnseenBanner.Companion
                 BlockedAttackMilliseconds = ClampTime(BlockedAttackMilliseconds, 0, 200);
                 BlockedReleaseMilliseconds = ClampTime(BlockedReleaseMilliseconds, 0, 200);
                 BlockedGain = Math.Clamp(BlockedGain, 0.0, 1.0);
+
+                if (string.IsNullOrWhiteSpace(CorpseSample)) CorpseSample = string.Empty;
+                CorpseSample = CorpseSample.Trim();
+                CorpseSampleGain = Math.Clamp(CorpseSampleGain, 0.0, 16.0);
+                CorpseSampleFadeMilliseconds = ClampTime(CorpseSampleFadeMilliseconds, 0, 500);
+                CorpseSampleMaxMilliseconds = ClampTime(CorpseSampleMaxMilliseconds, 40, 2_000);
+                // A ground cue that started after the hex had finished speaking would be
+                // heard as belonging to the next hex, so its delay is capped well short
+                // of the morale phrase rather than at the same two seconds.
+                CorpseDelayMilliseconds = ClampTime(CorpseDelayMilliseconds, 0, 500);
+                CorpseMilliseconds = ClampTime(CorpseMilliseconds, 40, 2_000);
+                CorpseHighMidi = ClampNote(CorpseHighMidi, 86);
+                CorpseLowMidi = ClampNote(CorpseLowMidi, 81);
+                // The fall is the message. A pair written the other way up would glide
+                // upwards and say the impassable cue's line instead of this one.
+                if (CorpseLowMidi > CorpseHighMidi) CorpseLowMidi = CorpseHighMidi;
+                CorpseVibratoHertz = Math.Clamp(CorpseVibratoHertz, 0.0, 40.0);
+                CorpseVibratoSemitones = Math.Clamp(CorpseVibratoSemitones, 0.0, 2.0);
+                CorpseGrainHertz = Math.Clamp(CorpseGrainHertz, 0.0, 400.0);
+                CorpseGrainDepth = Math.Clamp(CorpseGrainDepth, 0.0, 1.0);
+                CorpseAttackMilliseconds = ClampTime(CorpseAttackMilliseconds, 0, 200);
+                CorpseReleaseMilliseconds = ClampTime(CorpseReleaseMilliseconds, 0, 200);
+                CorpseGain = Math.Clamp(CorpseGain, 0.0, 1.0);
 
                 // The cue is context rather than navigation, so it may be pushed later
                 // or made longer, but never so far that the player is still hearing the
