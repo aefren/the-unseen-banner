@@ -9334,7 +9334,11 @@
 	{
 		// The remaining turn queue for this round (index 0 is whoever is acting).
 		// Hidden enemies are left out to keep fog-of-war parity. Each line is
-		// "s"/"a"/"e" (self/ally/enemy) + the already-localized name.
+		// "s"/"a"/"e" (self/ally/enemy) + the already-localized name, and for an
+		// enemy a tab plus its main-hand weapon: the same fact the tile cursor and
+		// the Z inspection already speak. What an enemy carries decides whether his
+		// upcoming turn is a threat, so it belongs in the queue too. Allies stay bare
+		// — the player equips them himself and their gear is one keypress away.
 		local entities = ::Tactical.TurnSequenceBar.getCurrentEntities();
 		local text = "";
 		local count = 0;
@@ -9348,6 +9352,7 @@
 
 			if (count > 0) text += "\n";
 			text += tag + e.getName();
+			if (tag == "e") text += "\t" + ::UnseenBanner.TileCursor.weaponName(e);
 			count += 1;
 		}
 

@@ -1373,7 +1373,7 @@ namespace TheUnseenBanner.Companion
             ["help.combat.pickup"] = "P opens the pickable items under the active man.",
             ["help.combat.status"] = "T reads the active man's action points and fatigue.",
             ["help.combat.unitturn"] = "Shift plus T reads the turn timing and fatigue of the unit under the cursor.",
-            ["help.combat.turnorder"] = "Tab reads the turn order for the round.",
+            ["help.combat.turnorder"] = "Tab reads the turn order for the round, naming each enemy's weapon.",
             ["help.combat.threats"] = "B lists the visible enemies by distance, including each equipped weapon.",
             ["help.combat.adjacent"] = "Shift plus B lists the enemies next to the cursor tile, with their weapons and clock directions.",
             ["help.combat.skills"] = "Shift plus S reads the active man's skills, with costs and whether each can be used.",

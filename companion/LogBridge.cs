@@ -2491,7 +2491,11 @@ namespace TheUnseenBanner.Companion
 
         /// <summary>Compose the turn-order readout (phase 3.4): the Tab key. The
         /// text is newline-separated entries, each a one-char tag (s self, a ally,
-        /// e enemy) followed by the already-localized name.</summary>
+        /// e enemy) followed by the already-localized name, and for an enemy a tab
+        /// plus its main-hand weapon — the same "name with weapon" wording the tile
+        /// cursor and the Z inspection use, so one enemy sounds the same whichever
+        /// key found him. An unarmed enemy keeps his bare name, and a line without
+        /// the weapon field stays readable while game and companion restart.</summary>
         private static string ComposeTurnOrder(string text)
         {
             var entries = new System.Collections.Generic.List<string>();
@@ -2500,11 +2504,18 @@ namespace TheUnseenBanner.Companion
                 if (line.Length == 0) continue;
                 string tag = line.Substring(0, 1);
                 string name = line.Substring(1);
+                string weapon = "";
+                int tab = name.IndexOf('\t');
+                if (tab >= 0)
+                {
+                    weapon = name.Substring(tab + 1);
+                    name = name.Substring(0, tab);
+                }
                 entries.Add(tag switch
                 {
                     "s" => L10n.F("combat.turnorder.self", name),
                     "a" => L10n.F("combat.turnorder.ally", name),
-                    _ => L10n.F("combat.turnorder.enemy", name),
+                    _ => L10n.F("combat.turnorder.enemy", EnemyWithWeapon(name, weapon)),
                 });
             }
 
